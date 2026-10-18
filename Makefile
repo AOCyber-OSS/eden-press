@@ -61,11 +61,14 @@ CHROME_VERSION := 151.0.7922.34
 
 # export-test runs convert/'s export test suite (convert/chrome,
 # convert/pdf, convert/png, and the 05-05 press.Render->ToPDF/ToImages
-# capstone), expecting Chrome to be discovered via the EXP-04 fallback
-# chain. Chrome-presence-gated: cleanly t.Skips outside a provisioned
-# Chrome/container.
+# capstone) and the CLI's live-Chrome end-to-end tests
+# (cmd/eden-press-export TestEndToEnd*), expecting Chrome to be discovered
+# via the EXP-04 fallback chain. Chrome-presence-gated: cleanly t.Skips
+# outside a provisioned Chrome/container. CI runs it in the pinned
+# headless-shell container, so the CLI tests are judged against the pinned
+# Chrome, not the runner image's.
 export-test:
-	CHROME_VERSION=$(CHROME_VERSION) go test ./convert/... -v
+	CHROME_VERSION=$(CHROME_VERSION) go test ./convert/... ./cmd/eden-press-export/... -v
 
 # check-chrome-export runs scripts/check-chrome-export.sh: the same export
 # test suite PLUS the mechanically-enforced EXP-04 Chrome-version-pin +
