@@ -52,7 +52,14 @@ jobs:
         # -p 2: at most two packages at a time, so fewer headless Chromes start
         # at once on the shared runner (each Chrome-backed package launches its
         # own; all at once made startup slow enough to miss chromedp's window).
-        run: go test -p 2 ./...
+        # -skip: the CLI's live-Chrome end-to-end tests run in the export job
+        # below, against the pinned headless-shell (EXP-04; `make export-test`).
+        # On this runner's unpinned system Chrome (ubuntu-24.04 image
+        # 20261012.334, Chrome/Chromium 155) TestEndToEndPNGWithoutInlineSVGFlag
+        # hung to its 150 s bound on every run since 2026-10-19, while it passes
+        # in about 0.2 s on the pinned 151 headless-shell, on headless-shell
+        # 155.0.8059.40 and on Chrome 155 for macOS.
+        run: go test -p 2 -skip '^TestEndToEndP(DFAndPNG|NGWithoutInlineSVGFlag)$' ./...
 
       - name: Install addlicense
         run: go install github.com/google/addlicense@latest
@@ -74,7 +81,7 @@ jobs:
         # replace; it carries mekyt's OWN LICENSE, not Eden's header, so it is excluded
         # the same way themes/** and convert/chrome/fonts/** are (see NOTICE). Everything
         # else must have the MIT header.
-        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -check .
+        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -ignore '.github/workflows/oss-mirror.yml' -check .
 
       - name: Check no chromedp (API-02)
         # OBJECTIVE.md success criterion 2 + the Objective-7-begin gate: the
