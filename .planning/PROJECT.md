@@ -1,7 +1,7 @@
 ---
 kind: library
-github_repo: AO-Cyber-Systems/eden-press
-org_project: PVT_kwDODwqLrc4BRsOP
+github_repo: AOCyberAI/eden-press
+org_project: PVT_kwDOFEhtQc4BnqOy
 ---
 
 # Eden Press
