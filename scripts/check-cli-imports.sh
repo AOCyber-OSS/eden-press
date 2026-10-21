@@ -45,7 +45,7 @@ echo "check-cli-imports: scanning direct imports of ./cmd/eden-press/..."
 # (/chase|/profiles|chromedp) so press subpackages (press/themes,
 # press/math) never trip this gate.
 offending="$(go list -f '{{range .Imports}}{{println .}}{{end}}' ./cmd/eden-press/... \
-	| sort -u | grep -E 'AO-Cyber-Systems/eden-press/(chase|profiles)|chromedp' || true)"
+	| sort -u | grep -E 'AOCyber-OSS/eden-press/(chase|profiles)|chromedp' || true)"
 
 if [ -n "$offending" ]; then
 	echo "FAIL: cmd/eden-press directly imports engine internals (must import only press/):" >&2

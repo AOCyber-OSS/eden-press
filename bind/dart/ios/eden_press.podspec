@@ -25,7 +25,7 @@ Binds the Eden Press C ABI (PressRender/PressFree) via dart:ffi, rendering
 press.Output.Model's schema-v3 blocks natively. No JavaScript, no HTML/DOM
 parsing, anywhere in the render path.
                        DESC
-  s.homepage         = 'https://github.com/AO-Cyber-Systems/eden-press'
+  s.homepage         = 'https://github.com/AOCyber-OSS/eden-press'
   s.license          = { :type => 'MIT', :file => '../../../LICENSE' }
   s.author           = { 'AO Cyber Systems' => 'support@aocyber.ai' }
   s.source           = { :path => '.' }
