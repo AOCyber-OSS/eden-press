@@ -81,7 +81,7 @@ jobs:
         # replace; it carries mekyt's OWN LICENSE, not Eden's header, so it is excluded
         # the same way themes/** and convert/chrome/fonts/** are (see NOTICE). Everything
         # else must have the MIT header.
-        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -check .
+        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -ignore '.github/workflows/oss-mirror.yml' -check .
 
       - name: Check no chromedp (API-02)
         # OBJECTIVE.md success criterion 2 + the Objective-7-begin gate: the
