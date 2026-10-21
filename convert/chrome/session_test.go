@@ -24,6 +24,7 @@ package chrome
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -79,6 +80,71 @@ func TestSessionMultiTab(t *testing.T) {
 	}
 	if c1.Target == c2.Target {
 		t.Error("expected each tab to have its OWN Target (distinct tabs)")
+	}
+}
+
+// TestNewTabIsVisible is the regression test for the png export hang. A tab
+// that chromedp opens in the browser's shared window is HIDDEN in a full
+// (new-headless) Chrome: Chrome hides every tab of a window except the active
+// one, and a hidden page gets no compositor frames. Page.captureScreenshot
+// waits for a frame, so png.ToImages waited too -- on a loaded CI runner for
+// minutes, and sometimes until go test's 10-minute alarm. Every tab NewTab
+// hands out must be visible, and must stay visible while another tab of the
+// same Session is open.
+//
+// chrome-headless-shell has no shared window (each of its tabs is visible), so
+// this test passes there either way. It bites on a full Chrome, which is what
+// Discover's auto-detection finds on a developer machine or a CI runner.
+func TestNewTabIsVisible(t *testing.T) {
+	if _, _, err := Discover(DiscoverOptions{}); errors.Is(err, ErrChromeNotFound) {
+		t.Skip("no Chrome discovered")
+	}
+
+	sess, err := New(convert.Options{})
+	if err != nil {
+		if errors.Is(err, ErrChromeNotFound) {
+			t.Skip("no Chrome discovered")
+		}
+		t.Fatalf("New: %v", err)
+	}
+	defer sess.Close()
+
+	// open attaches the tab with an UNBOUNDED first Run: chromedp runs the
+	// tab's event loop on the context of that first Run, so a deadline there
+	// would end the tab with it.
+	open := func(name string) context.Context {
+		t.Helper()
+		tab, cancel := sess.NewTab()
+		t.Cleanup(cancel)
+		if err := chromedp.Run(tab); err != nil {
+			t.Fatalf("%s: attaching: %v", name, err)
+		}
+		return tab
+	}
+	// visibility is bounded: reading it needs no frame, but a regression must
+	// fail here, not hang.
+	visibility := func(name string, tab context.Context) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(tab, 30*time.Second)
+		defer cancel()
+		var state string
+		if err := chromedp.Run(ctx, chromedp.Evaluate("document.visibilityState", &state)); err != nil {
+			t.Fatalf("%s: reading document.visibilityState: %v", name, err)
+		}
+		return state
+	}
+
+	tab1 := open("tab1")
+	if got := visibility("tab1", tab1); got != "visible" {
+		t.Errorf("tab1: document.visibilityState = %q, want \"visible\" (a hidden tab gets no frames, so a screenshot of it can wait forever)", got)
+	}
+
+	tab2 := open("tab2")
+	if got := visibility("tab2", tab2); got != "visible" {
+		t.Errorf("tab2: document.visibilityState = %q, want \"visible\"", got)
+	}
+	if got := visibility("tab1 after tab2 opened", tab1); got != "visible" {
+		t.Errorf("tab1 after tab2 opened: document.visibilityState = %q, want \"visible\" (opening a tab must not hide another)", got)
 	}
 }
 

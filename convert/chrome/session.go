@@ -29,6 +29,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
 	"go.aocyber.ai/eden-press/convert"
@@ -267,12 +269,46 @@ func New(opts convert.Options) (*Session, error) {
 	}, nil
 }
 
-// NewTab creates a child chromedp.NewContext -- a new TAB on the SAME
-// browser, never a new process. The returned context is not itself Run;
-// the caller drives it via chromedp.Run(ctx, actions...), whose first call
-// creates the actual Target (tab) on the shared browser.
+// newTabTimeout bounds NewTab's one round trip to the browser (opening the
+// tab's window). Like DefaultStartTimeout it is a backstop against never
+// returning, not a latency target.
+const newTabTimeout = 30 * time.Second
+
+// NewTab opens a new TAB on the SAME browser -- never a new process -- in a
+// window of its own, and returns a child chromedp context for it. The context
+// is not itself Run; the caller drives it via chromedp.Run(ctx, actions...),
+// whose first call attaches to the tab.
+//
+// Why a window per tab: chromedp (v0.16) opens the tab of a child context in
+// the browser's shared window. A full, new-headless Chrome hides every tab of a
+// window except the active one -- it reports each such tab, even a Session's
+// only one, as document.visibilityState "hidden" -- and a hidden page gets no
+// compositor frames. Page.captureScreenshot waits for a frame, so png.ToImages
+// waited too: on a loaded CI runner, whose full Chromium the build job
+// auto-detects, for minutes and sometimes until go test's 10-minute alarm. A
+// tab in its own window is visible and stays visible whatever else opens.
+// chrome-headless-shell (the pinned EXP-04 browser) has no shared window and
+// ignores newWindow, so nothing changes there; chromedp itself opens each tab in
+// a new window by default from v0.21. TestNewTabIsVisible guards this.
+//
+// If the window cannot be opened, NewTab falls back to chromedp's own tab
+// creation, whose first Run then reports the browser's error as before. A tab
+// that is never Run keeps its blank window until Close ends the browser.
 func (s *Session) NewTab() (context.Context, context.CancelFunc) {
-	return chromedp.NewContext(s.rootCtx)
+	browser := chromedp.FromContext(s.rootCtx).Browser
+	if browser == nil {
+		return chromedp.NewContext(s.rootCtx)
+	}
+
+	ctx, cancel := context.WithTimeout(s.rootCtx, newTabTimeout)
+	defer cancel()
+	id, err := target.CreateTarget("about:blank").
+		WithNewWindow(true).
+		Do(cdp.WithExecutor(ctx, browser))
+	if err != nil {
+		return chromedp.NewContext(s.rootCtx)
+	}
+	return chromedp.NewContext(s.rootCtx, chromedp.WithTargetID(id))
 }
 
 // Close tears the browser down: cancels the root tab, then the allocator
