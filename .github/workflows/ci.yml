@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.3"
 
       - name: Build
         run: go build ./...
@@ -143,7 +143,7 @@ jobs:
           ARG CHROME_VERSION
           FROM chromedp/headless-shell:${CHROME_VERSION} AS shell
 
-          FROM golang:1.27.1-bookworm
+          FROM golang:1.27.3-bookworm
           RUN apt-get update \
             && apt-get install -y --no-install-recommends libnspr4 libnss3 libexpat1 libfontconfig1 libuuid1 \
             && rm -rf /var/lib/apt/lists/*

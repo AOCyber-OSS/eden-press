@@ -51,7 +51,7 @@ permissions:
 # version was chosen in the abstract -- these are the concrete, recorded
 # choices; bump deliberately, never let them float).
 env:
-  GO_VERSION: "1.27.1"
+  GO_VERSION: "1.27.3"
   # NDK r27c (= 27.2.12479018). nttld/setup-ndk takes the release NAME: the
   # build-number form made it request a download URL that does not exist (404).
   ANDROID_NDK_VERSION: "r27c"

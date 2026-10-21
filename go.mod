@@ -1,6 +1,6 @@
 module go.aocyber.ai/eden-press
 
-go 1.27.1
+go 1.27.3
 
 require (
 	codeberg.org/go-latex/latex v0.3.0
