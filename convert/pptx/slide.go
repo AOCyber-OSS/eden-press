@@ -107,7 +107,7 @@ func bodyRunText(b model.Block) string {
 func buildBodyShapes(blocks []model.Block, gen *shapeIDGen, width, startY int64) (children []textBox, bottomY int64) {
 	y := startY
 	bottomY = startY
-	for _, b := range blocks {
+	for _, b := range flattenBlocks(blocks) {
 		id := gen.nextID()
 		switch b.Kind {
 		case model.BlockList:
@@ -145,7 +145,7 @@ func buildBodyShapes(blocks []model.Block, gen *shapeIDGen, width, startY int64)
 			})
 			bottomY = y + h
 			y = bottomY + bodyGapY
-		default: // paragraph, code, math -> a plain body run
+		default: // paragraph, code, math, toggle title -> a plain body run
 			h := paraHeightY
 			children = append(children, textBox{
 				id: id, name: fmt.Sprintf("Content %d", id),
@@ -157,6 +157,32 @@ func buildBodyShapes(blocks []model.Block, gen *shapeIDGen, width, startY int64)
 		}
 	}
 	return children, bottomY
+}
+
+// flattenBlocks expands toggle/quote children into a flat list for PPTX
+// (synced instances are skipped; hosts resolve them before export if needed).
+func flattenBlocks(blocks []model.Block) []model.Block {
+	out := make([]model.Block, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.Kind {
+		case model.BlockSynced:
+			continue
+		case model.BlockToggle:
+			title := b
+			title.Children = nil
+			out = append(out, title)
+			out = append(out, flattenBlocks(b.Children)...)
+		default:
+			leaf := b
+			kids := b.Children
+			leaf.Children = nil
+			out = append(out, leaf)
+			if len(kids) > 0 {
+				out = append(out, flattenBlocks(kids)...)
+			}
+		}
+	}
+	return out
 }
 
 // buildSlide renders one Section to a ppt/slides/slideN.xml document and its
