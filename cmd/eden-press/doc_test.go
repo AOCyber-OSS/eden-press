@@ -56,7 +56,7 @@ func TestDocAgentCRUDFlow(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc["schemaVersion"] != "eden-press.model/v5" {
+	if doc["schemaVersion"] != "eden-press.model/v6" {
 		t.Fatalf("schemaVersion = %v", doc["schemaVersion"])
 	}
 
@@ -120,12 +120,70 @@ func TestDocImportMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"schemaVersion": "eden-press.model/v5"`) &&
-		!strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v5"`) {
+	if !strings.Contains(string(raw), `"schemaVersion": "eden-press.model/v6"`) &&
+		!strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v6"`) {
 		t.Fatalf("import JSON: %s", raw)
 	}
 	if !strings.Contains(string(raw), "Title") {
 		t.Fatalf("missing Title: %s", raw)
+	}
+}
+
+func TestDocImportApplyExportRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	mdPath := filepath.Join(dir, "deck.md")
+	page := filepath.Join(dir, "page.json")
+	ops := filepath.Join(dir, "ops.json")
+	outMD := filepath.Join(dir, "out.md")
+	if err := os.WriteFile(mdPath, []byte("---\ntheme: default\n---\n\n# Title\n\nHello.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "import", mdPath, "-o", page})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	raw, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"id"`) {
+		t.Fatalf("import must assign block ids: %s", raw)
+	}
+
+	if err := os.WriteFile(ops, []byte(`[
+		{"op":"insert_block","sectionId":1,"block":{"kind":"toggle","text":"More","children":[
+			{"kind":"paragraph","text":"Nested"}
+		]}},
+		{"op":"insert_block","sectionId":1,"block":{"kind":"code","language":"go","text":"fmt.Println(1)"}}
+	]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "apply", page, "--ops", ops, "-o", page})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "export", page, "-o", outMD})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	md, err := os.ReadFile(outMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(md)
+	if !strings.Contains(got, "# Title") || !strings.Contains(got, "<details") || !strings.Contains(got, "```go") {
+		t.Fatalf("export md = %s", got)
 	}
 }
 
