@@ -32,12 +32,37 @@ import (
 
 // WorkbookSchema is the versioned JSON shape a host embeds and eden-ui edits.
 // xlsx remains the interchange file; this schema is the editing snapshot.
-// Writers emit v2, one object per occupied cell. Readers still accept v1,
-// whose row and cell arrays use position as the coordinate.
+// Writers emit v3 (columns, row ids, relation refs). Readers still accept
+// v2 and v1.
 const (
-	WorkbookSchema   = "eden-press.workbook/v2"
+	WorkbookSchema   = "eden-press.workbook/v3"
+	workbookSchemaV2 = "eden-press.workbook/v2"
 	workbookSchemaV1 = "eden-press.workbook/v1"
 )
+
+// ColumnType is a typed property on a sheet column (workbook v3).
+type ColumnType string
+
+const (
+	ColumnText     ColumnType = "text"
+	ColumnNumber   ColumnType = "number"
+	ColumnFormula  ColumnType = "formula"
+	ColumnRelation ColumnType = "relation"
+)
+
+// Column is a named typed property (workbook v3).
+type Column struct {
+	ID   string     `json:"id"`
+	Name string     `json:"name"`
+	Type ColumnType `json:"type"`
+}
+
+// RelationRef points at a row (optionally on another page/sheet).
+type RelationRef struct {
+	RowID  string `json:"rowId"`
+	PageID string `json:"pageId,omitempty"`
+	Sheet  string `json:"sheet,omitempty"`
+}
 
 // Excel's worksheet limits. A cell outside them cannot be written, and
 // emitting a row past the limit produces a workbook Excel refuses to open.
@@ -59,12 +84,15 @@ type Workbook struct {
 // stored as a formula (the "=" is not part of the Excel expression). Get
 // returns that "=" again, so Set(Get()) round-trips.
 type Sheet struct {
-	name   string
-	cells  map[int]map[int]storedCell
-	header map[int]bool
-	aligns []string
-	maxRow int
-	maxCol int
+	name     string
+	cells    map[int]map[int]storedCell
+	header   map[int]bool
+	aligns   []string
+	columns  []Column
+	rowIDs   map[int]string                 // row index -> stable id
+	relCells map[int]map[int][]RelationRef // row -> col -> refs
+	maxRow   int
+	maxCol   int
 }
 
 type storedCell struct {
@@ -255,11 +283,13 @@ func (s *Sheet) Align(col int) string {
 
 func newSheet(name string) *Sheet {
 	return &Sheet{
-		name:   name,
-		cells:  map[int]map[int]storedCell{},
-		header: map[int]bool{},
-		maxRow: -1,
-		maxCol: -1,
+		name:     name,
+		cells:    map[int]map[int]storedCell{},
+		header:   map[int]bool{},
+		rowIDs:   map[int]string{},
+		relCells: map[int]map[int][]RelationRef{},
+		maxRow:   -1,
+		maxCol:   -1,
 	}
 }
 
@@ -387,11 +417,18 @@ type workbookSnapshot struct {
 }
 
 type sheetSnapshot struct {
-	Name       string         `json:"name"`
-	Aligns     []string       `json:"aligns,omitempty"`
-	Rows       []rowSnapshot  `json:"rows,omitempty"`
-	HeaderRows []int          `json:"headerRows,omitempty"`
-	Cells      []cellSnapshot `json:"cells,omitempty"`
+	Name       string             `json:"name"`
+	Aligns     []string           `json:"aligns,omitempty"`
+	Columns    []Column           `json:"columns,omitempty"`
+	RowIDs     []rowIDSnapshot    `json:"rowIds,omitempty"`
+	Rows       []rowSnapshot      `json:"rows,omitempty"`
+	HeaderRows []int              `json:"headerRows,omitempty"`
+	Cells      []cellSnapshot     `json:"cells,omitempty"`
+}
+
+type rowIDSnapshot struct {
+	R  int    `json:"r"`
+	ID string `json:"id"`
 }
 
 type rowSnapshot struct {
@@ -404,10 +441,11 @@ type rowSnapshot struct {
 // the literal text. A formula cell omits v. v1 snapshots omit r and c; the
 // array position is the coordinate.
 type cellSnapshot struct {
-	R int    `json:"r"`
-	C int    `json:"c"`
-	V string `json:"v,omitempty"`
-	F string `json:"f,omitempty"`
+	R    int           `json:"r"`
+	C    int           `json:"c"`
+	V    string        `json:"v,omitempty"`
+	F    string        `json:"f,omitempty"`
+	Rels []RelationRef `json:"rels,omitempty"`
 }
 
 // MarshalJSON writes the editing snapshot (WorkbookSchema). Only occupied
@@ -423,22 +461,26 @@ func (w *Workbook) MarshalJSON() ([]byte, error) {
 	return json.Marshal(snap)
 }
 
-// ParseWorkbook reads a v2 snapshot, and still reads a v1 snapshot.
+// ParseWorkbook reads a v3 snapshot, and still reads v2 and v1.
 func ParseWorkbook(b []byte) (*Workbook, error) {
 	var snap workbookSnapshot
 	if err := json.Unmarshal(b, &snap); err != nil {
 		return nil, fmt.Errorf("xlsx: workbook json: %w", err)
 	}
 	switch snap.Schema {
-	case WorkbookSchema, workbookSchemaV1:
+	case WorkbookSchema, workbookSchemaV2, workbookSchemaV1:
 	default:
-		return nil, fmt.Errorf("xlsx: workbook schema %q, want %s or %s", snap.Schema, WorkbookSchema, workbookSchemaV1)
+		return nil, fmt.Errorf("xlsx: workbook schema %q, want %s, %s, or %s", snap.Schema, WorkbookSchema, workbookSchemaV2, workbookSchemaV1)
 	}
 	wb := NewWorkbook(snap.Title)
 	for _, sh := range snap.Sheets {
 		sheet, err := wb.AddSheet(sh.Name)
 		if err != nil {
 			return nil, err
+		}
+		sheet.columns = append([]Column{}, sh.Columns...)
+		for _, rid := range sh.RowIDs {
+			sheet.rowIDs[rid.R] = rid.ID
 		}
 		for col, align := range sh.Aligns {
 			if align == "" {
@@ -489,16 +531,22 @@ func applyCell(sheet *Sheet, row, col int, cell cellSnapshot) error {
 		return fmt.Errorf("xlsx: cell %d,%d has both v and f", row, col)
 	}
 	if cell.F != "" {
-		return sheet.Set(row, col, "="+cell.F)
+		if err := sheet.Set(row, col, "="+cell.F); err != nil {
+			return err
+		}
+	} else if cell.V != "" {
+		if err := sheet.Set(row, col, cell.V); err != nil {
+			return err
+		}
 	}
-	if cell.V == "" {
-		return nil
+	if len(cell.Rels) > 0 {
+		return sheet.SetRelations(row, col, cell.Rels)
 	}
-	return sheet.Set(row, col, cell.V)
+	return nil
 }
 
 func (s *Sheet) snapshot() sheetSnapshot {
-	out := sheetSnapshot{Name: s.name, Cells: []cellSnapshot{}}
+	out := sheetSnapshot{Name: s.name, Cells: []cellSnapshot{}, Columns: append([]Column{}, s.columns...)}
 	trimmed := trimAligns(s.aligns)
 	if len(trimmed) > 0 {
 		out.Aligns = trimmed
@@ -509,12 +557,33 @@ func (s *Sheet) snapshot() sheetSnapshot {
 		}
 	}
 	sort.Ints(out.HeaderRows)
+	for row, id := range s.rowIDs {
+		if id != "" {
+			out.RowIDs = append(out.RowIDs, rowIDSnapshot{R: row, ID: id})
+		}
+	}
+	sort.Slice(out.RowIDs, func(i, j int) bool { return out.RowIDs[i].R < out.RowIDs[j].R })
 	type addr struct{ row, col int }
 	var addrs []addr
+	seen := map[addr]bool{}
 	for row, cols := range s.cells {
 		for col, cell := range cols {
 			if cellOccupied(cell) {
-				addrs = append(addrs, addr{row, col})
+				a := addr{row, col}
+				addrs = append(addrs, a)
+				seen[a] = true
+			}
+		}
+	}
+	for row, cols := range s.relCells {
+		for col, refs := range cols {
+			if len(refs) == 0 {
+				continue
+			}
+			a := addr{row, col}
+			if !seen[a] {
+				addrs = append(addrs, a)
+				seen[a] = true
 			}
 		}
 	}
@@ -527,10 +596,15 @@ func (s *Sheet) snapshot() sheetSnapshot {
 	for _, a := range addrs {
 		cell, _ := s.at(a.row, a.col)
 		snap := cellSnapshot{R: a.row, C: a.col}
-		if cell.formula {
-			snap.F = cell.text
-		} else {
-			snap.V = cell.text
+		if cell.set {
+			if cell.formula {
+				snap.F = cell.text
+			} else {
+				snap.V = cell.text
+			}
+		}
+		if refs := s.relCells[a.row][a.col]; len(refs) > 0 {
+			snap.Rels = append([]RelationRef{}, refs...)
 		}
 		out.Cells = append(out.Cells, snap)
 	}
