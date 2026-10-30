@@ -32,7 +32,7 @@ ModelDocument _doc({
   Map<String, String> directives = const {},
 }) {
   return ModelDocument(
-    schemaVersion: 'eden-press.model/v4',
+    schemaVersion: 'eden-press.model/v5',
     meta: Meta(directives: directives),
     sections: sections,
     outline: const [],

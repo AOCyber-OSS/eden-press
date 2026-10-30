@@ -185,18 +185,17 @@ class ModelDocument {
 
   /// The wire shape this binding understands.
   ///
-  /// Moved v3 -> v4 with AODex Objective 16, which added an optional `span`
-  /// (a half-open `[start, stop)` BYTE range into the Markdown source) to
-  /// sections, blocks and outline entries. v4 is a STRICT SUPERSET of v3 --
+  /// Moved v3 -> v4 with AODex Objective 16 (`span`); v4 -> v5 with the AI
+  /// doc-ops spike (optional block `id`). v5 is a STRICT SUPERSET of v4 --
   /// no field was removed, renamed or re-classified -- so this binding parses
-  /// a v4 document correctly whether or not it reads the new key.
+  /// a v5 document correctly whether or not it reads the new key.
   ///
   /// The `span` offsets are BYTES. Dart strings are UTF-16, so any code that
   /// indexes a source string with one MUST convert first; a raw byte offset
   /// will be wrong for every position after the first multi-byte character.
   /// This class does not yet surface spans -- reading them is deliberately
   /// left to the consumer that needs them, along with that conversion.
-  static const expectedSchemaVersion = 'eden-press.model/v4';
+  static const expectedSchemaVersion = 'eden-press.model/v5';
 
   final String schemaVersion;
   final Meta meta;
@@ -311,6 +310,7 @@ BlockKind _blockKindFromWire(String value) {
 /// blocks. [display] distinguishes display-mode (`$$`) vs inline (`$`) math.
 class Block {
   const Block({
+    this.id = '',
     required this.kind,
     required this.text,
     required this.level,
@@ -324,6 +324,10 @@ class Block {
     this.src = '',
     this.title = '',
   });
+
+  /// Stable block id for apply_ops (schema v5). Empty on Build()-produced
+  /// Markdown imports until an editor/agent assigns one.
+  final String id;
 
   final BlockKind kind;
   final String text;
@@ -355,6 +359,7 @@ class Block {
   factory Block.fromJson(Map<String, dynamic> json) {
     final itemsJson = json['items'];
     return Block(
+      id: json['id'] as String? ?? '',
       kind: _blockKindFromWire(json['kind'] as String? ?? ''),
       text: json['text'] as String? ?? '',
       level: json['level'] as int? ?? 0,

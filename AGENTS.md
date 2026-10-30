@@ -3,12 +3,51 @@
 `eden-press` is a pure-Go CLI: it converts a Marp-compatible Markdown deck to
 static output with **no browser, no Node, and no JavaScript runtime**. This
 document is the scriptable contract an AI agent (or any non-interactive
-caller) needs to inspect and export a deck without reading the Go source.
+caller) needs to inspect, create, edit, and export documents without reading
+the Go source.
+
+**Source of truth for live documents is the docmodel** (`eden-press.model/v5`
+JSON), not Markdown. Markdown remains the import/export prose format
+(`doc import`, `--format html`/`pptx`/…). Agents should create and edit via
+`eden-press doc` ops against JSON pages; do not rewrite Markdown as the
+primary edit path.
 
 The whole surface described here is CI-enforced chromedp-free:
 `scripts/check-no-chromedp.sh` scans `./cmd/...`'s transitive dependency
 closure (alongside `./press/...`, `./chase/...`, `./profiles/...`,
 `./bind/...`) and fails the build if `chromedp` ever appears in it.
+
+## Docmodel CRUD (`eden-press doc`)
+
+Agent write surface (CLI first; an MCP server can wrap these later). Always
+prints a JSON error envelope on stderr on failure (even without `--format json`).
+
+| Command | Purpose |
+|---|---|
+| `doc create [--title T] [-o page.json]` | Empty single-section page JSON |
+| `doc get <page.json\|->` | Validate / pretty-print page JSON |
+| `doc apply <page.json\|-> --ops ops.json [-o out.json]` | Apply insert/update/delete block ops |
+| `doc import <in.md\|-> [-o page.json]` | Markdown → docmodel JSON via `press.Render` |
+
+`apply` ops JSON may be a bare array or `{"ops":[...]}`. Spike kinds:
+`paragraph` and `heading` only. Each block may carry a stable string `id`
+(auto-assigned as `b_N` when omitted on insert).
+
+```bash
+# Create → edit → read (agent flow):
+eden-press doc create --title "Q3" -o page.json
+cat > ops.json <<'EOF'
+[
+  {"op":"insert_block","sectionId":1,"block":{"id":"b_title","kind":"heading","level":1,"text":"Q3 plan"}},
+  {"op":"insert_block","sectionId":1,"block":{"id":"b_p","kind":"paragraph","text":"Ship the spike."}}
+]
+EOF
+eden-press doc apply page.json --ops ops.json -o page.json
+eden-press doc get page.json | jq '.outline'
+
+# Import existing Markdown into the docmodel:
+eden-press doc import deck.md -o page.json
+```
 
 ## Formats (`--format`)
 
@@ -166,10 +205,12 @@ Field notes an agent must get right:
   `![alt](src "title")` third argument in `title`. A **quote** block carries its
   concatenated text in `text` (multi-paragraph quotes are joined by a blank
   line; nested quotes are flattened in document order).
-- `model` is exactly `chase/model.Document`'s own schema-v3 JSON shape,
+- `model` is exactly `chase/model.Document`'s own schema-v5 JSON shape,
   reused verbatim; `cmd/eden-press` itself never imports that package
   directly (it re-marshals the already-typed value through `any`), but the
   wire shape is stable and versioned independently of Marp/goldmark churn.
+- Schema v5 adds optional `block.id` (string) for `doc apply` addressing.
+  `Build`/Markdown import leaves `id` absent; agents assign ids on create.
 
 ## Exit codes
 
