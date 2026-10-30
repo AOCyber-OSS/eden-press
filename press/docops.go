@@ -57,8 +57,8 @@ func ApplyOpsJSON(docJSON, opsJSON []byte) ([]byte, error) {
 }
 
 // ImportMarkdownModelJSON renders md through press.Render and returns only
-// the docmodel JSON (no html/css envelope). This is the agent import_markdown
-// path: prose in, structured Document out.
+// the docmodel JSON (no html/css envelope). Block ids are assigned so the
+// result is immediately editable via ApplyOps.
 func ImportMarkdownModelJSON(md []byte, opts Options) ([]byte, error) {
 	out, err := Render(string(md), opts)
 	if err != nil {
@@ -67,11 +67,13 @@ func ImportMarkdownModelJSON(md []byte, opts Options) ([]byte, error) {
 	if out.Model == nil {
 		return nil, fmt.Errorf("press.ImportMarkdownModelJSON: render returned nil model")
 	}
+	model.EnsureBlockIDs(out.Model)
+	out.Model.SchemaVersion = model.SchemaVersion
 	return json.MarshalIndent(out.Model, "", "  ")
 }
 
-// GetDocJSON validates docJSON as a Document and returns indented JSON.
-// Useful as a read/normalize step for agents.
+// GetDocJSON validates docJSON as a Document, ensures block ids, and returns
+// indented JSON.
 func GetDocJSON(docJSON []byte) ([]byte, error) {
 	var doc model.Document
 	if err := json.Unmarshal(docJSON, &doc); err != nil {
@@ -80,7 +82,18 @@ func GetDocJSON(docJSON []byte) ([]byte, error) {
 	if doc.SchemaVersion == "" {
 		doc.SchemaVersion = model.SchemaVersion
 	}
+	model.EnsureBlockIDs(&doc)
 	return json.MarshalIndent(&doc, "", "  ")
+}
+
+// ExportMarkdownJSON converts a docmodel JSON document to Marp-compatible
+// Markdown bytes.
+func ExportMarkdownJSON(docJSON []byte) ([]byte, error) {
+	var doc model.Document
+	if err := json.Unmarshal(docJSON, &doc); err != nil {
+		return nil, fmt.Errorf("press.ExportMarkdownJSON: %w", err)
+	}
+	return []byte(model.ToMarkdown(&doc)), nil
 }
 
 type opsEnvelope struct {

@@ -47,7 +47,8 @@ Subcommands:
   create   empty page JSON
   get      validate / pretty-print a page JSON
   apply    apply_ops batch to a page JSON
-  import   Markdown -> docmodel JSON via press.Render
+  import   Markdown -> docmodel JSON via press.Render (assigns block ids)
+  export   docmodel JSON -> Marp-compatible Markdown
 
 Pitfall: a file literally named "doc" conflicts with this subcommand; use
 "eden-press convert -- doc" for Markdown convert of such a path.`,
@@ -57,7 +58,29 @@ Pitfall: a file literally named "doc" conflicts with this subcommand; use
 		newDocGetCmd(),
 		newDocApplyCmd(),
 		newDocImportCmd(),
+		newDocExportCmd(),
 	)
+	return cmd
+}
+
+func newDocExportCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "export <doc.json|->",
+		Short: "Export docmodel JSON to Marp-compatible Markdown",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			in, err := readPathOrStdin(cmd, args[0])
+			if err != nil {
+				return docFail(cmd, exitRender, err)
+			}
+			raw, err := press.ExportMarkdownJSON(in)
+			if err != nil {
+				return docFail(cmd, exitRender, err)
+			}
+			return writeDocOutputBytes(cmd, raw)
+		},
+	}
+	cmd.Flags().StringP("output", "o", "", `output file path; "" writes to stdout`)
 	return cmd
 }
 
