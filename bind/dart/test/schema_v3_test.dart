@@ -144,7 +144,32 @@ void main() {
   });
 
   test('Case 7: the binding records the wire shape it now understands', () {
-    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v5');
+    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v6');
+  });
+
+  test('Case 8: toggle and synced blocks parse children and syncRef', () {
+    final out = _doc([
+      {
+        'id': 'b_tog',
+        'kind': 'toggle',
+        'text': 'Details',
+        'collapsed': true,
+        'children': [
+          {'kind': 'paragraph', 'text': 'Nested'},
+        ],
+      },
+      {
+        'id': 'b_sync',
+        'kind': 'synced',
+        'syncRef': {'blockId': 'b_tog', 'pageId': ''},
+      },
+    ]);
+    final blocks = out.model.sections.single.blocks;
+    expect(blocks[0].kind, BlockKind.toggle);
+    expect(blocks[0].collapsed, isTrue);
+    expect(blocks[0].children.single.text, 'Nested');
+    expect(blocks[1].kind, BlockKind.synced);
+    expect(blocks[1].syncRef?['blockId'], 'b_tog');
   });
 }
 

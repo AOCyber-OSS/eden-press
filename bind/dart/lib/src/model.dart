@@ -195,7 +195,7 @@ class ModelDocument {
   /// will be wrong for every position after the first multi-byte character.
   /// This class does not yet surface spans -- reading them is deliberately
   /// left to the consumer that needs them, along with that conversion.
-  static const expectedSchemaVersion = 'eden-press.model/v5';
+  static const expectedSchemaVersion = 'eden-press.model/v6';
 
   final String schemaVersion;
   final Meta meta;
@@ -278,6 +278,8 @@ enum BlockKind {
   table,
   image,
   quote,
+  toggle,
+  synced,
   unknown,
 }
 
@@ -299,6 +301,10 @@ BlockKind _blockKindFromWire(String value) {
       return BlockKind.image;
     case 'quote':
       return BlockKind.quote;
+    case 'toggle':
+      return BlockKind.toggle;
+    case 'synced':
+      return BlockKind.synced;
     default:
       return BlockKind.unknown;
   }
@@ -323,9 +329,12 @@ class Block {
     this.aligns = const <String>[],
     this.src = '',
     this.title = '',
+    this.children = const <Block>[],
+    this.collapsed = false,
+    this.syncRef,
   });
 
-  /// Stable block id for apply_ops (schema v5). Empty on Build()-produced
+  /// Stable block id for apply_ops (schema v5+). Empty on Build()-produced
   /// Markdown imports until an editor/agent assigns one.
   final String id;
 
@@ -356,8 +365,19 @@ class Block {
   /// argument.
   final String title;
 
+  /// Nested children (schema v6).
+  final List<Block> children;
+
+  /// Toggle collapsed default (schema v6).
+  final bool collapsed;
+
+  /// Synced-block source ref (schema v6).
+  final Map<String, String>? syncRef;
+
   factory Block.fromJson(Map<String, dynamic> json) {
     final itemsJson = json['items'];
+    final childrenJson = json['children'];
+    final sync = json['syncRef'];
     return Block(
       id: json['id'] as String? ?? '',
       kind: _blockKindFromWire(json['kind'] as String? ?? ''),
@@ -382,6 +402,17 @@ class Block {
       aligns: _stringList(json['aligns']),
       src: json['src'] as String? ?? '',
       title: json['title'] as String? ?? '',
+      children:
+          childrenJson is List
+              ? childrenJson
+                  .map((e) => Block.fromJson(e as Map<String, dynamic>))
+                  .toList()
+              : const <Block>[],
+      collapsed: json['collapsed'] as bool? ?? false,
+      syncRef:
+          sync is Map
+              ? sync.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''))
+              : null,
     );
   }
 }

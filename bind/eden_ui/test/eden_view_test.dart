@@ -32,7 +32,7 @@ ModelDocument _doc({
   Map<String, String> directives = const {},
 }) {
   return ModelDocument(
-    schemaVersion: 'eden-press.model/v5',
+    schemaVersion: 'eden-press.model/v6',
     meta: Meta(directives: directives),
     sections: sections,
     outline: const [],
@@ -93,16 +93,36 @@ void main() {
     final sheet = book.addSheet('FY');
     sheet.setCell(0, 0, '100');
     sheet.setCell(0, 1, '=A1*2');
+    sheet.ensureRowId(0, 'r_a');
+    sheet.ensureRowId(1, 'r_b');
+    sheet.setColumn(const EdenColumn(id: 'rel', name: 'Related', type: 'relation'));
+    sheet.setRelations(0, 0, [const EdenRelationRef(rowId: 'r_b')]);
     final json = book.toJson();
     expect(json['schema'], workbookSchema);
     final parsed = EdenWorkbook.fromJson(json);
     expect(parsed.title, 'Budget');
     expect(parsed.cell('FY', 0, 0), '100');
     expect(parsed.cell('FY', 0, 1), '=A1*2');
+    expect(parsed.sheet('FY')!.rowId(0), 'r_a');
+    expect(parsed.sheet('FY')!.columns.single.id, 'rel');
+    expect(parsed.sheet('FY')!.relations(0, 0).single.rowId, 'r_b');
     expect(
       () => EdenWorkbook.fromJson({'schema': 'nope', 'sheets': []}),
       throwsFormatException,
     );
+
+    final v2 = EdenWorkbook.fromJson({
+      'schema': workbookSchemaV2,
+      'sheets': [
+        {
+          'name': 'FY',
+          'cells': [
+            {'r': 0, 'c': 0, 'v': 'x'},
+          ],
+        },
+      ],
+    });
+    expect(v2.cell('FY', 0, 0), 'x');
 
     final legacy = EdenWorkbook.fromJson({
       'schema': workbookSchemaV1,
