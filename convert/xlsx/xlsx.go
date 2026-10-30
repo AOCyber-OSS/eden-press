@@ -96,6 +96,29 @@ func ToXLSX(doc *model.Document, opts Options) ([]byte, error) {
 		title = inferTitle(doc)
 	}
 
+	packed := make([]packedSheet, len(sheets))
+	for i, s := range sheets {
+		packed[i] = packedSheet{name: names[i], grid: s.grid}
+	}
+	return packWorkbook(title, packed)
+}
+
+// packedSheet is one worksheet ready for the OPC packager.
+type packedSheet struct {
+	name string
+	grid sheetRows
+}
+
+// packWorkbook writes the OOXML package. sheets must be non-empty: a workbook
+// with zero worksheets is not a valid xlsx file.
+func packWorkbook(title string, sheets []packedSheet) ([]byte, error) {
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("xlsx: workbook has no sheets")
+	}
+	if title == "" {
+		title = "Workbook"
+	}
+
 	overrides := []contentTypeOverride{
 		{PartName: "/xl/workbook.xml", ContentType: ctWorkbook},
 		{PartName: "/xl/styles.xml", ContentType: ctStyles},
@@ -111,7 +134,7 @@ func ToXLSX(doc *model.Document, opts Options) ([]byte, error) {
 		num := i + 1
 		name := fmt.Sprintf("xl/worksheets/sheet%d.xml", num)
 		sheetRefs = append(sheetRefs, sheetRef{
-			Name:    names[i],
+			Name:    s.name,
 			SheetID: num,
 			RelID:   fmt.Sprintf("rId%d", num),
 			Target:  fmt.Sprintf("worksheets/sheet%d.xml", num),

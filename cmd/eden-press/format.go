@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.aocyber.ai/eden-press/convert/pptx"
+	"go.aocyber.ai/eden-press/convert/xlsx"
 	"go.aocyber.ai/eden-press/press"
 )
 
@@ -131,9 +132,9 @@ func cliFail(cmd *cobra.Command, code int, err error) error {
 // emitFormat is the ONE format-dispatch seam: html routes through the
 // existing assembleHTML/writeOutput string pipeline (unchanged --
 // Objective 4's CLI-01 byte-for-byte output), json routes through
-// writeJSON, and pptx routes through writePPTX (04.1-02: the stdlib-OOXML,
-// zero-chromedp convert/pptx.ToPPTX exporter). An unknown value is a usage
-// error (exit 2).
+// writeJSON, pptx routes through writePPTX, and xlsx routes through
+// writeXLSX (the stdlib SpreadsheetML exporter). An unknown value is a
+// usage error (exit 2).
 func emitFormat(cmd *cobra.Command, out press.Output) error {
 	switch f := cfg.String("format"); f {
 	case "", "html":
@@ -143,9 +144,22 @@ func emitFormat(cmd *cobra.Command, out press.Output) error {
 		return writeJSON(cmd, out)
 	case "pptx":
 		return writePPTX(cmd, out)
+	case "xlsx":
+		return writeXLSX(cmd, out)
 	default:
-		return cliFail(cmd, exitUsage, fmt.Errorf("unknown --format %q (want html|json|pptx)", f))
+		return cliFail(cmd, exitUsage, fmt.Errorf("unknown --format %q (want html|json|pptx|xlsx)", f))
 	}
+}
+
+// writeXLSX renders out.Model through convert/xlsx.ToXLSX. The workbook is
+// the Sheets document; this flag is the file interchange, same posture as
+// pptx. A nil model fails through cliFail(exitRender).
+func writeXLSX(cmd *cobra.Command, out press.Output) error {
+	b, err := xlsx.ToXLSX(out.Model, xlsx.Options{})
+	if err != nil {
+		return cliFail(cmd, exitRender, fmt.Errorf("format xlsx: %w", err))
+	}
+	return writeOutputBytes(cmd, b)
 }
 
 // writePPTX renders out.Model -- already a *chase/model.Document, typed by

@@ -22,6 +22,7 @@ and `watch`) selects the destination — a file path, or stdout when unset.
 | `html` (default) | Standalone, zero-JS `<!doctype html>` document | ALWAYS zero `<script>` tags — there is no browser-side auto-fit splice option. `<!--fit-->`/shrink markers (`data-auto-scaling="fit"`, `marp-fit-shrink`) are still emitted into the HTML but are inert on this path: auto-fit is Flutter-only, consumed by the Dart binding's native TextPainter fit |
 | `json` | The full render `press.Output`, as a lowercase JSON envelope (below) | For programmatic inspection — no browser needed |
 | `pptx` | An editable `.pptx` (OOXML zip), built directly from the docmodel | Binary — **always use `-o out.pptx`**, never rely on stdout in a script that also wants to read text |
+| `xlsx` | An editable `.xlsx` workbook (OOXML zip). Markdown tables become worksheets; a document with no tables becomes one prose sheet | Binary — **always use `-o out.xlsx`**. This is the Sheets interchange file. Building and editing a workbook in-process uses `convert/xlsx.Workbook` (`AddSheet`, `Set`, `Open`, `MarshalJSON`); `--format xlsx` is the file export. The file stores occupied cells only |
 
 ```bash
 # Inspect a deck's structure (defaults to stdout; pipe into jq/etc.):
@@ -30,9 +31,25 @@ eden-press deck.md --format json | jq '.model.outline'
 # Export an editable PowerPoint deck, zero Chrome:
 eden-press deck.md -o slides.pptx --format pptx
 
+# Export an editable workbook, zero Chrome:
+eden-press deck.md -o book.xlsx --format xlsx
+
 # Export via the explicit "convert" subcommand (identical to the bare default):
 eden-press convert deck.md --output slides.pptx --format pptx
 ```
+
+## Workbook snapshot
+
+`Workbook.MarshalJSON` (and the Flutter `EdenWorkbook.toJson`) writes
+`eden-press.workbook/v2`. Each occupied cell is `{ "r", "c", "v" }` or
+`{ "r", "c", "f" }` with 0-based coordinates. `f` is the formula without
+`=`. `headerRows` is a list of header-row indexes. `aligns` stays one entry
+per column. Blank cells are omitted, so a value on the last Excel row does
+not expand the snapshot to the whole grid.
+
+`ParseWorkbook` and `EdenWorkbook.fromJson` still read
+`eden-press.workbook/v1`. In v1, `sheets[].rows[].cells[]` is rectangular
+and the array position is the coordinate. New snapshots are v2.
 
 PNG/PDF export is intentionally **not** part of this binary (it requires
 Chrome); that lives in the separate `eden-press-export` binary — see
@@ -43,7 +60,7 @@ unaffected by `--format` beyond what's documented above.
 
 Raster (PDF/PNG) export lives in `cmd/eden-press-export` — a **SEPARATE,
 Chrome-requiring binary**, not a flag on `eden-press`. The core `eden-press`
-binary documented above stays browserless (`html`/`json`/`pptx`) always;
+binary documented above stays browserless (`html`/`json`/`pptx`/`xlsx`) always;
 raster export is an opt-in binary you install/build separately. This split
 is CI-enforced: `scripts/check-no-chromedp.sh` proves `eden-press`'s own
 dependency closure never contains `chromedp`, and separately proves
@@ -172,7 +189,7 @@ exits with the matching code above:
 { "error": { "code": 1, "message": "resolveInput: read file \"deck.md\": open deck.md: no such file or directory" } }
 ```
 
-For `--format html`/`--format pptx`, a failure prints the same message as
+For `--format html`/`--format pptx`/`--format xlsx`, a failure prints the same message as
 plain text to stderr (no JSON wrapping) with the same exit-code contract.
 
 ## Copy-paste examples
@@ -194,6 +211,6 @@ eden-press /no/such.md --format json
 ```
 
 No browser, no Node, no JavaScript runtime is ever invoked by any of the
-above — `html` and `json` are pure `press/`, and `pptx` is pure stdlib OOXML
-(`convert/pptx`). This is a CI-enforced invariant
+above — `html` and `json` are pure `press/`, and `pptx` / `xlsx` are pure stdlib OOXML
+(`convert/pptx`, `convert/xlsx`). This is a CI-enforced invariant
 (`scripts/check-no-chromedp.sh` covers `./cmd/...`), not just a convention.

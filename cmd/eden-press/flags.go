@@ -44,7 +44,7 @@ func registerPersistentFlags(root *cobra.Command) {
 	f.String("highlight-style", "", `chroma highlight style name; "" resolves chroma's own default`)
 	f.Bool("inline-svg", false, "select the inline-<svg><foreignObject> container mode (forward-compat; effectively always-on today)")
 	f.String("config", "", "explicit config file path override (read by 04-04's loadConfigSources)")
-	f.String("format", "html", "output format: html (default) | json | pptx (convert/default mode)")
+	f.String("format", "html", "output format: html (default) | json | pptx | xlsx (convert/default mode)")
 }
 
 // registerConvertFlags registers convert's local flags: --output/-o, the

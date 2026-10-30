@@ -431,16 +431,16 @@ func TestCenterAlignedColumn(t *testing.T) {
 	}
 }
 
-// The worksheet convert/xlsx produced for a table with NO Aligns, captured at
-// commit e88d9ae -- the commit immediately before per-column alignment landed.
-// Alignment is opt-in, so a table that asked for none must be untouched: same
-// cells, same styles, same frozen pane, same bytes.
+// The worksheet convert/xlsx produces for a table with NO Aligns. Alignment
+// is opt-in, so a table that asked for none must stay free of alignment
+// styles. The pin includes <dimension> and omits empty default-style cells;
+// refresh it only when that worksheet shape changes on purpose.
 //
-// A hash rather than the literal 830 bytes keeps the assertion readable; the
+// A hash rather than the literal bytes keeps the assertion readable; the
 // failure prints the actual part, which is what a reader needs.
 const (
-	noAlignsSheetSHA256 = "d4a717083bd0a03af66a7b0bc26fd6faaf492bafb5a0a25e1435e3d43c82cbd0"
-	noAlignsSheetLen    = 830
+	noAlignsSheetSHA256 = "4d43e47e5191e8c8d69b776705ad492cee3937f89d180cce859168ab15cf51a7"
+	noAlignsSheetLen    = 854
 )
 
 // TestNoAlignsWorksheetIsByteIdentical is the no-regression case: the blast
@@ -480,9 +480,10 @@ func TestAlignsRaggedRowDoesNotPanic(t *testing.T) {
 	if got := cellStyle(t, sheet, "A2"); got != xfRight {
 		t.Errorf("A2 style = %d, want %d", got, xfRight)
 	}
-	// Columns past the end of Aligns fall back to the default.
-	if got := cellStyle(t, sheet, "C2"); got != -1 {
-		t.Errorf("C2 style = %d, want no s attribute (beyond the Aligns slice)", got)
+	// The short row is padded in the grid, then empty default-style cells
+	// are omitted. C2 must not come back with a style from column A.
+	if strings.Contains(sheet, `<c r="C2"`) {
+		t.Errorf("padded empty C2 was written: %s", sheet)
 	}
 	if err := xmlWellFormed(sheet); err != nil {
 		t.Errorf("ragged sheet is not well-formed: %v", err)

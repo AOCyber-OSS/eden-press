@@ -186,6 +186,26 @@ func cellXML(ref, text string, xf int) string {
 		ref, style, escapeXML(text))
 }
 
+// formulaCell reports whether grid cell (r, c) is a formula. A nil or short
+// formula grid means "no" — the document exporter never sets one.
+func formulaCell(g sheetRows, r, c int) bool {
+	if r < 0 || r >= len(g.formula) || c < 0 || c >= len(g.formula[r]) {
+		return false
+	}
+	return g.formula[r][c]
+}
+
+// formulaXML writes a formula cell. formula is the Excel expression without
+// the leading "=". No cached <v> is emitted: this writer does not evaluate,
+// and a stale cached value would lie about the formula until Excel opened it.
+func formulaXML(ref, formula string, xf int) string {
+	style := ""
+	if xf != xfDefault {
+		style = fmt.Sprintf(` s="%d"`, xf)
+	}
+	return fmt.Sprintf(`<c r="%s"%s><f>%s</f></c>`, ref, style, escapeXML(formula))
+}
+
 // sheetRows is an ordered grid of cell text plus a flag marking which rows are
 // header rows. A header row is rendered bold (style xf 1), and when the FIRST
 // row of the sheet is a header it is also frozen -- see freezesHeader for why
@@ -197,6 +217,23 @@ type sheetRows struct {
 	// with different column counts and different alignments, so each row
 	// carries its own table's Aligns (nil when the table specified none).
 	aligns [][]string
+	// formula, when non-nil, marks cells whose text is an Excel formula
+	// WITHOUT the leading "=". Nil (the document exporter's path) leaves
+	// every cell a value, so a table that happens to contain "=" stays text.
+	formula [][]bool
+	// rowIndex, when non-nil, is the 0-based sheet row for each entry in
+	// rows. The workbook writer sets it so a cell on the last row does not
+	// pull every row above it into the file. Nil means rows are contiguous
+	// from row 0, which is the document exporter.
+	rowIndex []int
+	// freezeHeader forces a frozen first row. The workbook writer sets it
+	// from the sheet, because a sparse rowIndex makes headerRow[0] the
+	// first occupied row rather than sheet row 0.
+	freezeHeader bool
+	// cols is sheet-level column alignment. The workbook writer sets it so
+	// an empty cell in an aligned column inherits the style in Excel.
+	// Document export leaves it nil: stacked tables carry alignment per row.
+	cols []string
 }
 
 func (s *sheetRows) add(cells []string, header bool) {
@@ -217,36 +254,142 @@ func (s *sheetRows) addAligned(cells []string, header bool, aligns []string) {
 // sheet whose row 1 is a data row would pin an arbitrary record to the top of
 // the user's view -- worse than not freezing at all.
 func (s sheetRows) freezesHeader() bool {
+	if s.freezeHeader {
+		return true
+	}
+	if s.rowIndex != nil {
+		return false
+	}
 	return len(s.headerRow) > 0 && s.headerRow[0]
 }
 
 // buildSheetXML renders a worksheet part from a grid.
+//
+// Empty cells with the default style are omitted. A blank authored row, such
+// as the separator between stacked tables, stays an empty <row> so the gap
+// survives. Column alignment from g.cols is written as <cols>, which Excel
+// applies to cells that were never stored.
 func buildSheetXML(g sheetRows) []byte {
 	var b strings.Builder
 	b.WriteString(xmlDeclaration)
 	b.WriteString(fmt.Sprintf(`<worksheet xmlns="%s">`, nsSpreadsheet))
 
-	// <sheetViews> MUST precede <sheetData>: the schema fixes the order, and a
-	// pane emitted after the data is silently ignored -- the workbook still
-	// opens, nothing freezes, and only a test that asserts ORDER rather than
-	// presence would notice.
+	// Child order is fixed by the worksheet schema: dimension, sheetViews,
+	// cols, sheetData. A pane emitted after the data is silently ignored.
+	if ref := sheetDimension(g); ref != "" {
+		b.WriteString(`<dimension ref="` + ref + `"/>`)
+	}
 	if g.freezesHeader() {
 		b.WriteString(`<sheetViews><sheetView workbookViewId="0">`)
 		b.WriteString(`<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>`)
 		b.WriteString(`</sheetView></sheetViews>`)
 	}
+	b.WriteString(colsXML(g.cols))
 
 	b.WriteString(`<sheetData>`)
 	for r, cells := range g.rows {
-		b.WriteString(fmt.Sprintf(`<row r="%d">`, r+1))
+		rowNum := r
+		if g.rowIndex != nil {
+			rowNum = g.rowIndex[r]
+		}
+		b.WriteString(fmt.Sprintf(`<row r="%d">`, rowNum+1))
+		header := r < len(g.headerRow) && g.headerRow[r]
+		var aligns []string
+		if r < len(g.aligns) {
+			aligns = g.aligns[r]
+		}
 		for c, text := range cells {
-			xf := styleIndex(g.headerRow[r], alignAt(g.aligns[r], c))
-			b.WriteString(cellXML(columnRef(c)+strconv.Itoa(r+1), text, xf))
+			xf := styleIndex(header, alignAt(aligns, c))
+			isFormula := formulaCell(g, r, c)
+			if text == "" && !isFormula && xf == xfDefault {
+				continue
+			}
+			ref := columnRef(c) + strconv.Itoa(rowNum+1)
+			if isFormula {
+				b.WriteString(formulaXML(ref, text, xf))
+				continue
+			}
+			b.WriteString(cellXML(ref, text, xf))
 		}
 		b.WriteString(`</row>`)
 	}
 	b.WriteString(`</sheetData></worksheet>`)
 	return []byte(b.String())
+}
+
+// sheetDimension is the bounding box of the cells buildSheetXML will write.
+func sheetDimension(g sheetRows) string {
+	minR, maxR := -1, -1
+	minC, maxC := -1, -1
+	consider := func(row, col int) {
+		if minR < 0 || row < minR {
+			minR = row
+		}
+		if row > maxR {
+			maxR = row
+		}
+		if minC < 0 || col < minC {
+			minC = col
+		}
+		if col > maxC {
+			maxC = col
+		}
+	}
+	for i, cells := range g.rows {
+		rowNum := i
+		if g.rowIndex != nil {
+			rowNum = g.rowIndex[i]
+		}
+		header := i < len(g.headerRow) && g.headerRow[i]
+		var aligns []string
+		if i < len(g.aligns) {
+			aligns = g.aligns[i]
+		}
+		for c, text := range cells {
+			xf := styleIndex(header, alignAt(aligns, c))
+			if text == "" && !formulaCell(g, i, c) && xf == xfDefault {
+				continue
+			}
+			consider(rowNum, c)
+		}
+	}
+	if minR < 0 {
+		return ""
+	}
+	start := columnRef(minC) + strconv.Itoa(minR+1)
+	end := columnRef(maxC) + strconv.Itoa(maxR+1)
+	if start == end {
+		return start
+	}
+	return start + ":" + end
+}
+
+// colsXML writes <cols> for right- and center-aligned columns. "left" and
+// "" stay General, which is Excel's default, so they produce no <col>.
+func colsXML(aligns []string) string {
+	var b strings.Builder
+	open := false
+	for i, align := range aligns {
+		xf := xfDefault
+		switch align {
+		case "right":
+			xf = xfRight
+		case "center":
+			xf = xfCenter
+		default:
+			continue
+		}
+		if !open {
+			b.WriteString(`<cols>`)
+			open = true
+		}
+		b.WriteString(fmt.Sprintf(`<col min="%d" max="%d" style="%d"/>`, i+1, i+1, xf))
+	}
+	if !open {
+		return ""
+	}
+	b.WriteString(`</cols>`)
+	return b.String()
 }
 
 // sectionGrid flattens one section's table blocks into a single rectangular
