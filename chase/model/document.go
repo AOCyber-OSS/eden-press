@@ -88,7 +88,13 @@ package model
 // replicating headingDivider's SYNTHETIC thematic breaks (which appear in no
 // source text whatsoever) and goldmark's setext-heading precedence in another
 // language.
-const SchemaVersion = "eden-press.model/v4"
+//
+// v4 -> v5 (AI doc-ops spike): ADDITIVE stable Block.ID for agent/editor
+// apply_ops addressing. Build still leaves ID empty (Markdown has no block
+// ids); NewDocument/ApplyOps assign them. omitempty keeps Build JSON a
+// strict superset of v4 apart from this version string -- proven by
+// TestV5BuildIsAStrictSupersetOfV4.
+const SchemaVersion = "eden-press.model/v5"
 
 // Span is a half-open byte range [Start, Stop) into the Markdown source that
 // produced the node carrying it: source[Start:Stop] re-slices that node's
@@ -164,6 +170,13 @@ const (
 // raw code source and the raw math TeX are JSON-native and lossless here --
 // neither is recoverable from the rendered Output.HTML.
 type Block struct {
+	// ID is a stable block identifier for apply_ops / editor addressing
+	// (schema v5). Empty on Build()-produced blocks (Markdown has none);
+	// agents and ApplyOps assign ids when mutating a live document.
+	// omitempty so a Build render without ids stays a strict v4 superset
+	// apart from SchemaVersion.
+	ID string `json:"id,omitempty"`
+
 	// Kind is the block's discriminator (paragraph/list/code/math/heading).
 	Kind BlockKind `json:"kind"`
 
