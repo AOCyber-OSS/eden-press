@@ -31,6 +31,13 @@ library;
 
 export 'src/edit.dart';
 export 'src/eden_view.dart';
-export 'src/formula.dart' show FormulaError, displayCell, evaluateFormula, formatNumber;
+export 'src/formula.dart'
+    show
+        FormulaError,
+        displayCell,
+        evaluateFormula,
+        formatNumber,
+        formulaNowOverride,
+        formulaRandOverride;
 export 'src/kind.dart';
 export 'src/workbook.dart';

@@ -25,6 +25,7 @@ import 'dart:convert';
 import 'package:eden_press/eden_press.dart';
 import 'package:eden_ui/eden_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ModelDocument _doc({
@@ -233,6 +234,139 @@ void main() {
     expect(edit.row, 2);
     expect(edit.column, 0);
     expect(edit.value, '9');
+  });
+
+  testWidgets('a cell can be edited directly in the grid', (tester) async {
+    final book = EdenWorkbook();
+    final sheet = book.addSheet('FY');
+    sheet.setCell(0, 0, '10');
+    sheet.setCell(1, 0, '20');
+    sheet.setCell(2, 0, '=SUM(A1:A2)');
+    final edits = <EdenEdit>[];
+    await tester.pumpWidget(_app(EdenView(workbook: book, onEdit: edits.add)));
+
+    // First tap selects A3; second tap opens the in-cell editor.
+    await tester.tap(find.byKey(const Key('eden-cell-2-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('eden-cell-2-0')));
+    await tester.pump();
+    expect(find.byKey(const Key('eden-cell-editor')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('eden-cell-editor')),
+      '=A1*3',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+
+    expect(find.byKey(const Key('eden-cell-editor')), findsNothing);
+    expect(find.text('30'), findsOneWidget); // A1*3 with A1=10
+    expect(edits, hasLength(1));
+    final edit = edits.single as EdenCellEdit;
+    expect(edit.row, 2);
+    expect(edit.column, 0);
+    expect(edit.value, '=A1*3');
+  });
+
+  testWidgets('typing to edit keeps a caret after the first character', (
+    tester,
+  ) async {
+    final book = EdenWorkbook()..addSheet('FY');
+    book.setCell('FY', 0, 0, 'old');
+    await tester.pumpWidget(_app(EdenView(workbook: book)));
+
+    // Select B1 so A1 is no longer the editing target, then select A1 once
+    // (select only). A1 starts selected — tap B1 first.
+    await tester.tap(find.byKey(const Key('eden-cell-0-1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('eden-cell-0-0')));
+    await tester.pump();
+
+    // Type while selected (not yet editing) — seeds the editor with "a".
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    await tester.pump();
+    await tester.pump(); // focus select-all mitigation post-frame
+
+    expect(find.byKey(const Key('eden-cell-editor')), findsOneWidget);
+    final editor = tester.widget<TextField>(
+      find.byKey(const Key('eden-cell-editor')),
+    );
+    expect(editor.controller!.text.toLowerCase(), 'a');
+    expect(
+      editor.controller!.selection,
+      TextSelection.collapsed(offset: editor.controller!.text.length),
+    );
+
+    await tester.enterText(find.byKey(const Key('eden-cell-editor')), 'ab');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(find.text('ab'), findsWidgets);
+  });
+
+  testWidgets('Enter commits and moves down; Tab commits and moves right', (
+    tester,
+  ) async {
+    final book = EdenWorkbook()..addSheet('FY');
+    book.setCell('FY', 0, 0, 'start');
+    final edits = <EdenEdit>[];
+    await tester.pumpWidget(_app(EdenView(workbook: book, onEdit: edits.add)));
+
+    // A1 starts selected — open the editor.
+    await tester.tap(find.byKey(const Key('eden-cell-0-0')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('eden-cell-editor')), 'down');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(find.byKey(const Key('eden-cell-editor')), findsNothing);
+    expect(book.cell('FY', 0, 0), 'start'); // workbook copy is internal
+    expect(edits, hasLength(1));
+    expect((edits.single as EdenCellEdit).value, 'down');
+    expect((edits.single as EdenCellEdit).row, 0);
+    // Selection moved to A2 — formula bar shows A2's empty value.
+    final bar = tester.widget<TextField>(
+      find.byKey(const Key('eden-formula-bar')),
+    );
+    expect(bar.controller!.text, '');
+    // Address label shows A2.
+    expect(find.text('A2'), findsOneWidget);
+
+    // Edit A2, Tab to B2.
+    await tester.tap(find.byKey(const Key('eden-cell-1-0')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('eden-cell-editor')), 'right');
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+
+    expect(edits, hasLength(2));
+    expect((edits[1] as EdenCellEdit).value, 'right');
+    expect((edits[1] as EdenCellEdit).row, 1);
+    expect((edits[1] as EdenCellEdit).column, 0);
+    expect(find.text('B2'), findsOneWidget);
+  });
+
+  testWidgets('Escape cancels an in-cell edit', (tester) async {
+    final book = EdenWorkbook()..addSheet('FY');
+    book.setCell('FY', 0, 0, 'keep');
+    final edits = <EdenEdit>[];
+    await tester.pumpWidget(_app(EdenView(workbook: book, onEdit: edits.add)));
+
+    // A1 starts selected — one tap opens the editor.
+    await tester.tap(find.byKey(const Key('eden-cell-0-0')));
+    await tester.pump();
+    expect(find.byKey(const Key('eden-cell-editor')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('eden-cell-editor')), 'gone');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+
+    expect(find.byKey(const Key('eden-cell-editor')), findsNothing);
+    expect(find.text('gone'), findsNothing);
+    final bar = tester.widget<TextField>(
+      find.byKey(const Key('eden-formula-bar')),
+    );
+    expect(bar.controller!.text, 'keep');
+    expect(edits, isEmpty);
   });
 
   testWidgets('a tall sheet builds the viewport and scrolls to a far row', (

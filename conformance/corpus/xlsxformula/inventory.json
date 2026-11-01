@@ -1,0 +1,1843 @@
+{
+  "schema": "eden-press.xlsxformula.inventory/v1",
+  "pinned": "2026-10-30",
+  "source": {
+    "name": "excelize CalcCellValue supported-function header",
+    "module": "github.com/xuri/excelize/v2",
+    "version": "v2.10.0",
+    "license": "BSD-3-Clause",
+    "note": "Coverage denominator REFERENCE only \u2014 not a runtime dependency. Eden-press does not import excelize."
+  },
+  "decisions": {
+    "engineThroughPhaseB": "dart",
+    "goTwin": "wave-4-spike-only",
+    "ooXmlWriter": "hand-rolled-convert-xlsx",
+    "cachedFormulaValue": "omit",
+    "fullCalcOnLoadWhenFormulas": true
+  },
+  "counts": {
+    "inventory": 454,
+    "phaseA": 76,
+    "phaseB": 42,
+    "phaseC": 335,
+    "out": 1
+  },
+  "functions": [
+    {
+      "name": "ABS",
+      "phase": "A"
+    },
+    {
+      "name": "ACCRINT",
+      "phase": "C"
+    },
+    {
+      "name": "ACCRINTM",
+      "phase": "C"
+    },
+    {
+      "name": "ACOS",
+      "phase": "C"
+    },
+    {
+      "name": "ACOSH",
+      "phase": "C"
+    },
+    {
+      "name": "ACOT",
+      "phase": "C"
+    },
+    {
+      "name": "ACOTH",
+      "phase": "C"
+    },
+    {
+      "name": "ADDRESS",
+      "phase": "B"
+    },
+    {
+      "name": "AGGREGATE",
+      "phase": "C"
+    },
+    {
+      "name": "AMORDEGRC",
+      "phase": "C"
+    },
+    {
+      "name": "AMORLINC",
+      "phase": "C"
+    },
+    {
+      "name": "AND",
+      "phase": "A"
+    },
+    {
+      "name": "ARABIC",
+      "phase": "C"
+    },
+    {
+      "name": "ARRAYTOTEXT",
+      "phase": "C"
+    },
+    {
+      "name": "ASIN",
+      "phase": "C"
+    },
+    {
+      "name": "ASINH",
+      "phase": "C"
+    },
+    {
+      "name": "ATAN",
+      "phase": "C"
+    },
+    {
+      "name": "ATAN2",
+      "phase": "C"
+    },
+    {
+      "name": "ATANH",
+      "phase": "C"
+    },
+    {
+      "name": "AVEDEV",
+      "phase": "C"
+    },
+    {
+      "name": "AVERAGE",
+      "phase": "A"
+    },
+    {
+      "name": "AVERAGEA",
+      "phase": "A"
+    },
+    {
+      "name": "AVERAGEIF",
+      "phase": "B"
+    },
+    {
+      "name": "AVERAGEIFS",
+      "phase": "B"
+    },
+    {
+      "name": "BAHTTEXT",
+      "phase": "C"
+    },
+    {
+      "name": "BASE",
+      "phase": "C"
+    },
+    {
+      "name": "BESSELI",
+      "phase": "C"
+    },
+    {
+      "name": "BESSELJ",
+      "phase": "C"
+    },
+    {
+      "name": "BESSELK",
+      "phase": "C"
+    },
+    {
+      "name": "BESSELY",
+      "phase": "C"
+    },
+    {
+      "name": "BETA.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "BETA.INV",
+      "phase": "C"
+    },
+    {
+      "name": "BETADIST",
+      "phase": "C"
+    },
+    {
+      "name": "BETAINV",
+      "phase": "C"
+    },
+    {
+      "name": "BIN2DEC",
+      "phase": "C"
+    },
+    {
+      "name": "BIN2HEX",
+      "phase": "C"
+    },
+    {
+      "name": "BIN2OCT",
+      "phase": "C"
+    },
+    {
+      "name": "BINOM.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "BINOM.DIST.RANGE",
+      "phase": "C"
+    },
+    {
+      "name": "BINOM.INV",
+      "phase": "C"
+    },
+    {
+      "name": "BINOMDIST",
+      "phase": "C"
+    },
+    {
+      "name": "BITAND",
+      "phase": "C"
+    },
+    {
+      "name": "BITLSHIFT",
+      "phase": "C"
+    },
+    {
+      "name": "BITOR",
+      "phase": "C"
+    },
+    {
+      "name": "BITRSHIFT",
+      "phase": "C"
+    },
+    {
+      "name": "BITXOR",
+      "phase": "C"
+    },
+    {
+      "name": "CEILING",
+      "phase": "A"
+    },
+    {
+      "name": "CEILING.MATH",
+      "phase": "C"
+    },
+    {
+      "name": "CEILING.PRECISE",
+      "phase": "C"
+    },
+    {
+      "name": "CHAR",
+      "phase": "A"
+    },
+    {
+      "name": "CHIDIST",
+      "phase": "C"
+    },
+    {
+      "name": "CHIINV",
+      "phase": "C"
+    },
+    {
+      "name": "CHISQ.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "CHISQ.DIST.RT",
+      "phase": "C"
+    },
+    {
+      "name": "CHISQ.INV",
+      "phase": "C"
+    },
+    {
+      "name": "CHISQ.INV.RT",
+      "phase": "C"
+    },
+    {
+      "name": "CHISQ.TEST",
+      "phase": "C"
+    },
+    {
+      "name": "CHITEST",
+      "phase": "C"
+    },
+    {
+      "name": "CHOOSE",
+      "phase": "B"
+    },
+    {
+      "name": "CLEAN",
+      "phase": "C"
+    },
+    {
+      "name": "CODE",
+      "phase": "A"
+    },
+    {
+      "name": "COLUMN",
+      "phase": "B"
+    },
+    {
+      "name": "COLUMNS",
+      "phase": "B"
+    },
+    {
+      "name": "COMBIN",
+      "phase": "C"
+    },
+    {
+      "name": "COMBINA",
+      "phase": "C"
+    },
+    {
+      "name": "COMPLEX",
+      "phase": "C"
+    },
+    {
+      "name": "CONCAT",
+      "phase": "A"
+    },
+    {
+      "name": "CONCATENATE",
+      "phase": "A"
+    },
+    {
+      "name": "CONFIDENCE",
+      "phase": "C"
+    },
+    {
+      "name": "CONFIDENCE.NORM",
+      "phase": "C"
+    },
+    {
+      "name": "CONFIDENCE.T",
+      "phase": "C"
+    },
+    {
+      "name": "CONVERT",
+      "phase": "C"
+    },
+    {
+      "name": "CORREL",
+      "phase": "C"
+    },
+    {
+      "name": "COS",
+      "phase": "C"
+    },
+    {
+      "name": "COSH",
+      "phase": "C"
+    },
+    {
+      "name": "COT",
+      "phase": "C"
+    },
+    {
+      "name": "COTH",
+      "phase": "C"
+    },
+    {
+      "name": "COUNT",
+      "phase": "A"
+    },
+    {
+      "name": "COUNTA",
+      "phase": "A"
+    },
+    {
+      "name": "COUNTBLANK",
+      "phase": "A"
+    },
+    {
+      "name": "COUNTIF",
+      "phase": "B"
+    },
+    {
+      "name": "COUNTIFS",
+      "phase": "B"
+    },
+    {
+      "name": "COUPDAYBS",
+      "phase": "C"
+    },
+    {
+      "name": "COUPDAYS",
+      "phase": "C"
+    },
+    {
+      "name": "COUPDAYSNC",
+      "phase": "C"
+    },
+    {
+      "name": "COUPNCD",
+      "phase": "C"
+    },
+    {
+      "name": "COUPNUM",
+      "phase": "C"
+    },
+    {
+      "name": "COUPPCD",
+      "phase": "C"
+    },
+    {
+      "name": "COVAR",
+      "phase": "C"
+    },
+    {
+      "name": "COVARIANCE.P",
+      "phase": "C"
+    },
+    {
+      "name": "COVARIANCE.S",
+      "phase": "C"
+    },
+    {
+      "name": "CRITBINOM",
+      "phase": "C"
+    },
+    {
+      "name": "CSC",
+      "phase": "C"
+    },
+    {
+      "name": "CSCH",
+      "phase": "C"
+    },
+    {
+      "name": "CUMIPMT",
+      "phase": "C"
+    },
+    {
+      "name": "CUMPRINC",
+      "phase": "C"
+    },
+    {
+      "name": "DATE",
+      "phase": "B"
+    },
+    {
+      "name": "DATEDIF",
+      "phase": "C"
+    },
+    {
+      "name": "DATEVALUE",
+      "phase": "B"
+    },
+    {
+      "name": "DAVERAGE",
+      "phase": "C"
+    },
+    {
+      "name": "DAY",
+      "phase": "B"
+    },
+    {
+      "name": "DAYS",
+      "phase": "B"
+    },
+    {
+      "name": "DAYS360",
+      "phase": "B"
+    },
+    {
+      "name": "DB",
+      "phase": "C"
+    },
+    {
+      "name": "DBCS",
+      "phase": "C"
+    },
+    {
+      "name": "DCOUNT",
+      "phase": "C"
+    },
+    {
+      "name": "DCOUNTA",
+      "phase": "C"
+    },
+    {
+      "name": "DDB",
+      "phase": "C"
+    },
+    {
+      "name": "DEC2BIN",
+      "phase": "C"
+    },
+    {
+      "name": "DEC2HEX",
+      "phase": "C"
+    },
+    {
+      "name": "DEC2OCT",
+      "phase": "C"
+    },
+    {
+      "name": "DECIMAL",
+      "phase": "C"
+    },
+    {
+      "name": "DEGREES",
+      "phase": "C"
+    },
+    {
+      "name": "DELTA",
+      "phase": "C"
+    },
+    {
+      "name": "DEVSQ",
+      "phase": "C"
+    },
+    {
+      "name": "DGET",
+      "phase": "C"
+    },
+    {
+      "name": "DISC",
+      "phase": "C"
+    },
+    {
+      "name": "DMAX",
+      "phase": "C"
+    },
+    {
+      "name": "DMIN",
+      "phase": "C"
+    },
+    {
+      "name": "DOLLAR",
+      "phase": "C"
+    },
+    {
+      "name": "DOLLARDE",
+      "phase": "C"
+    },
+    {
+      "name": "DOLLARFR",
+      "phase": "C"
+    },
+    {
+      "name": "DPRODUCT",
+      "phase": "C"
+    },
+    {
+      "name": "DSTDEV",
+      "phase": "C"
+    },
+    {
+      "name": "DSTDEVP",
+      "phase": "C"
+    },
+    {
+      "name": "DSUM",
+      "phase": "C"
+    },
+    {
+      "name": "DURATION",
+      "phase": "C"
+    },
+    {
+      "name": "DVAR",
+      "phase": "C"
+    },
+    {
+      "name": "DVARP",
+      "phase": "C"
+    },
+    {
+      "name": "EDATE",
+      "phase": "B"
+    },
+    {
+      "name": "EFFECT",
+      "phase": "C"
+    },
+    {
+      "name": "ENCODEURL",
+      "phase": "out"
+    },
+    {
+      "name": "EOMONTH",
+      "phase": "B"
+    },
+    {
+      "name": "ERF",
+      "phase": "C"
+    },
+    {
+      "name": "ERF.PRECISE",
+      "phase": "C"
+    },
+    {
+      "name": "ERFC",
+      "phase": "C"
+    },
+    {
+      "name": "ERFC.PRECISE",
+      "phase": "C"
+    },
+    {
+      "name": "ERROR.TYPE",
+      "phase": "C"
+    },
+    {
+      "name": "EUROCONVERT",
+      "phase": "C"
+    },
+    {
+      "name": "EVEN",
+      "phase": "C"
+    },
+    {
+      "name": "EXACT",
+      "phase": "C"
+    },
+    {
+      "name": "EXP",
+      "phase": "A"
+    },
+    {
+      "name": "EXPON.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "EXPONDIST",
+      "phase": "C"
+    },
+    {
+      "name": "F.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "F.DIST.RT",
+      "phase": "C"
+    },
+    {
+      "name": "F.INV",
+      "phase": "C"
+    },
+    {
+      "name": "F.INV.RT",
+      "phase": "C"
+    },
+    {
+      "name": "F.TEST",
+      "phase": "C"
+    },
+    {
+      "name": "FACT",
+      "phase": "C"
+    },
+    {
+      "name": "FACTDOUBLE",
+      "phase": "C"
+    },
+    {
+      "name": "FALSE",
+      "phase": "A"
+    },
+    {
+      "name": "FDIST",
+      "phase": "C"
+    },
+    {
+      "name": "FIND",
+      "phase": "A"
+    },
+    {
+      "name": "FINDB",
+      "phase": "C"
+    },
+    {
+      "name": "FINV",
+      "phase": "C"
+    },
+    {
+      "name": "FISHER",
+      "phase": "C"
+    },
+    {
+      "name": "FISHERINV",
+      "phase": "C"
+    },
+    {
+      "name": "FIXED",
+      "phase": "C"
+    },
+    {
+      "name": "FLOOR",
+      "phase": "A"
+    },
+    {
+      "name": "FLOOR.MATH",
+      "phase": "C"
+    },
+    {
+      "name": "FLOOR.PRECISE",
+      "phase": "C"
+    },
+    {
+      "name": "FORECAST",
+      "phase": "C"
+    },
+    {
+      "name": "FORECAST.LINEAR",
+      "phase": "C"
+    },
+    {
+      "name": "FORMULATEXT",
+      "phase": "C"
+    },
+    {
+      "name": "FREQUENCY",
+      "phase": "C"
+    },
+    {
+      "name": "FTEST",
+      "phase": "C"
+    },
+    {
+      "name": "FV",
+      "phase": "C"
+    },
+    {
+      "name": "FVSCHEDULE",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMA",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMA.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMA.INV",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMADIST",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMAINV",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMALN",
+      "phase": "C"
+    },
+    {
+      "name": "GAMMALN.PRECISE",
+      "phase": "C"
+    },
+    {
+      "name": "GAUSS",
+      "phase": "C"
+    },
+    {
+      "name": "GCD",
+      "phase": "A"
+    },
+    {
+      "name": "GEOMEAN",
+      "phase": "C"
+    },
+    {
+      "name": "GESTEP",
+      "phase": "C"
+    },
+    {
+      "name": "GROWTH",
+      "phase": "C"
+    },
+    {
+      "name": "HARMEAN",
+      "phase": "C"
+    },
+    {
+      "name": "HEX2BIN",
+      "phase": "C"
+    },
+    {
+      "name": "HEX2DEC",
+      "phase": "C"
+    },
+    {
+      "name": "HEX2OCT",
+      "phase": "C"
+    },
+    {
+      "name": "HLOOKUP",
+      "phase": "B"
+    },
+    {
+      "name": "HOUR",
+      "phase": "B"
+    },
+    {
+      "name": "HYPERLINK",
+      "phase": "B"
+    },
+    {
+      "name": "HYPGEOM.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "HYPGEOMDIST",
+      "phase": "C"
+    },
+    {
+      "name": "IF",
+      "phase": "A"
+    },
+    {
+      "name": "IFERROR",
+      "phase": "A"
+    },
+    {
+      "name": "IFNA",
+      "phase": "A"
+    },
+    {
+      "name": "IFS",
+      "phase": "A"
+    },
+    {
+      "name": "IMABS",
+      "phase": "C"
+    },
+    {
+      "name": "IMAGINARY",
+      "phase": "C"
+    },
+    {
+      "name": "IMARGUMENT",
+      "phase": "C"
+    },
+    {
+      "name": "IMCONJUGATE",
+      "phase": "C"
+    },
+    {
+      "name": "IMCOS",
+      "phase": "C"
+    },
+    {
+      "name": "IMCOSH",
+      "phase": "C"
+    },
+    {
+      "name": "IMCOT",
+      "phase": "C"
+    },
+    {
+      "name": "IMCSC",
+      "phase": "C"
+    },
+    {
+      "name": "IMCSCH",
+      "phase": "C"
+    },
+    {
+      "name": "IMDIV",
+      "phase": "C"
+    },
+    {
+      "name": "IMEXP",
+      "phase": "C"
+    },
+    {
+      "name": "IMLN",
+      "phase": "C"
+    },
+    {
+      "name": "IMLOG10",
+      "phase": "C"
+    },
+    {
+      "name": "IMLOG2",
+      "phase": "C"
+    },
+    {
+      "name": "IMPOWER",
+      "phase": "C"
+    },
+    {
+      "name": "IMPRODUCT",
+      "phase": "C"
+    },
+    {
+      "name": "IMREAL",
+      "phase": "C"
+    },
+    {
+      "name": "IMSEC",
+      "phase": "C"
+    },
+    {
+      "name": "IMSECH",
+      "phase": "C"
+    },
+    {
+      "name": "IMSIN",
+      "phase": "C"
+    },
+    {
+      "name": "IMSINH",
+      "phase": "C"
+    },
+    {
+      "name": "IMSQRT",
+      "phase": "C"
+    },
+    {
+      "name": "IMSUB",
+      "phase": "C"
+    },
+    {
+      "name": "IMSUM",
+      "phase": "C"
+    },
+    {
+      "name": "IMTAN",
+      "phase": "C"
+    },
+    {
+      "name": "INDEX",
+      "phase": "B"
+    },
+    {
+      "name": "INDIRECT",
+      "phase": "C"
+    },
+    {
+      "name": "INT",
+      "phase": "A"
+    },
+    {
+      "name": "INTERCEPT",
+      "phase": "C"
+    },
+    {
+      "name": "INTRATE",
+      "phase": "C"
+    },
+    {
+      "name": "IPMT",
+      "phase": "C"
+    },
+    {
+      "name": "IRR",
+      "phase": "C"
+    },
+    {
+      "name": "ISBLANK",
+      "phase": "A"
+    },
+    {
+      "name": "ISERR",
+      "phase": "A"
+    },
+    {
+      "name": "ISERROR",
+      "phase": "A"
+    },
+    {
+      "name": "ISEVEN",
+      "phase": "C"
+    },
+    {
+      "name": "ISFORMULA",
+      "phase": "C"
+    },
+    {
+      "name": "ISLOGICAL",
+      "phase": "A"
+    },
+    {
+      "name": "ISNA",
+      "phase": "A"
+    },
+    {
+      "name": "ISNONTEXT",
+      "phase": "A"
+    },
+    {
+      "name": "ISNUMBER",
+      "phase": "A"
+    },
+    {
+      "name": "ISO.CEILING",
+      "phase": "C"
+    },
+    {
+      "name": "ISODD",
+      "phase": "C"
+    },
+    {
+      "name": "ISOWEEKNUM",
+      "phase": "C"
+    },
+    {
+      "name": "ISPMT",
+      "phase": "C"
+    },
+    {
+      "name": "ISREF",
+      "phase": "C"
+    },
+    {
+      "name": "ISTEXT",
+      "phase": "A"
+    },
+    {
+      "name": "KURT",
+      "phase": "C"
+    },
+    {
+      "name": "LARGE",
+      "phase": "C"
+    },
+    {
+      "name": "LCM",
+      "phase": "A"
+    },
+    {
+      "name": "LEFT",
+      "phase": "A"
+    },
+    {
+      "name": "LEFTB",
+      "phase": "C"
+    },
+    {
+      "name": "LEN",
+      "phase": "A"
+    },
+    {
+      "name": "LENB",
+      "phase": "C"
+    },
+    {
+      "name": "LN",
+      "phase": "A"
+    },
+    {
+      "name": "LOG",
+      "phase": "A"
+    },
+    {
+      "name": "LOG10",
+      "phase": "A"
+    },
+    {
+      "name": "LOGINV",
+      "phase": "C"
+    },
+    {
+      "name": "LOGNORM.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "LOGNORM.INV",
+      "phase": "C"
+    },
+    {
+      "name": "LOGNORMDIST",
+      "phase": "C"
+    },
+    {
+      "name": "LOOKUP",
+      "phase": "C"
+    },
+    {
+      "name": "LOWER",
+      "phase": "A"
+    },
+    {
+      "name": "MATCH",
+      "phase": "B"
+    },
+    {
+      "name": "MAX",
+      "phase": "A"
+    },
+    {
+      "name": "MAXA",
+      "phase": "A"
+    },
+    {
+      "name": "MAXIFS",
+      "phase": "B"
+    },
+    {
+      "name": "MDETERM",
+      "phase": "C"
+    },
+    {
+      "name": "MDURATION",
+      "phase": "C"
+    },
+    {
+      "name": "MEDIAN",
+      "phase": "A"
+    },
+    {
+      "name": "MID",
+      "phase": "A"
+    },
+    {
+      "name": "MIDB",
+      "phase": "C"
+    },
+    {
+      "name": "MIN",
+      "phase": "A"
+    },
+    {
+      "name": "MINA",
+      "phase": "A"
+    },
+    {
+      "name": "MINIFS",
+      "phase": "B"
+    },
+    {
+      "name": "MINUTE",
+      "phase": "B"
+    },
+    {
+      "name": "MINVERSE",
+      "phase": "C"
+    },
+    {
+      "name": "MIRR",
+      "phase": "C"
+    },
+    {
+      "name": "MMULT",
+      "phase": "C"
+    },
+    {
+      "name": "MOD",
+      "phase": "A"
+    },
+    {
+      "name": "MODE",
+      "phase": "A"
+    },
+    {
+      "name": "MODE.MULT",
+      "phase": "C"
+    },
+    {
+      "name": "MODE.SNGL",
+      "phase": "A"
+    },
+    {
+      "name": "MONTH",
+      "phase": "B"
+    },
+    {
+      "name": "MROUND",
+      "phase": "C"
+    },
+    {
+      "name": "MULTINOMIAL",
+      "phase": "C"
+    },
+    {
+      "name": "MUNIT",
+      "phase": "C"
+    },
+    {
+      "name": "N",
+      "phase": "A"
+    },
+    {
+      "name": "NA",
+      "phase": "A"
+    },
+    {
+      "name": "NEGBINOM.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "NEGBINOMDIST",
+      "phase": "C"
+    },
+    {
+      "name": "NETWORKDAYS",
+      "phase": "B"
+    },
+    {
+      "name": "NETWORKDAYS.INTL",
+      "phase": "B"
+    },
+    {
+      "name": "NOMINAL",
+      "phase": "C"
+    },
+    {
+      "name": "NORM.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "NORM.INV",
+      "phase": "C"
+    },
+    {
+      "name": "NORM.S.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "NORM.S.INV",
+      "phase": "C"
+    },
+    {
+      "name": "NORMDIST",
+      "phase": "C"
+    },
+    {
+      "name": "NORMINV",
+      "phase": "C"
+    },
+    {
+      "name": "NORMSDIST",
+      "phase": "C"
+    },
+    {
+      "name": "NORMSINV",
+      "phase": "C"
+    },
+    {
+      "name": "NOT",
+      "phase": "A"
+    },
+    {
+      "name": "NOW",
+      "phase": "B"
+    },
+    {
+      "name": "NPER",
+      "phase": "C"
+    },
+    {
+      "name": "NPV",
+      "phase": "C"
+    },
+    {
+      "name": "OCT2BIN",
+      "phase": "C"
+    },
+    {
+      "name": "OCT2DEC",
+      "phase": "C"
+    },
+    {
+      "name": "OCT2HEX",
+      "phase": "C"
+    },
+    {
+      "name": "ODD",
+      "phase": "C"
+    },
+    {
+      "name": "ODDFPRICE",
+      "phase": "C"
+    },
+    {
+      "name": "ODDFYIELD",
+      "phase": "C"
+    },
+    {
+      "name": "ODDLPRICE",
+      "phase": "C"
+    },
+    {
+      "name": "ODDLYIELD",
+      "phase": "C"
+    },
+    {
+      "name": "OR",
+      "phase": "A"
+    },
+    {
+      "name": "PDURATION",
+      "phase": "C"
+    },
+    {
+      "name": "PEARSON",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTILE",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTILE.EXC",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTILE.INC",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTRANK",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTRANK.EXC",
+      "phase": "C"
+    },
+    {
+      "name": "PERCENTRANK.INC",
+      "phase": "C"
+    },
+    {
+      "name": "PERMUT",
+      "phase": "C"
+    },
+    {
+      "name": "PERMUTATIONA",
+      "phase": "C"
+    },
+    {
+      "name": "PHI",
+      "phase": "C"
+    },
+    {
+      "name": "PI",
+      "phase": "A"
+    },
+    {
+      "name": "PMT",
+      "phase": "C"
+    },
+    {
+      "name": "POISSON",
+      "phase": "C"
+    },
+    {
+      "name": "POISSON.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "POWER",
+      "phase": "A"
+    },
+    {
+      "name": "PPMT",
+      "phase": "C"
+    },
+    {
+      "name": "PRICE",
+      "phase": "C"
+    },
+    {
+      "name": "PRICEDISC",
+      "phase": "C"
+    },
+    {
+      "name": "PRICEMAT",
+      "phase": "C"
+    },
+    {
+      "name": "PROB",
+      "phase": "C"
+    },
+    {
+      "name": "PRODUCT",
+      "phase": "A"
+    },
+    {
+      "name": "PROPER",
+      "phase": "A"
+    },
+    {
+      "name": "PV",
+      "phase": "C"
+    },
+    {
+      "name": "QUARTILE",
+      "phase": "C"
+    },
+    {
+      "name": "QUARTILE.EXC",
+      "phase": "C"
+    },
+    {
+      "name": "QUARTILE.INC",
+      "phase": "C"
+    },
+    {
+      "name": "QUOTIENT",
+      "phase": "A"
+    },
+    {
+      "name": "RADIANS",
+      "phase": "C"
+    },
+    {
+      "name": "RAND",
+      "phase": "C"
+    },
+    {
+      "name": "RANDBETWEEN",
+      "phase": "C"
+    },
+    {
+      "name": "RANK",
+      "phase": "C"
+    },
+    {
+      "name": "RANK.EQ",
+      "phase": "C"
+    },
+    {
+      "name": "RATE",
+      "phase": "C"
+    },
+    {
+      "name": "RECEIVED",
+      "phase": "C"
+    },
+    {
+      "name": "REPLACE",
+      "phase": "A"
+    },
+    {
+      "name": "REPLACEB",
+      "phase": "C"
+    },
+    {
+      "name": "REPT",
+      "phase": "A"
+    },
+    {
+      "name": "RIGHT",
+      "phase": "A"
+    },
+    {
+      "name": "RIGHTB",
+      "phase": "C"
+    },
+    {
+      "name": "ROMAN",
+      "phase": "C"
+    },
+    {
+      "name": "ROUND",
+      "phase": "A"
+    },
+    {
+      "name": "ROUNDDOWN",
+      "phase": "A"
+    },
+    {
+      "name": "ROUNDUP",
+      "phase": "A"
+    },
+    {
+      "name": "ROW",
+      "phase": "B"
+    },
+    {
+      "name": "ROWS",
+      "phase": "B"
+    },
+    {
+      "name": "RRI",
+      "phase": "C"
+    },
+    {
+      "name": "RSQ",
+      "phase": "C"
+    },
+    {
+      "name": "SEARCH",
+      "phase": "A"
+    },
+    {
+      "name": "SEARCHB",
+      "phase": "C"
+    },
+    {
+      "name": "SEC",
+      "phase": "C"
+    },
+    {
+      "name": "SECH",
+      "phase": "C"
+    },
+    {
+      "name": "SECOND",
+      "phase": "B"
+    },
+    {
+      "name": "SERIESSUM",
+      "phase": "C"
+    },
+    {
+      "name": "SHEET",
+      "phase": "C"
+    },
+    {
+      "name": "SHEETS",
+      "phase": "C"
+    },
+    {
+      "name": "SIGN",
+      "phase": "A"
+    },
+    {
+      "name": "SIN",
+      "phase": "C"
+    },
+    {
+      "name": "SINH",
+      "phase": "C"
+    },
+    {
+      "name": "SKEW",
+      "phase": "C"
+    },
+    {
+      "name": "SKEW.P",
+      "phase": "C"
+    },
+    {
+      "name": "SLN",
+      "phase": "C"
+    },
+    {
+      "name": "SLOPE",
+      "phase": "C"
+    },
+    {
+      "name": "SMALL",
+      "phase": "C"
+    },
+    {
+      "name": "SQRT",
+      "phase": "A"
+    },
+    {
+      "name": "SQRTPI",
+      "phase": "C"
+    },
+    {
+      "name": "STANDARDIZE",
+      "phase": "C"
+    },
+    {
+      "name": "STDEV",
+      "phase": "C"
+    },
+    {
+      "name": "STDEV.P",
+      "phase": "C"
+    },
+    {
+      "name": "STDEV.S",
+      "phase": "C"
+    },
+    {
+      "name": "STDEVA",
+      "phase": "C"
+    },
+    {
+      "name": "STDEVP",
+      "phase": "C"
+    },
+    {
+      "name": "STDEVPA",
+      "phase": "C"
+    },
+    {
+      "name": "STEYX",
+      "phase": "C"
+    },
+    {
+      "name": "SUBSTITUTE",
+      "phase": "A"
+    },
+    {
+      "name": "SUBTOTAL",
+      "phase": "C"
+    },
+    {
+      "name": "SUM",
+      "phase": "A"
+    },
+    {
+      "name": "SUMIF",
+      "phase": "B"
+    },
+    {
+      "name": "SUMIFS",
+      "phase": "B"
+    },
+    {
+      "name": "SUMPRODUCT",
+      "phase": "C"
+    },
+    {
+      "name": "SUMSQ",
+      "phase": "C"
+    },
+    {
+      "name": "SUMX2MY2",
+      "phase": "C"
+    },
+    {
+      "name": "SUMX2PY2",
+      "phase": "C"
+    },
+    {
+      "name": "SUMXMY2",
+      "phase": "C"
+    },
+    {
+      "name": "SWITCH",
+      "phase": "A"
+    },
+    {
+      "name": "SYD",
+      "phase": "C"
+    },
+    {
+      "name": "T",
+      "phase": "A"
+    },
+    {
+      "name": "T.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "T.DIST.2T",
+      "phase": "C"
+    },
+    {
+      "name": "T.DIST.RT",
+      "phase": "C"
+    },
+    {
+      "name": "T.INV",
+      "phase": "C"
+    },
+    {
+      "name": "T.INV.2T",
+      "phase": "C"
+    },
+    {
+      "name": "T.TEST",
+      "phase": "C"
+    },
+    {
+      "name": "TAN",
+      "phase": "C"
+    },
+    {
+      "name": "TANH",
+      "phase": "C"
+    },
+    {
+      "name": "TBILLEQ",
+      "phase": "C"
+    },
+    {
+      "name": "TBILLPRICE",
+      "phase": "C"
+    },
+    {
+      "name": "TBILLYIELD",
+      "phase": "C"
+    },
+    {
+      "name": "TDIST",
+      "phase": "C"
+    },
+    {
+      "name": "TEXT",
+      "phase": "C"
+    },
+    {
+      "name": "TEXTAFTER",
+      "phase": "C"
+    },
+    {
+      "name": "TEXTBEFORE",
+      "phase": "C"
+    },
+    {
+      "name": "TEXTJOIN",
+      "phase": "A"
+    },
+    {
+      "name": "TIME",
+      "phase": "B"
+    },
+    {
+      "name": "TIMEVALUE",
+      "phase": "B"
+    },
+    {
+      "name": "TINV",
+      "phase": "C"
+    },
+    {
+      "name": "TODAY",
+      "phase": "B"
+    },
+    {
+      "name": "TRANSPOSE",
+      "phase": "C"
+    },
+    {
+      "name": "TREND",
+      "phase": "C"
+    },
+    {
+      "name": "TRIM",
+      "phase": "A"
+    },
+    {
+      "name": "TRIMMEAN",
+      "phase": "C"
+    },
+    {
+      "name": "TRUE",
+      "phase": "A"
+    },
+    {
+      "name": "TRUNC",
+      "phase": "A"
+    },
+    {
+      "name": "TTEST",
+      "phase": "C"
+    },
+    {
+      "name": "TYPE",
+      "phase": "A"
+    },
+    {
+      "name": "UNICHAR",
+      "phase": "C"
+    },
+    {
+      "name": "UNICODE",
+      "phase": "C"
+    },
+    {
+      "name": "UPPER",
+      "phase": "A"
+    },
+    {
+      "name": "VALUE",
+      "phase": "A"
+    },
+    {
+      "name": "VALUETOTEXT",
+      "phase": "C"
+    },
+    {
+      "name": "VAR",
+      "phase": "C"
+    },
+    {
+      "name": "VAR.P",
+      "phase": "C"
+    },
+    {
+      "name": "VAR.S",
+      "phase": "C"
+    },
+    {
+      "name": "VARA",
+      "phase": "C"
+    },
+    {
+      "name": "VARP",
+      "phase": "C"
+    },
+    {
+      "name": "VARPA",
+      "phase": "C"
+    },
+    {
+      "name": "VDB",
+      "phase": "C"
+    },
+    {
+      "name": "VLOOKUP",
+      "phase": "B"
+    },
+    {
+      "name": "WEEKDAY",
+      "phase": "B"
+    },
+    {
+      "name": "WEEKNUM",
+      "phase": "B"
+    },
+    {
+      "name": "WEIBULL",
+      "phase": "C"
+    },
+    {
+      "name": "WEIBULL.DIST",
+      "phase": "C"
+    },
+    {
+      "name": "WORKDAY",
+      "phase": "B"
+    },
+    {
+      "name": "WORKDAY.INTL",
+      "phase": "C"
+    },
+    {
+      "name": "XIRR",
+      "phase": "C"
+    },
+    {
+      "name": "XLOOKUP",
+      "phase": "B"
+    },
+    {
+      "name": "XNPV",
+      "phase": "C"
+    },
+    {
+      "name": "XOR",
+      "phase": "A"
+    },
+    {
+      "name": "YEAR",
+      "phase": "B"
+    },
+    {
+      "name": "YEARFRAC",
+      "phase": "B"
+    },
+    {
+      "name": "YIELD",
+      "phase": "C"
+    },
+    {
+      "name": "YIELDDISC",
+      "phase": "C"
+    },
+    {
+      "name": "YIELDMAT",
+      "phase": "C"
+    },
+    {
+      "name": "Z.TEST",
+      "phase": "C"
+    },
+    {
+      "name": "ZTEST",
+      "phase": "C"
+    }
+  ]
+}

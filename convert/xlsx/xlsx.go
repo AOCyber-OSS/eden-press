@@ -130,6 +130,7 @@ func packWorkbook(title string, sheets []packedSheet) ([]byte, error) {
 	// last sheet, so the numbering stays contiguous and predictable.
 	var sheetRefs []sheetRef
 	var sheetParts []part
+	hasFormulas := false
 	for i, s := range sheets {
 		num := i + 1
 		name := fmt.Sprintf("xl/worksheets/sheet%d.xml", num)
@@ -139,6 +140,9 @@ func packWorkbook(title string, sheets []packedSheet) ([]byte, error) {
 			RelID:   fmt.Sprintf("rId%d", num),
 			Target:  fmt.Sprintf("worksheets/sheet%d.xml", num),
 		})
+		if sheetHasFormula(s.grid) {
+			hasFormulas = true
+		}
 		sheetParts = append(sheetParts, part{name: name, content: buildSheetXML(s.grid)})
 		overrides = append(overrides, contentTypeOverride{PartName: "/" + name, ContentType: ctWorksheet})
 	}
@@ -148,7 +152,7 @@ func packWorkbook(title string, sheets []packedSheet) ([]byte, error) {
 		{name: "_rels/.rels", content: rootRelsXML()},
 		{name: "docProps/core.xml", content: docPropsCoreXML(title)},
 		{name: "docProps/app.xml", content: docPropsAppXML()},
-		{name: "xl/workbook.xml", content: workbookXML(sheetRefs)},
+		{name: "xl/workbook.xml", content: workbookXML(sheetRefs, hasFormulas)},
 		{name: "xl/_rels/workbook.xml.rels", content: workbookRelsXML(sheetRefs)},
 		{name: "xl/styles.xml", content: stylesXML()},
 	}

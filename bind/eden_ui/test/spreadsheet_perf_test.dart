@@ -173,7 +173,7 @@ void main() {
   final watch = Stopwatch()..start();
   final value = evaluateFormula(book, 'FY', 'SUM(A1:A$span)');
   watch.stop();
-  return (value: value.round(), milliseconds: watch.elapsedMilliseconds);
+  return (value: (value as num).round(), milliseconds: watch.elapsedMilliseconds);
 }
 
 Widget _app(Widget child) {

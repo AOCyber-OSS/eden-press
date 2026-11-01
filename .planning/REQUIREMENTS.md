@@ -112,6 +112,20 @@ Deferred differentiators (architecture in v1 must not preclude them).
 ### Platform
 - **GM2-01**: Migrate to goldmark v2 (semantic-AST) once GA — aligns with the document-model design
 
+### Spreadsheet formula layer (post-v1; Objective 9)
+
+Editable workbooks (`convert/xlsx.Workbook` + `bind/eden_ui`) already store
+Excel formulas and evaluate a tiny Dart subset. These requirements grow that
+live formula layer toward the largest practical Excel-compatible surface
+without claiming Microsoft 365 parity or replacing the hand-rolled OOXML writer.
+
+- [x] **XLSX-F01**: A language-neutral formula corpus (`conformance/corpus/xlsxformula`) is the acceptance gate for grammar + named functions (same publication pattern as `xlsxtyping`)
+- [x] **XLSX-F02**: The Dart evaluator's expression grammar covers Excel-useful forms beyond today's arithmetic: comparisons, `&` concatenation, string/bool literals, absolute/mixed refs, quoted sheet names
+- [~] **XLSX-F03**: Named-function coverage ships in phases — Phase A daily-driver (≥40) **done (74)**; Phase B analyst core (≥100) and Phase C breadth open
+- [x] **XLSX-F04**: Unsupported functions show `#NAME?` (or documented errors) in the grid while still exporting as SpreadsheetML `<f>`; no stale cached `<v>` from a partial evaluator; `calcPr fullCalcOnLoad` when formulas are present
+- [x] **XLSX-F05**: Formula work stays chromedp-free and does not adopt AGPL/commercial OOXML stacks; `convert/xlsx` remains hand-rolled
+- [x] **XLSX-F06**: Formula cells stay distinct from number/text under the shared `xlsxtyping` rule (decision D6); leading `=` at `Set` time is the formula signal
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -195,7 +209,17 @@ mechanism exists day-one; the per-file headers land when the assets they annotat
 - Mapped to objectives: 50/50 ✓
 - Unmapped: 0 ✓
 - v2 requirements (PROF-01..03, BRAND-01, SAFE-01, REPRO-01, EXP2-01, HL-01, GM2-01): intentionally not mapped — deferred, architecture must not preclude them
+- Spreadsheet formula requirements (XLSX-F01..F06): mapped to Objective 9
+
+| Requirement | Objective | Status |
+|-------------|-----------|--------|
+| XLSX-F01 | Objective 9 — Excel Formula Layer for Eden Spreadsheets | Planned |
+| XLSX-F02 | Objective 9 | Planned |
+| XLSX-F03 | Objective 9 | Planned |
+| XLSX-F04 | Objective 9 | Planned |
+| XLSX-F05 | Objective 9 | Planned |
+| XLSX-F06 | Objective 9 | Planned |
 
 ---
 *Requirements defined: 2026-07-20*
-*Last updated: 2026-07-20 — LIC-03 traceability annotated as an Obj-0 (mechanism) + Obj-3 (per-file headers) split, mirroring CORE-08/09; 100% v1 coverage unchanged*
+*Last updated: 2026-10-30 — XLSX-F01..F06 added for Objective 9 (Excel formula layer post PR #11 workbook/UI seam)*

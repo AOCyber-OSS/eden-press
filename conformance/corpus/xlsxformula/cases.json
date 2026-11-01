@@ -1,0 +1,849 @@
+{
+  "schema": "eden-press.xlsxformula/v1",
+  "decisions": {
+    "engineThroughPhaseB": "dart",
+    "goTwin": "wave-4-spike-only",
+    "ooXmlWriter": "hand-rolled-convert-xlsx",
+    "cachedFormulaValue": "omit",
+    "fullCalcOnLoadWhenFormulas": true
+  },
+  "cases": [
+    {
+      "id": "arith-precedence",
+      "phase": "shipped",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "1+2*3",
+      "expect": 7,
+      "reason": "operator precedence must match Excel: multiply before add"
+    },
+    {
+      "id": "arith-parens",
+      "phase": "shipped",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "(1+2)*3",
+      "expect": 9,
+      "reason": "parentheses override precedence"
+    },
+    {
+      "id": "sum-range",
+      "phase": "shipped",
+      "category": "math",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "2",
+          "A3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "SUM(A1:A3)",
+      "expect": 6,
+      "reason": "SUM over a contiguous numeric range"
+    },
+    {
+      "id": "average-range",
+      "phase": "shipped",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "2",
+          "A3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "AVERAGE(A1:A3)",
+      "expect": 2,
+      "reason": "AVERAGE ignores blanks via sparse visit; three numbers mean 2"
+    },
+    {
+      "id": "sum-skips-blanks",
+      "phase": "shipped",
+      "category": "math",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "SUM(A1:A3)",
+      "expect": 4,
+      "reason": "sparse sheets: blanks are not zeros for SUM/AVERAGE/MIN/MAX"
+    },
+    {
+      "id": "cross-sheet",
+      "phase": "shipped",
+      "category": "grammar",
+      "sheet": {
+        "FY": {},
+        "Notes": {
+          "A1": "4"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "Notes!A1*2",
+      "expect": 8,
+      "reason": "cross-sheet refs without quoting"
+    },
+    {
+      "id": "div-zero",
+      "phase": "shipped",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "1/0",
+      "expectError": "#DIV/0!",
+      "reason": "division by zero is #DIV/0!, not infinity"
+    },
+    {
+      "id": "unknown-fn",
+      "phase": "shipped",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "POW(2,3)",
+      "expectError": "#NAME?",
+      "reason": "unknown functions stay #NAME? so Excel can still calculate the stored formula"
+    },
+    {
+      "id": "identifier-007-not-number",
+      "phase": "shipped",
+      "category": "typing",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "C3": "007"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "A1+C3",
+      "expectError": "#VALUE!",
+      "reason": "xlsxtyping D6: 007 is text; arithmetic on it is #VALUE!"
+    },
+    {
+      "id": "compare-gt",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "3>2",
+      "expect": true,
+      "reason": "comparison operators are required before IF/COUNTIF"
+    },
+    {
+      "id": "compare-eq",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "2=2",
+      "expect": true,
+      "reason": "equality inside formulas uses =, distinct from the formula-bar prefix"
+    },
+    {
+      "id": "compare-ne",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "2<>3",
+      "expect": true,
+      "reason": "Excel inequality is <>"
+    },
+    {
+      "id": "concat",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "\"A\"&\"B\"",
+      "expect": "AB",
+      "reason": "ampersand concatenation"
+    },
+    {
+      "id": "string-literal",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "\"hello\"",
+      "expect": "hello",
+      "reason": "double-quoted string literals"
+    },
+    {
+      "id": "bool-true-literal",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "TRUE",
+      "expect": true,
+      "reason": "TRUE/FALSE are literals, not only functions"
+    },
+    {
+      "id": "abs-ref-ignored-for-lookup",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {
+          "A1": "5"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "$A$1*2",
+      "expect": 10,
+      "reason": "absolute markers do not change evaluation of a single cell"
+    },
+    {
+      "id": "quoted-sheet",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {},
+        "My Sheet": {
+          "A1": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "'My Sheet'!A1+1",
+      "expect": 4,
+      "reason": "sheet names with spaces require single quotes"
+    },
+    {
+      "id": "power-op",
+      "phase": "grammar",
+      "category": "grammar",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "2^3",
+      "expect": 8,
+      "reason": "Excel exponentiation operator"
+    },
+    {
+      "id": "if-true",
+      "phase": "A",
+      "category": "logical",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "IF(1=1,\"yes\",\"no\")",
+      "expect": "yes",
+      "reason": "IF is the daily-driver gate for Phase A"
+    },
+    {
+      "id": "if-false",
+      "phase": "A",
+      "category": "logical",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "IF(1=0,\"yes\",\"no\")",
+      "expect": "no",
+      "reason": "IF false branch"
+    },
+    {
+      "id": "and-or",
+      "phase": "A",
+      "category": "logical",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "AND(TRUE,OR(FALSE,TRUE))",
+      "expect": true,
+      "reason": "AND/OR short-circuit-capable boolean combinators"
+    },
+    {
+      "id": "not",
+      "phase": "A",
+      "category": "logical",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "NOT(FALSE)",
+      "expect": true,
+      "reason": "NOT"
+    },
+    {
+      "id": "iferror",
+      "phase": "A",
+      "category": "logical",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "IFERROR(1/0,\"x\")",
+      "expect": "x",
+      "reason": "IFERROR catches evaluation errors"
+    },
+    {
+      "id": "abs-round",
+      "phase": "A",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(ABS(-3.14159),2)",
+      "expect": 3.14,
+      "reason": "ABS + ROUND"
+    },
+    {
+      "id": "power-fn",
+      "phase": "A",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "POWER(2,10)",
+      "expect": 1024,
+      "reason": "POWER function alongside ^"
+    },
+    {
+      "id": "mod-int",
+      "phase": "A",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "MOD(10,3)+INT(3.9)",
+      "expect": 4,
+      "reason": "MOD and INT"
+    },
+    {
+      "id": "sqrt-pi",
+      "phase": "A",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(SQRT(PI()),5)",
+      "expect": 1.77245,
+      "reason": "SQRT and PI"
+    },
+    {
+      "id": "product",
+      "phase": "A",
+      "category": "math",
+      "sheet": {
+        "FY": {
+          "A1": "2",
+          "A2": "3",
+          "A3": "4"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "PRODUCT(A1:A3)",
+      "expect": 24,
+      "reason": "PRODUCT over a range"
+    },
+    {
+      "id": "count-counta",
+      "phase": "A",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "x",
+          "A3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "COUNT(A1:A3)+COUNTA(A1:A3)",
+      "expect": 5,
+      "reason": "COUNT numbers only; COUNTA non-empty"
+    },
+    {
+      "id": "left-upper",
+      "phase": "A",
+      "category": "text",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "LEFT(UPPER(\"hello\"),2)",
+      "expect": "HE",
+      "reason": "LEFT and UPPER"
+    },
+    {
+      "id": "len-trim",
+      "phase": "A",
+      "category": "text",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "LEN(TRIM(\"  ab  \"))",
+      "expect": 2,
+      "reason": "LEN and TRIM"
+    },
+    {
+      "id": "isnumber-isblank",
+      "phase": "A",
+      "category": "information",
+      "sheet": {
+        "FY": {
+          "A1": "1"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "AND(ISNUMBER(A1),ISBLANK(B1))",
+      "expect": true,
+      "reason": "ISNUMBER / ISBLANK"
+    },
+    {
+      "id": "concat-fn",
+      "phase": "A",
+      "category": "text",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "CONCAT(\"a\",\"b\",\"c\")",
+      "expect": "abc",
+      "reason": "CONCAT joins arguments"
+    },
+    {
+      "id": "date-serial",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "DATE(2020,1,15)",
+      "expect": 43845,
+      "reason": "DATE returns an Excel serial (2020-01-15)"
+    },
+    {
+      "id": "date-ymd-extract",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "YEAR(DATE(2020,3,5))+MONTH(DATE(2020,3,5))+DAY(DATE(2020,3,5))",
+      "expect": 2028,
+      "reason": "YEAR/MONTH/DAY round-trip through DATE"
+    },
+    {
+      "id": "today-pinned",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "TODAY()",
+      "expect": 43845,
+      "now": "2020-01-15T12:00:00Z",
+      "reason": "TODAY uses the pinned corpus clock when provided"
+    },
+    {
+      "id": "edate-eomonth",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "EDATE(DATE(2020,1,31),1)=DATE(2020,2,29)",
+      "expect": true,
+      "reason": "EDATE clamps to end of shorter month"
+    },
+    {
+      "id": "days-between",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "DAYS(DATE(2020,1,20),DATE(2020,1,10))",
+      "expect": 10,
+      "reason": "DAYS is end-minus-start in serial days"
+    },
+    {
+      "id": "time-fraction",
+      "phase": "B",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "TIME(6,0,0)",
+      "expect": 0.25,
+      "reason": "TIME returns a fraction of a day"
+    },
+    {
+      "id": "index-match",
+      "phase": "B",
+      "category": "lookup",
+      "sheet": {
+        "FY": {
+          "A1": "a",
+          "A2": "b",
+          "A3": "c",
+          "B1": "10",
+          "B2": "20",
+          "B3": "30"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "INDEX(B1:B3,MATCH(\"b\",A1:A3,0))",
+      "expect": 20,
+      "reason": "INDEX/MATCH exact lookup"
+    },
+    {
+      "id": "vlookup-exact",
+      "phase": "B",
+      "category": "lookup",
+      "sheet": {
+        "FY": {
+          "A1": "x",
+          "A2": "y",
+          "A3": "z",
+          "B1": "1",
+          "B2": "2",
+          "B3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "VLOOKUP(\"y\",A1:B3,2,FALSE)",
+      "expect": 2,
+      "reason": "VLOOKUP exact match (range_lookup FALSE)"
+    },
+    {
+      "id": "xlookup",
+      "phase": "B",
+      "category": "lookup",
+      "sheet": {
+        "FY": {
+          "A1": "x",
+          "A2": "y",
+          "A3": "z",
+          "B1": "1",
+          "B2": "2",
+          "B3": "3"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "XLOOKUP(\"z\",A1:A3,B1:B3)",
+      "expect": 3,
+      "reason": "XLOOKUP exact over parallel columns"
+    },
+    {
+      "id": "choose-column-row",
+      "phase": "B",
+      "category": "lookup",
+      "sheet": {
+        "FY": {
+          "B5": "9"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "CHOOSE(2,\"a\",\"b\",\"c\")&COLUMN(B5)&ROW(B5)",
+      "expect": "b25",
+      "reason": "CHOOSE plus COLUMN/ROW on a bare ref"
+    },
+    {
+      "id": "address",
+      "phase": "B",
+      "category": "lookup",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ADDRESS(2,3,4)",
+      "expect": "C2",
+      "reason": "ADDRESS with relative style 4"
+    },
+    {
+      "id": "sumif",
+      "phase": "B",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "2",
+          "A3": "3",
+          "B1": "10",
+          "B2": "20",
+          "B3": "30"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "SUMIF(A1:A3,\">1\",B1:B3)",
+      "expect": 50,
+      "reason": "SUMIF with numeric criteria and sum_range"
+    },
+    {
+      "id": "countif",
+      "phase": "B",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "apple",
+          "A2": "banana",
+          "A3": "apricot"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "COUNTIF(A1:A3,\"a*\")",
+      "expect": 2,
+      "reason": "COUNTIF wildcard prefix"
+    },
+    {
+      "id": "averageif",
+      "phase": "B",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "2",
+          "A3": "3",
+          "A4": "4"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "AVERAGEIF(A1:A4,\">=2\")",
+      "expect": 3,
+      "reason": "AVERAGEIF over the criteria range itself"
+    },
+    {
+      "id": "sumifs",
+      "phase": "B",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "east",
+          "A2": "west",
+          "A3": "east",
+          "B1": "1",
+          "B2": "2",
+          "B3": "3",
+          "C1": "10",
+          "C2": "20",
+          "C3": "30"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "SUMIFS(C1:C3,A1:A3,\"east\",B1:B3,\">1\")",
+      "expect": 30,
+      "reason": "SUMIFS with two criteria pairs"
+    },
+    {
+      "id": "countifs",
+      "phase": "B",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "2",
+          "A3": "3",
+          "A4": "4",
+          "B1": "x",
+          "B2": "y",
+          "B3": "x",
+          "B4": "x"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "COUNTIFS(A1:A4,\">=2\",B1:B4,\"x\")",
+      "expect": 2,
+      "reason": "COUNTIFS conjunction"
+    },
+    {
+      "id": "trig-degrees",
+      "phase": "C",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(DEGREES(ACOS(-1)),0)",
+      "expect": 180,
+      "reason": "ACOS/DEGREES identity for π"
+    },
+    {
+      "id": "sin-radians",
+      "phase": "C",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(SIN(RADIANS(30)),10)",
+      "expect": 0.5,
+      "reason": "SIN of 30 degrees via RADIANS"
+    },
+    {
+      "id": "combin-fact",
+      "phase": "C",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "COMBIN(5,2)+FACT(4)",
+      "expect": 34,
+      "reason": "COMBIN and FACT"
+    },
+    {
+      "id": "even-odd-mround",
+      "phase": "C",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "EVEN(2.5)+ODD(2.5)+MROUND(10,3)",
+      "expect": 16,
+      "reason": "EVEN/ODD/MROUND"
+    },
+    {
+      "id": "sumsq-large-small",
+      "phase": "C",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "1",
+          "A2": "4",
+          "A3": "9"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "SUMSQ(A1:A3)+LARGE(A1:A3,1)+SMALL(A1:A3,1)",
+      "expect": 108,
+      "reason": "SUMSQ plus LARGE/SMALL"
+    },
+    {
+      "id": "stdev-s",
+      "phase": "C",
+      "category": "statistical",
+      "sheet": {
+        "FY": {
+          "A1": "2",
+          "A2": "4",
+          "A3": "4",
+          "A4": "4",
+          "A5": "5",
+          "A6": "5",
+          "A7": "7",
+          "A8": "9"
+        }
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(STDEV.S(A1:A8),6)",
+      "expect": 2.13809,
+      "reason": "STDEV.S sample standard deviation"
+    },
+    {
+      "id": "exact-clean",
+      "phase": "C",
+      "category": "text",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "AND(EXACT(\"Ab\",\"Ab\"),NOT(EXACT(\"Ab\",\"ab\")),CLEAN(\"a\"&CHAR(1)&\"b\")=\"ab\")",
+      "expect": true,
+      "reason": "EXACT is case-sensitive; CLEAN strips controls"
+    },
+    {
+      "id": "rand-pinned",
+      "phase": "C",
+      "category": "math",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "RAND()",
+      "expect": 0.25,
+      "rand": 0.25,
+      "reason": "RAND uses the pinned corpus clock when provided"
+    },
+    {
+      "id": "pmt-basic",
+      "phase": "C",
+      "category": "financial",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "ROUND(PMT(0.05/12,60,10000),2)",
+      "expect": -188.71,
+      "reason": "PMT loan payment (Excel sign convention)"
+    },
+    {
+      "id": "networkdays",
+      "phase": "C",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "NETWORKDAYS(DATE(2020,1,1),DATE(2020,1,10))",
+      "expect": 8,
+      "reason": "NETWORKDAYS excludes weekends"
+    },
+    {
+      "id": "timevalue",
+      "phase": "C",
+      "category": "date",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "TIMEVALUE(\"6:00\")",
+      "expect": 0.25,
+      "reason": "TIMEVALUE parses a clock string to a day fraction"
+    },
+    {
+      "id": "hyperlink-display",
+      "phase": "C",
+      "category": "lookup",
+      "sheet": {
+        "FY": {}
+      },
+      "fromSheet": "FY",
+      "expr": "HYPERLINK(\"https://example.com\",\"click\")",
+      "expect": "click",
+      "reason": "HYPERLINK returns friendly name; no navigation in-grid"
+    }
+  ]
+}

@@ -186,6 +186,18 @@ func cellXML(ref, text string, xf int) string {
 		ref, style, escapeXML(text))
 }
 
+// sheetHasFormula reports whether any cell in g is marked as a formula.
+func sheetHasFormula(g sheetRows) bool {
+	for _, row := range g.formula {
+		for _, f := range row {
+			if f {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // formulaCell reports whether grid cell (r, c) is a formula. A nil or short
 // formula grid means "no" — the document exporter never sets one.
 func formulaCell(g sheetRows, r, c int) bool {

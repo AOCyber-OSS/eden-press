@@ -43,3 +43,6 @@ Thumbs.db
 
 # DevFlow ephemeral skill marker — must never be committed
 .planning/.skill-active
+
+# Local/manual UI demos (not part of the library surface)
+/scratch/

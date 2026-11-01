@@ -116,6 +116,10 @@ func TestWorkbookBuildEditAndRoundTrip(t *testing.T) {
 	if sheetXML == "" {
 		t.Fatal("formula not written as a formula cell")
 	}
+	wbXML := readPart(t, a, "xl/workbook.xml")
+	if !strings.Contains(wbXML, `fullCalcOnLoad="1"`) {
+		t.Fatalf("workbook with formulas missing calcPr fullCalcOnLoad: %s", wbXML)
+	}
 	if strings.Contains(sheetXML, ">007<") && strings.Contains(sheetXML, "<v>007</v>") {
 		t.Fatal("identifier 007 was stored as a number")
 	}

@@ -12,9 +12,11 @@ downstream consumer (CLI, exporters, Dart) depends on. From there the graph fans
 genuinely independent workstreams that all depend on Objective 3 alone and not on each other —
 the CLI (4), chromedp-based PDF/PNG export (5), the Chrome-free native-OOXML PPTX exporter (6),
 and the Dart/Flutter binding (7) — eligible for parallel execution via `/devflow:workstreams`.
-Objective 8 closes the roadmap as a deliberate last-by-necessity hardening pass: math-fidelity
-tuning and auto-fit resolution have nothing to tune until the rest of the pipeline renders
-something real.
+Objective 8 closed the v1 roadmap as a deliberate last-by-necessity hardening pass: math-fidelity
+tuning and auto-fit resolution had nothing to tune until the rest of the pipeline rendered
+something real. Objective 9 is a post-v1 insertion: grow the PR #11 spreadsheet formula subset
+toward a practical Excel-compatible layer (live Dart eval + OOXML store; Excel remains authority
+for unsupported functions).
 
 ## Objectives
 
@@ -33,6 +35,7 @@ something real.
 - [x] **Objective 6: convert/pptx (native OOXML)** - Hand-rolled, Chrome-free, editable-text-box PPTX export consuming the docmodel directly — sibling to Objective 5, not sequential after it. (5/5 TRDs complete; verified passed 2026-07-21)
 - [x] **Objective 7: Dart/Flutter Binding (bind/capi + bind/dart)** - One Go core exposed via C-ABI, built three ways (Android `.so`, iOS `.a`, Web `.wasm`), gated only on Objective 3's API stability. (5/5 TRDs complete; verified passed 2026-07-21)
 - [x] **Objective 8: Math-Fidelity Hardening + Auto-Fit Resolution** - The five math-converter root-cause fixes, a concrete MathML fallback-trigger rule, bundled STIX Two Math, and the final auto-fit mechanism decision. (7/7 TRDs complete: latex2mathml fork + all 8 spike cases at KaTeX-parity, structural-ceiling fallback rule, STIX WOFF2 + MATH-table smoke, Flutter-only auto-fit / zero-JS HTML). (completed 2026-07-22)
+- [ ] **Objective 9: Excel Formula Layer for Eden Spreadsheets** - Grow the PR #11 Dart formula subset toward the largest practical Excel-compatible surface (corpus-first, phased A/B/C coverage), keeping Go OOXML as store/export and Excel as authority for unsupported functions.
 
 ## Objective Details
 
@@ -209,12 +212,34 @@ something real.
 
 > **Decision gates:** (1) the concrete MathML fallback-trigger rule — which exact TeX constructs (confirmed candidates: `\tag`, `\label`, complex multi-column `aligned`) auto-route to the SVG/PNG fallback, as a testable detection function, not a vague heuristic; (2) the final auto-fit mechanism — native Flutter `TextPainter` fit (client-side, Objective 7's binding) vs. a CSS-only `cqw`/SVG-text spike for browser/PDF output (Objective 5's export path) vs. dropping auto-fit entirely if neither pixel-matches acceptably.
 
+### Objective 9: Excel Formula Layer for Eden Spreadsheets
+**Goal**: Maximize practical Excel formula coverage in the live grid evaluator while keeping `convert/xlsx` as a formula store/exporter (Excel remains authority for unsupported functions).
+**Depends on**: PR #11 workbook + `bind/eden_ui` formula seam (already on main); no dependency on Objectives 0–8 beyond shipped packages.
+**Requirements**: XLSX-F01, XLSX-F02, XLSX-F03, XLSX-F04, XLSX-F05, XLSX-F06
+**Success Criteria** (what must be TRUE):
+  1. `conformance/corpus/xlsxformula` exists and drives Dart evaluator tests (corpus-first, like `xlsxtyping`).
+  2. Expression grammar supports comparisons, strings/bools, `&`, absolute/mixed refs, quoted sheet names.
+  3. Named-function coverage hits Phase A (≥40) then Phase B (≥100), with Phase C (200–300) tracked against a pinned Microsoft category inventory — never marketed as full Excel 365 parity.
+  4. Unsupported functions → `#NAME?` in grid; `.xlsx` still carries `<f>`; no stale `<v>` from a partial engine; `calcPr fullCalcOnLoad` when formulas exist.
+  5. No chromedp in formula path; no AGPL/commercial OOXML adoption; `xlsxtyping` / D6 formula-vs-value distinction preserved.
+**Plans**: 9 TRDs in 5 waves (see `objectives/09-xlsx-formula-layer/OBJECTIVE.md`)
+- [x] 09-00 — Decision lock + corpus scaffold + coverage inventory [wave 0]
+- [x] 09-01 — Grammar wave [wave 1]
+- [x] 09-02 / 09-03 — Phase A functions (74 named) [wave 2]
+- [ ] 09-04-TRD.md — Phase B Date & Time [wave 3]
+- [ ] 09-05-TRD.md — Phase B Lookup [wave 3]
+- [ ] 09-06-TRD.md — Phase B Conditional aggregates [wave 3]
+- [~] 09-07 — calcPr fullCalcOnLoad landed; LO/Go-twin deferred [wave 4]
+- [ ] 09-08-TRD.md — Phase C breadth + coverage dashboard / capstone [wave 4]
+
+> **Decision gates:** (1) Dart-only evaluator through Phase B vs Go twin (research default: Dart-only; Go twin is a kill-criterial spike); (2) pin the Microsoft function inventory snapshot used as Phase C denominator; (3) hard outs stay hard — LAMBDA/dynamic-array family, Cube/Web, VBA, iterative circular calc.
+
 ## Progress
 
 **Execution Order:**
-Objectives execute in numeric order for dependency-respecting sequential runs: 0 → 1 → 2 → 3 → {4, 5, 6, 7 in parallel} → 8
+Objectives 0 → 8 completed. Objective 9 is a post-roadmap insertion on the editable workbook / eden_ui seam (PR #11) and does not reopen Objectives 0–8.
 
-**Parallel workstreams (via `/devflow:workstreams`):** Objectives 4, 5, 6, and 7 all depend on Objective 3 alone (not on each other) and can execute concurrently in separate git worktrees. Objective 8 is the join point — it waits on both Objective 3 and Objective 7.
+**Parallel workstreams (via `/devflow:workstreams`):** Objectives 4, 5, 6, and 7 all depended on Objective 3 alone (not on each other) and could execute concurrently. Objective 8 was the v1 join point. Objective 9 Wave 2/3 TRDs (02∥03, 04∥05∥06) are eligible for parallel execution after Wave 0/1.
 
 | Objective | Jobs Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -227,7 +252,9 @@ Objectives execute in numeric order for dependency-respecting sequential runs: 0
 | 6. convert/pptx (native OOXML) | 5/5 | Complete    | 2026-07-21 |
 | 7. Dart/Flutter Binding | 5/5 | Complete    | 2026-07-21 |
 | 8. Math-Fidelity Hardening + Auto-Fit Resolution | 7/7 | Complete    | 2026-07-22 |
+| 9. Excel Formula Layer for Eden Spreadsheets | 3.5/9 | In progress | — |
 
 ---
 *Roadmap created: 2026-07-20*
-*Depth: comprehensive (9 objectives)*
+*Last updated: 2026-10-30 — Objective 9 (Excel formula layer) planned*
+*Depth: comprehensive (9 v1 objectives + Obj 9 post-v1 formula layer)*

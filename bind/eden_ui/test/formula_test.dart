@@ -20,6 +20,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:eden_ui/eden_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -105,4 +108,100 @@ void main() {
       throwsA(isA<FormulaError>().having((e) => e.code, 'code', '#NAME?')),
     );
   });
+
+  test('xlsxformula corpus drives the evaluator', () {
+    final corpusPath = _corpusPath();
+    final root = jsonDecode(File(corpusPath).readAsStringSync())
+        as Map<String, dynamic>;
+    expect(root['schema'], 'eden-press.xlsxformula/v1');
+    final decisions = root['decisions'] as Map<String, dynamic>;
+    expect(decisions['engineThroughPhaseB'], 'dart');
+    expect(decisions['cachedFormulaValue'], 'omit');
+
+    final cases = root['cases'] as List<dynamic>;
+    expect(cases, isNotEmpty);
+    for (final raw in cases) {
+      final c = raw as Map<String, dynamic>;
+      final id = c['id'] as String;
+      final now = c['now'] as String?;
+      formulaNowOverride =
+          now == null ? null : DateTime.parse(now).toUtc();
+      final rand = c['rand'];
+      formulaRandOverride = rand is num ? rand.toDouble() : null;
+      try {
+        final book = EdenWorkbook();
+        final sheets = c['sheet'] as Map<String, dynamic>;
+        for (final entry in sheets.entries) {
+          final sheet = book.addSheet(entry.key);
+          final cells = entry.value as Map<String, dynamic>;
+          for (final cell in cells.entries) {
+            final addr = _parseA1(cell.key);
+            sheet.setCell(addr.$1, addr.$2, cell.value as String);
+          }
+        }
+        final from = c['fromSheet'] as String;
+        final expr = c['expr'] as String;
+        final expectError = c['expectError'] as String?;
+        if (expectError != null) {
+          expect(
+            () => evaluateFormula(book, from, expr),
+            throwsA(
+              isA<FormulaError>().having((e) => e.code, 'code', expectError),
+            ),
+            reason: id,
+          );
+          continue;
+        }
+        final got = evaluateFormula(book, from, expr);
+        final want = c['expect'];
+        if (want is bool) {
+          expect(got, want, reason: id);
+        } else if (want is String) {
+          expect(got, want, reason: id);
+        } else if (want is num) {
+          expect(got, isA<num>(), reason: id);
+          expect((got as num).toDouble(), closeTo(want.toDouble(), 1e-9),
+              reason: id);
+        } else {
+          fail('$id: unexpected expect type ${want.runtimeType}');
+        }
+      } finally {
+        formulaNowOverride = null;
+        formulaRandOverride = null;
+      }
+    }
+  });
+}
+
+String _corpusPath() {
+  // test/ → bind/eden_ui → bind → repo root
+  final candidates = [
+    File('../../conformance/corpus/xlsxformula/cases.json'),
+    File('conformance/corpus/xlsxformula/cases.json'),
+  ];
+  for (final f in candidates) {
+    if (f.existsSync()) return f.path;
+  }
+  // Resolve from package root via script path.
+  final script = File.fromUri(Platform.script);
+  var dir = script.parent;
+  for (var i = 0; i < 8; i++) {
+    final hit = File('${dir.path}/conformance/corpus/xlsxformula/cases.json');
+    if (hit.existsSync()) return hit.path;
+    dir = dir.parent;
+  }
+  fail('could not locate conformance/corpus/xlsxformula/cases.json');
+}
+
+(int, int) _parseA1(String a1) {
+  final m = RegExp(r'^\$?([A-Za-z]+)\$?(\d+)$').firstMatch(a1);
+  if (m == null) {
+    throw FormatException('bad A1 $a1');
+  }
+  final letters = m.group(1)!.toUpperCase();
+  var col = 0;
+  for (final code in letters.codeUnits) {
+    col = col * 26 + (code - 64);
+  }
+  return (int.parse(m.group(2)!) - 1, col - 1);
 }

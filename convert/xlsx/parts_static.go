@@ -109,10 +109,17 @@ type sheetRef struct {
 	Target  string
 }
 
-func workbookXML(sheets []sheetRef) []byte {
+func workbookXML(sheets []sheetRef, fullCalcOnLoad bool) []byte {
 	var b strings.Builder
 	b.WriteString(xmlDeclaration)
-	b.WriteString(fmt.Sprintf(`<workbook xmlns="%s" xmlns:r="%s"><sheets>`, nsSpreadsheet, nsDocRels))
+	b.WriteString(fmt.Sprintf(`<workbook xmlns="%s" xmlns:r="%s">`, nsSpreadsheet, nsDocRels))
+	// When formulas are present without cached <v>, force Excel to recalculate
+	// on open (Objective 9 / XLSX-F04). Omit the element when there are no
+	// formulas so value-only workbooks stay byte-identical to prior exports.
+	if fullCalcOnLoad {
+		b.WriteString(`<calcPr fullCalcOnLoad="1"/>`)
+	}
+	b.WriteString(`<sheets>`)
 	for _, s := range sheets {
 		b.WriteString(fmt.Sprintf(`<sheet name="%s" sheetId="%d" r:id="%s"/>`,
 			escapeXML(s.Name), s.SheetID, s.RelID))
