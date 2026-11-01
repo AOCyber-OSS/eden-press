@@ -406,10 +406,13 @@ void main() {
     );
     await tester.pumpWidget(_app(EdenView(document: doc)));
     expect(find.byKey(const Key('eden-slides')), findsNothing);
+    expect(find.byKey(const Key('eden-docs')), findsOneWidget);
     expect(find.textContaining('Ship v7'), findsOneWidget);
-    expect(find.text('[sheet:Tasks]'), findsOneWidget);
-    expect(find.text('[logo]'), findsOneWidget);
+    expect(find.text('Tasks'), findsOneWidget);
+    expect(find.text('logo'), findsWidgets);
+    expect(find.text('[sheet:Tasks]'), findsNothing);
+    expect(find.text('[logo]'), findsNothing);
     expect(find.byType(Divider), findsWidgets);
-    expect(find.text('! Watch latency'), findsOneWidget);
+    expect(find.textContaining('Watch latency'), findsOneWidget);
   });
 }

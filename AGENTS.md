@@ -173,6 +173,19 @@ Flutter mirrors: `EdenEdit` subclasses (`EdenCellEdit`, `EdenSheetAdded`,
 `EdenColumnEdit`, `EdenRelationEdit`, `EdenDocOpsEdit`) expose `toWire()` /
 `toWireOps()` matching the tables above.
 
+## Docs rendering modes (Flutter vs HTML)
+
+Clients choose how a document is painted:
+
+| Client | Request | Response | Renderer |
+|---|---|---|---|
+| Flutter app | `--format json`, `serve ?format=json`, or `Accept: application/json` | lowercase JSON envelope (`model` = `eden-press.model/v7`) | [`bind/eden_docs`](bind/eden_docs) package (`EdenDocsView`) |
+| Browser / HTML host | `--format html` (default), `serve ?format=html`, or `Accept: text/html` | standalone zero-JS HTML | Go `model.ToHTML` + DocsCSS (`doc export --format html`) |
+
+Do **not** dump JSON into a Flutter `Text`. Include `eden_docs` in the host
+app and pass the decoded `ModelDocument`. Slides still use `eden_press`'s
+`EdenPressView` (FitText); Docs use `eden_docs`.
+
 ## Formats (`--format`)
 
 `--format` is a persistent flag on every convert invocation (the bare

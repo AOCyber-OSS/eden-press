@@ -20,6 +20,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+import 'package:eden_docs/eden_docs.dart';
 import 'package:eden_press/eden_press.dart';
 import 'package:flutter/material.dart';
 
@@ -86,16 +87,9 @@ class _DocumentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        for (final section in document.sections)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: EdenPressView(_outputFor(document, section)),
-          ),
-      ],
-    );
+    // Docs paint through the standalone eden_docs package (real block
+    // widgets). Slides keep EdenPressView + FitText below.
+    return EdenDocsView(document: document);
   }
 }
 

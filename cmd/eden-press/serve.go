@@ -23,6 +23,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -120,11 +121,14 @@ func serveFileHandler(absRoot string, cmd *cobra.Command, hub *reload.Hub) http.
 // serveMarkdown converts p (a markdown file already confirmed to be
 // contained under absRoot by safeJoin) on EVERY request -- no cache in v1,
 // matching Marp CLI's own serve behavior -- through 04-03's identical
-// buildServeOptions -> press.Render -> assembleHTML chain, splicing the
-// reused reload client through the InjectScripts seam. HTML only: no
-// ?pdf/?png query-string handling (research Pattern 5 scope correction --
-// that is convert/'s job, Objectives 5/6), so r.URL.RawQuery is never
-// inspected here at all.
+// buildServeOptions -> press.Render chain. The client picks the body shape:
+//
+//   - ?format=json or Accept: application/json → lowercase JSON envelope
+//     (Flutter / eden_docs clients)
+//   - ?format=html, Accept: text/html, or default → standalone HTML
+//     (browsers; docs get AssembleDocsHTML when the model is article/paged)
+//
+// No ?pdf/?png handling (convert/'s job).
 func serveMarkdown(w http.ResponseWriter, r *http.Request, p string, cmd *cobra.Command, hub *reload.Hub) {
 	md, err := os.ReadFile(p)
 	if err != nil {
@@ -144,12 +148,66 @@ func serveMarkdown(w http.ResponseWriter, r *http.Request, p string, cmd *cobra.
 		return
 	}
 
-	doc := assembleHTML(out, htmlDocOptions{
-		InjectScripts: []string{reload.ClientJS("/__reload")}, // 04-06 client, reused verbatim
-	})
+	switch serveResponseFormat(r) {
+	case "json":
+		env := jsonEnvelope{
+			HTML:     out.HTML,
+			CSS:      out.CSS,
+			Model:    out.Model,
+			Comments: out.Comments,
+			Meta:     out.Meta,
+		}
+		b, err := json.MarshalIndent(env, "", "  ")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(append(b, '\n'))
+	default:
+		body := assembleServeHTML(out, hub)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, body)
+	}
+}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, doc)
+// serveResponseFormat picks json vs html from ?format= then Accept.
+func serveResponseFormat(r *http.Request) string {
+	switch strings.ToLower(r.URL.Query().Get("format")) {
+	case "json":
+		return "json"
+	case "html":
+		return "html"
+	}
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") &&
+		!strings.Contains(accept, "text/html") {
+		return "json"
+	}
+	return "html"
+}
+
+// assembleServeHTML prefers flowing docs HTML when the rendered model looks
+// like an article/paged document; otherwise keeps the Marp slide wrapper
+// with live-reload for decks. cmd cannot import chase/model (check-cli-
+// imports), so docs are detected via Meta.Directives / HTML class, then
+// re-exported through press.ExportHTMLJSON.
+func assembleServeHTML(out press.Output, hub *reload.Hub) string {
+	profile := ""
+	if out.Meta.Directives != nil {
+		profile = strings.ToLower(out.Meta.Directives["profile"])
+	}
+	if profile == "article" || profile == "paged" ||
+		strings.Contains(out.HTML, "edenpress-paged") {
+		if raw, err := json.Marshal(out.Model); err == nil {
+			if html, err := press.ExportHTMLJSON(raw); err == nil {
+				return string(html)
+			}
+		}
+	}
+	return assembleHTML(out, htmlDocOptions{
+		InjectScripts: []string{reload.ClientJS("/__reload")},
+	})
 }
 
 // buildServeOptions is serve's own named call-site for 04-03's

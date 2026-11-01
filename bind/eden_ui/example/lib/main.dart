@@ -333,7 +333,17 @@ ModelDocument _article() {
             display: false,
             ordered: false,
             items: [],
-            sheetEmbed: {'sheet': 'Tasks'},
+            sheetEmbed: {
+              'sheet': 'Tasks',
+              'snapshot': {
+                'cells': [
+                  {'r': 0, 'c': 0, 'v': 'Owner'},
+                  {'r': 0, 'c': 1, 'v': 'Status'},
+                  {'r': 1, 'c': 0, 'v': 'Ada'},
+                  {'r': 1, 'c': 1, 'v': 'Done'},
+                ],
+              },
+            },
           ),
           const Block(
             kind: BlockKind.figure,
@@ -343,7 +353,8 @@ ModelDocument _article() {
             display: false,
             ordered: false,
             items: [],
-            svg: '<svg/>',
+            svg:
+                '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#B8860B"/><text x="12" y="40" fill="white" font-size="18">EP</text></svg>',
           ),
           const Block(
             kind: BlockKind.toggle,

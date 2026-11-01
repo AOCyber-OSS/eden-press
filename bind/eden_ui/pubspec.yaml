@@ -38,6 +38,8 @@ dependencies:
     sdk: flutter
   eden_press:
     path: ../dart
+  eden_docs:
+    path: ../eden_docs
   two_dimensional_scrollables: ^0.5.5
 
 dev_dependencies:
