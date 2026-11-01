@@ -144,7 +144,7 @@ void main() {
   });
 
   test('Case 7: the binding records the wire shape it now understands', () {
-    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v6');
+    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v7');
   });
 
   test('Case 8: toggle and synced blocks parse children and syncRef', () {
@@ -170,6 +170,40 @@ void main() {
     expect(blocks[0].children.single.text, 'Nested');
     expect(blocks[1].kind, BlockKind.synced);
     expect(blocks[1].syncRef?['blockId'], 'b_tog');
+  });
+
+  test('Case 9: v7 kinds and rich runs parse', () {
+    final out = _doc([
+      {
+        'kind': 'todo',
+        'text': 'Ship',
+        'checked': true,
+        'runs': [
+          {'text': 'Ship', 'marks': ['bold']},
+        ],
+      },
+      {
+        'kind': 'sheet',
+        'sheetEmbed': {
+          'sheet': 'Tasks',
+          'snapshot': {
+            'cells': [
+              {'r': 0, 'c': 0, 'v': 'A'},
+            ],
+          },
+        },
+      },
+      {'kind': 'figure', 'svg': '<svg/>', 'text': 'logo'},
+      {'kind': 'divider'},
+    ]);
+    final blocks = out.model.sections.single.blocks;
+    expect(blocks[0].kind, BlockKind.todo);
+    expect(blocks[0].checked, isTrue);
+    expect(blocks[0].runs.single.marks, ['bold']);
+    expect(blocks[1].kind, BlockKind.sheet);
+    expect(blocks[1].sheetEmbed?['sheet'], 'Tasks');
+    expect(blocks[2].kind, BlockKind.figure);
+    expect(blocks[3].kind, BlockKind.divider);
   });
 }
 

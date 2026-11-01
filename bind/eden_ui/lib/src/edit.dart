@@ -206,3 +206,46 @@ class EdenDocOpsEdit extends EdenEdit {
   List<Map<String, Object?>> toWireOps() =>
       List<Map<String, Object?>>.from(ops);
 }
+
+/// Helpers that mirror Go `model.Op` wire shapes for Docs hosts.
+class EdenDocOp {
+  static Map<String, Object?> patchBlock(String blockId, Map<String, Object?> patch) =>
+      {'op': 'patch_block', 'blockId': blockId, 'block': patch};
+
+  static Map<String, Object?> replaceText({
+    required String old,
+    required String neu,
+    String blockId = '',
+    bool all = false,
+  }) => {
+    'op': 'replace_text',
+    if (blockId.isNotEmpty) 'blockId': blockId,
+    'old': old,
+    'new': neu,
+    if (all) 'all': true,
+  };
+
+  static Map<String, Object?> insertText({
+    required String blockId,
+    required int offset,
+    required String text,
+  }) => {
+    'op': 'insert_text',
+    'blockId': blockId,
+    'offset': offset,
+    'text': text,
+  };
+
+  static Map<String, Object?> setProperties(List<Map<String, Object?>> properties, {bool replace = false}) =>
+      {
+        'op': 'set_properties',
+        'properties': properties,
+        if (replace) 'replaceProperties': true,
+      };
+
+  static Map<String, Object?> setPropertyValue(String propertyId, String value) =>
+      {'op': 'set_property_value', 'propertyId': propertyId, 'value': value};
+
+  static Map<String, Object?> addComment(Map<String, Object?> comment) =>
+      {'op': 'add_comment', 'comment': comment};
+}

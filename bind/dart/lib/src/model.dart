@@ -195,7 +195,7 @@ class ModelDocument {
   /// will be wrong for every position after the first multi-byte character.
   /// This class does not yet surface spans -- reading them is deliberately
   /// left to the consumer that needs them, along with that conversion.
-  static const expectedSchemaVersion = 'eden-press.model/v6';
+  static const expectedSchemaVersion = 'eden-press.model/v7';
 
   final String schemaVersion;
   final Meta meta;
@@ -280,6 +280,12 @@ enum BlockKind {
   quote,
   toggle,
   synced,
+  todo,
+  callout,
+  divider,
+  file,
+  sheet,
+  figure,
   unknown,
 }
 
@@ -305,9 +311,36 @@ BlockKind _blockKindFromWire(String value) {
       return BlockKind.toggle;
     case 'synced':
       return BlockKind.synced;
+    case 'todo':
+      return BlockKind.todo;
+    case 'callout':
+      return BlockKind.callout;
+    case 'divider':
+      return BlockKind.divider;
+    case 'file':
+      return BlockKind.file;
+    case 'sheet':
+      return BlockKind.sheet;
+    case 'figure':
+      return BlockKind.figure;
     default:
       return BlockKind.unknown;
   }
+}
+
+/// Mirrors `model.TextRun` (schema v7).
+class TextRun {
+  const TextRun({required this.text, this.marks = const <String>[], this.link = ''});
+
+  final String text;
+  final List<String> marks;
+  final String link;
+
+  factory TextRun.fromJson(Map<String, dynamic> json) => TextRun(
+    text: json['text'] as String? ?? '',
+    marks: _stringList(json['marks']),
+    link: json['link'] as String? ?? '',
+  );
 }
 
 /// Mirrors `model.Block` (chase/model/document.go). [text] carries raw TeX
@@ -332,6 +365,15 @@ class Block {
     this.children = const <Block>[],
     this.collapsed = false,
     this.syncRef,
+    this.runs = const <TextRun>[],
+    this.checked = false,
+    this.icon = '',
+    this.tone = '',
+    this.name = '',
+    this.mime = '',
+    this.size = 0,
+    this.svg = '',
+    this.sheetEmbed,
   });
 
   /// Stable block id for apply_ops (schema v5+). Empty on Build()-produced
@@ -374,10 +416,24 @@ class Block {
   /// Synced-block source ref (schema v6).
   final Map<String, String>? syncRef;
 
+  /// Rich text runs (schema v7); [text] remains the plain fallback.
+  final List<TextRun> runs;
+
+  final bool checked;
+  final String icon;
+  final String tone;
+  final String name;
+  final String mime;
+  final int size;
+  final String svg;
+  final Map<String, dynamic>? sheetEmbed;
+
   factory Block.fromJson(Map<String, dynamic> json) {
     final itemsJson = json['items'];
     final childrenJson = json['children'];
     final sync = json['syncRef'];
+    final runsJson = json['runs'];
+    final embed = json['sheetEmbed'];
     return Block(
       id: json['id'] as String? ?? '',
       kind: _blockKindFromWire(json['kind'] as String? ?? ''),
@@ -413,21 +469,53 @@ class Block {
           sync is Map
               ? sync.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''))
               : null,
+      runs:
+          runsJson is List
+              ? runsJson
+                  .map((e) => TextRun.fromJson(e as Map<String, dynamic>))
+                  .toList()
+              : const <TextRun>[],
+      checked: json['checked'] as bool? ?? false,
+      icon: json['icon'] as String? ?? '',
+      tone: json['tone'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      mime: json['mime'] as String? ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      svg: json['svg'] as String? ?? '',
+      sheetEmbed:
+          embed is Map ? Map<String, dynamic>.from(embed) : null,
     );
   }
 }
 
 /// Mirrors `model.ListItem` (chase/model/document.go).
 class ListItem {
-  const ListItem({required this.text, required this.level});
+  const ListItem({
+    this.id = '',
+    required this.text,
+    required this.level,
+    this.runs = const <TextRun>[],
+  });
 
+  final String id;
   final String text;
   final int level;
+  final List<TextRun> runs;
 
-  factory ListItem.fromJson(Map<String, dynamic> json) => ListItem(
-    text: json['text'] as String? ?? '',
-    level: json['level'] as int? ?? 0,
-  );
+  factory ListItem.fromJson(Map<String, dynamic> json) {
+    final runsJson = json['runs'];
+    return ListItem(
+      id: json['id'] as String? ?? '',
+      text: json['text'] as String? ?? '',
+      level: json['level'] as int? ?? 0,
+      runs:
+          runsJson is List
+              ? runsJson
+                  .map((e) => TextRun.fromJson(e as Map<String, dynamic>))
+                  .toList()
+              : const <TextRun>[],
+    );
+  }
 }
 
 /// Mirrors `model.OutlineEntry` (chase/model/document.go).

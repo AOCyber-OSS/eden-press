@@ -6,11 +6,13 @@ document is the scriptable contract an AI agent (or any non-interactive
 caller) needs to inspect, create, edit, and export documents without reading
 the Go source.
 
-**Source of truth for live documents is the docmodel** (`eden-press.model/v6`
+**Source of truth for live documents is the docmodel** (`eden-press.model/v7`
 JSON), not Markdown. Markdown remains the import/export prose format
 (`doc import` / `doc export`, `--format html`/`pptx`/…). Agents should create
 and edit via `eden-press doc` ops against JSON pages; do not rewrite Markdown
-as the primary edit path.
+as the primary edit path. There is **no separate database product** — use
+workbooks + `sheet` embed blocks. Design/layout tooling is **out of Press**;
+use `figure` blocks for SVG/asset interchange only.
 
 **Source of truth for live sheets is the workbook snapshot**
 (`eden-press.workbook/v3` JSON). `.xlsx` is interchange only — relation refs
@@ -29,11 +31,11 @@ prints a JSON error envelope on stderr on failure (even without `--format json`)
 
 | Command | Purpose |
 |---|---|
-| `doc create [--title T] [-o page.json]` | Empty single-section page JSON (`eden-press.model/v6`) |
-| `doc get <page.json\|->` | Validate / pretty-print; assigns missing block ids |
-| `doc apply <page.json\|-> --ops ops.json [-o out.json]` | Apply a batch of document ops |
+| `doc create [--title T] [-o page.json]` | Empty single-section page JSON (`eden-press.model/v7`) |
+| `doc get <page.json\|->` | Validate / pretty-print; assigns missing block/list-item ids |
+| `doc apply <page.json\|-> --ops ops.json [--dry-run] [-o out.json]` | Apply ops (`--dry-run` validates without mutating) |
 | `doc import <in.md\|-> [-o page.json]` | Markdown → docmodel JSON via `press.Render` (**always assigns block ids**) |
-| `doc export <page.json\|-> [-o out.md]` | Docmodel → Marp-compatible Markdown (nested/toggle/synced best-effort; some features lossy) |
+| `doc export <page.json\|-> [-o out.md]` | Docmodel → Marp-compatible Markdown (nested/sheet/figure best-effort; some features lossy) |
 
 `apply` ops JSON may be a bare array or `{"ops":[...]}`.
 
@@ -51,27 +53,44 @@ prints a JSON error envelope on stderr on failure (even without `--format json`)
 
 | `op` | Required fields | Notes |
 |---|---|---|
-| `insert_block` | `sectionId` **or** `parentBlockId`, `block` | Optional `index` (0-based). Leaf kinds + `toggle`/`synced`. Auto-assigns `block.id` when omitted |
-| `update_block` | `blockId`, `block` | Replaces the block in place (keeps id). Synced instances: mutate the **source** block, not the instance |
+| `insert_block` | `sectionId` **or** `parentBlockId`, `block` | Optional `index` (0-based). Auto-assigns `block.id` when omitted |
+| `update_block` | `blockId`, `block` | Full replace (keeps id). Synced: mutate the **source**, not the instance |
+| `patch_block` | `blockId`, `block` | Merge fields/runs/checked/sheetEmbed; `clearChecked`/`clearCollapsed` clear bools |
 | `delete_block` | `blockId` | Removes the block (and its children) |
 | `move_block` | `blockId` | Optional `sectionId` / `parentBlockId` / `index`. Cycle into own descendant is rejected |
+| `replace_text` | `old`, `new` | Optional `blockId`, `all`. Operates on plain `text` (runs re-flattened; marks may drop) |
+| `insert_text` | `blockId`, `offset`, `text` | UTF-8 byte offset into plain text |
 | `insert_section` | | Optional `index`, `attrs`, `notes`. Section ids are renumbered 1..N after structural ops |
 | `delete_section` | `sectionId` | Cannot delete the last section |
 | `move_section` | `sectionId`, `index` | Renumbers afterward |
 | `set_section_attrs` | `sectionId` | `attrs` map (omit/empty clears) |
 | `set_section_notes` | `sectionId` | `notes` string array |
 | `set_meta_directives` | `directives` | Merges into `meta.directives` unless `replaceDirectives: true` |
+| `set_properties` | `properties` | Page property schema; `replaceProperties` replaces entirely |
+| `set_property_value` | `propertyId`, `value` | Sets one property value string |
+| `add_comment` | `comment` | `{blockId, body, start?, stop?, suggestion?}`; assigns `c_N` id |
+| `resolve_comment` | `commentId` | Marks resolved |
+| `apply_suggestion` | `commentId` | Applies suggestion text/runs to the anchored block and resolves |
 
 Editable block kinds: `paragraph`, `heading`, `list`, `code`, `math`, `table`,
-`image`, `quote`, `toggle`, `synced`.
+`image`, `quote`, `toggle`, `synced`, `todo`, `callout`, `divider`, `file`,
+`sheet`, `figure`.
 
-Schema v6 additions:
+Schema v7 additions:
 
-- `children` — nested body under containers (`toggle`, optionally `quote`)
-- `toggle` — title in `text`; body in `children`; optional `collapsed` bool
-- `synced` — `syncRef: { "blockId": "...", "pageId": "..." }`. Same-document
-  refs omit `pageId`. Cross-page resolution is a host (Docs) concern; Press
-  stores the ref only.
+- `runs[]` — rich text `{text, marks?, link?}`; plain `text` is the search/replace authority
+- `todo` — `checked` bool + optional `children`
+- `callout` — `text`/`runs` + optional `icon`/`tone`
+- `divider` — thematic break
+- `file` — attachment ref: `src`, `name?`, `mime?`, `size?` (bytes in Docs storage)
+- `sheet` — embed via `sheetEmbed: {pageId?, workbookHint?, sheet, range?, snapshot?}`; snapshot is sparse workbook-shaped JSON for offline export
+- `figure` — `src` and/or inline `svg` + `alt`/`title` (no design editor in Press)
+- `properties` / `propertyValues` — typed page properties (`text|number|select|multi_select|date|checkbox|url|email|relation`)
+- `comments[]` — review anchors + optional suggestions (data only)
+- List items may carry `id` (`li_N`) and `runs`
+
+Schema v6 (still valid): `children`, `toggle`, `synced` / `syncRef`. Cross-page
+`pageId` resolution is a Docs concern.
 
 ```bash
 # Create → edit → read (agent flow):
@@ -127,7 +146,8 @@ structured relation refs.
 | `delete_sheet` | `sheet` | Cannot delete the last sheet |
 | `set_header_row` | `sheet`, `row`, `header` | |
 | `set_align` | `sheet`, `column`, `align` | `left`/`right`/`center`/`` |
-| `set_column` | `sheet`, `columnId`, `name`, `type` | Upsert typed property |
+| `set_column` | `sheet`, `columnId`, `name`, `type` | Upsert typed property; optional `options` for select types. Types: `text\|number\|formula\|relation\|select\|multi_select\|date\|checkbox\|url\|email` |
+| `set_named_range` | `rangeId`, `name`, `sheet`, `r0`..`c1` | Stable named rectangle for sheet embeds |
 | `set_relation` | `sheet`, `rels` | Address with `rowId` or `row`, plus `columnId` or `column`. Same-workbook target `rowId` must exist when `pageId`/`sheet` omitted |
 | `clear_relation` | `sheet` | Same addressing as `set_relation` |
 | `ensure_row_id` | `sheet`, `row` | Optional `rowId`; no-op if already set |
@@ -315,13 +335,13 @@ Field notes an agent must get right:
   `![alt](src "title")` third argument in `title`. A **quote** block carries its
   concatenated text in `text` (multi-paragraph quotes are joined by a blank
   line; nested quotes are flattened in document order).
-- `model` is exactly `chase/model.Document`'s own schema-v6 JSON shape,
+- `model` is exactly `chase/model.Document`'s own schema-v7 JSON shape,
   reused verbatim; `cmd/eden-press` itself never imports that package
   directly (it re-marshals the already-typed value through `any`), but the
   wire shape is stable and versioned independently of Marp/goldmark churn.
-- Schema v6 adds optional `block.id`, nested `children`, and `toggle` /
-  `synced` kinds. Convert/`Build` may omit `id`; `doc import`/`apply`/`get`
-  always ensure ids.
+- Schema v7 adds rich `runs`, todo/callout/divider/file/sheet/figure,
+  page properties, and comments. Convert/`Build` may omit `id`/`runs`;
+  `doc import`/`apply`/`get` always ensure ids.
 
 ## Exit codes
 

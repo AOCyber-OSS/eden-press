@@ -171,10 +171,53 @@ class EdenPressView extends StatelessWidget {
             color: Color(0xFF757575),
           ),
         );
+      case BlockKind.todo:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${block.checked ? '☑' : '☐'} ${_plain(block)}'),
+            for (final child in block.children) _buildBlock(child),
+          ],
+        );
+      case BlockKind.callout:
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.all(8),
+          color: const Color(0xFFF5F5F5),
+          child: Text(
+            block.icon.isEmpty ? _plain(block) : '${block.icon} ${_plain(block)}',
+          ),
+        );
+      case BlockKind.divider:
+        return const Divider();
+      case BlockKind.file:
+        final label = block.name.isNotEmpty ? block.name : block.src;
+        return Text(
+          '[$label]',
+          style: const TextStyle(color: Color(0xFF757575)),
+        );
+      case BlockKind.sheet:
+        return Text(
+          '[sheet:${block.sheetEmbed?['sheet'] ?? ''}]',
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        );
+      case BlockKind.figure:
+        final alt = block.text.isNotEmpty ? block.text : (block.title.isNotEmpty ? block.title : 'figure');
+        return Text(
+          '[$alt]',
+          style: const TextStyle(fontStyle: FontStyle.italic, color: Color(0xFF757575)),
+        );
       case BlockKind.paragraph:
       case BlockKind.unknown:
-        return Text(block.text);
+        return Text(_plain(block));
     }
+  }
+
+  String _plain(Block block) {
+    if (block.runs.isNotEmpty) {
+      return block.runs.map((r) => r.text).join();
+    }
+    return block.text;
   }
 
   /// Renders a `table` block. Its payload is in [Block.headers]/[Block.rows],

@@ -56,7 +56,7 @@ func TestDocAgentCRUDFlow(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc["schemaVersion"] != "eden-press.model/v6" {
+	if doc["schemaVersion"] != "eden-press.model/v7" {
 		t.Fatalf("schemaVersion = %v", doc["schemaVersion"])
 	}
 
@@ -120,12 +120,78 @@ func TestDocImportMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"schemaVersion": "eden-press.model/v6"`) &&
-		!strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v6"`) {
+	if !strings.Contains(string(raw), `"schemaVersion": "eden-press.model/v7"`) &&
+		!strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v7"`) {
 		t.Fatalf("import JSON: %s", raw)
 	}
 	if !strings.Contains(string(raw), "Title") {
 		t.Fatalf("missing Title: %s", raw)
+	}
+}
+
+func TestDocV7TextOpsDryRunAndSheetEmbed(t *testing.T) {
+	dir := t.TempDir()
+	page := filepath.Join(dir, "page.json")
+	ops := filepath.Join(dir, "ops.json")
+	outMD := filepath.Join(dir, "out.md")
+
+	root := newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "create", "--title", "V7", "-o", page})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ops, []byte(`[
+		{"op":"insert_block","sectionId":1,"block":{"id":"b1","kind":"paragraph","runs":[{"text":"Hello ","marks":["bold"]},{"text":"world"}]}},
+		{"op":"insert_block","sectionId":1,"block":{"id":"sh","kind":"sheet","sheetEmbed":{"sheet":"Tasks","snapshot":{"cells":[{"r":0,"c":0,"v":"A"},{"r":0,"c":1,"v":"B"}]}}}},
+		{"op":"set_properties","properties":[{"id":"status","name":"Status","type":"select","options":["todo","done"]}]},
+		{"op":"set_property_value","propertyId":"status","value":"todo"},
+		{"op":"replace_text","blockId":"b1","old":"world","new":"eden"}
+	]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "apply", page, "--ops", ops, "--dry-run", "-o", filepath.Join(dir, "dry.json")})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	dry, _ := os.ReadFile(filepath.Join(dir, "dry.json"))
+	if strings.Contains(string(dry), "eden") {
+		t.Fatalf("dry-run should not mutate: %s", dry)
+	}
+
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "apply", page, "--ops", ops, "-o", page})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	raw, _ := os.ReadFile(page)
+	if !strings.Contains(string(raw), `"eden-press.model/v7"`) && !strings.Contains(string(raw), `"schemaVersion": "eden-press.model/v7"`) {
+		// indented form
+		if !strings.Contains(string(raw), "eden-press.model/v7") {
+			t.Fatalf("schema: %s", raw)
+		}
+	}
+	if !strings.Contains(string(raw), "Hello eden") && !strings.Contains(string(raw), `"Hello eden"`) {
+		t.Fatalf("replace missing: %s", raw)
+	}
+
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"doc", "export", page, "-o", outMD})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(outMD)
+	if !strings.Contains(string(md), "| A | B |") {
+		t.Fatalf("sheet embed export: %s", md)
 	}
 }
 
