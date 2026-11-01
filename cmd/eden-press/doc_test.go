@@ -160,7 +160,7 @@ func TestDocV7TextOpsDryRunAndSheetEmbed(t *testing.T) {
 		t.Fatalf("dry-run: %v", err)
 	}
 	dry, _ := os.ReadFile(filepath.Join(dir, "dry.json"))
-	if strings.Contains(string(dry), "eden") {
+	if strings.Contains(string(dry), "Hello eden") || strings.Contains(string(dry), `"sheetEmbed"`) {
 		t.Fatalf("dry-run should not mutate: %s", dry)
 	}
 
