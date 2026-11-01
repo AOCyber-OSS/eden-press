@@ -69,7 +69,7 @@ not as a filename. If your input file happens to be named e.g. "watch.md"
 	}
 
 	registerPersistentFlags(root)
-	root.AddCommand(newConvertCmd(), newWatchCmd(), newServeCmd(), newPreviewCmd())
+	root.AddCommand(newConvertCmd(), newWatchCmd(), newServeCmd(), newPreviewCmd(), newDocCmd(), newWorkbookCmd())
 
 	// SilenceErrors (above) stops cobra from printing an error itself, so
 	// main.go's exit-code sink (main.go) is the ONLY place any error is ever

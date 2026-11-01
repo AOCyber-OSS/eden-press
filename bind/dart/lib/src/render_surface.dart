@@ -143,6 +143,34 @@ class EdenPressView extends StatelessWidget {
             color: Color(0xFF757575),
           ),
         );
+      case BlockKind.toggle:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              block.text,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final child in block.children) _buildBlock(child),
+                ],
+              ),
+            ),
+          ],
+        );
+      case BlockKind.synced:
+        final ref = block.syncRef?['blockId'] ?? '';
+        return Text(
+          '[synced:$ref]',
+          style: const TextStyle(
+            fontStyle: FontStyle.italic,
+            color: Color(0xFF757575),
+          ),
+        );
       case BlockKind.paragraph:
       case BlockKind.unknown:
         return Text(block.text);

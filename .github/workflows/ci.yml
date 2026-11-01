@@ -81,7 +81,10 @@ jobs:
         # replace; it carries mekyt's OWN LICENSE, not Eden's header, so it is excluded
         # the same way themes/** and convert/chrome/fonts/** are (see NOTICE). Everything
         # else must have the MIT header.
-        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -ignore '.github/workflows/oss-mirror.yml' -check .
+        # Flutter create scaffolds under bind/**/example/{linux,web} are
+        # generated runner/plugin boilerplate (CMake, registrant, index.html)
+        # — not Eden-authored source; ignore them the same way node_modules is.
+        run: addlicense -l mit -s -c "AO Cyber Systems" -ignore 'conformance/corpus/cases/**' -ignore '**/node_modules/**' -ignore 'themes/**' -ignore 'convert/chrome/fonts/**' -ignore 'internal/latex2mathml/**' -ignore '.github/workflows/oss-mirror.yml' -ignore 'bind/**/example/linux/**' -ignore 'bind/**/example/web/**' -check .
 
       - name: Check no chromedp (API-02)
         # OBJECTIVE.md success criterion 2 + the Objective-7-begin gate: the

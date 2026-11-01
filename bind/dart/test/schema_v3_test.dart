@@ -144,15 +144,39 @@ void main() {
   });
 
   test('Case 7: the binding records the wire shape it now understands', () {
-    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v4');
+    expect(ModelDocument.expectedSchemaVersion, 'eden-press.model/v6');
+  });
+
+  test('Case 8: toggle and synced blocks parse children and syncRef', () {
+    final out = _doc([
+      {
+        'id': 'b_tog',
+        'kind': 'toggle',
+        'text': 'Details',
+        'collapsed': true,
+        'children': [
+          {'kind': 'paragraph', 'text': 'Nested'},
+        ],
+      },
+      {
+        'id': 'b_sync',
+        'kind': 'synced',
+        'syncRef': {'blockId': 'b_tog', 'pageId': ''},
+      },
+    ]);
+    final blocks = out.model.sections.single.blocks;
+    expect(blocks[0].kind, BlockKind.toggle);
+    expect(blocks[0].collapsed, isTrue);
+    expect(blocks[0].children.single.text, 'Nested');
+    expect(blocks[1].kind, BlockKind.synced);
+    expect(blocks[1].syncRef?['blockId'], 'b_tog');
   });
 }
 
 // ModelDocument.expectedSchemaVersion is the binding's own record of which
-// wire shape it understands. Leaving it at v2 after the Go side moved to v3
-// would make any version check this constant feeds silently reject — or
-// silently accept — the wrong shape. The same reasoning moves it v3 -> v4 for
-// AODex Objective 16's additive source spans: v4 is a strict superset of v3
-// (proven Go-side by TestV4IsAStrictSupersetOfV3), so every case in this file
-// still describes the shape correctly — the constant is simply the one thing
-// that must track chase/model.SchemaVersion.
+// wire shape it understands. Leaving it stale after the Go side moves would
+// make any version check this constant feeds silently reject — or silently
+// accept — the wrong shape. The same reasoning moves it v4 -> v5 for the AI
+// doc-ops spike's additive block id: v5 is a strict superset of v4, so every
+// case in this file still describes the shape correctly — the constant is
+// simply the one thing that must track chase/model.SchemaVersion.

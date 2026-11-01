@@ -100,7 +100,10 @@ func renderBlock(b model.Block) string {
 		// EPD-R1 made this distinguishable from prose upstream; here is where
 		// that pays off -- an indented, italic Quote style rather than a
 		// paragraph indistinguishable from the surrounding body.
-		return renderMultilineParagraph("Quote", b.Text)
+		var sb strings.Builder
+		sb.WriteString(renderMultilineParagraph("Quote", b.Text))
+		sb.WriteString(renderChildBlocks(b.Children))
+		return sb.String()
 
 	case model.BlockCode:
 		return renderCode(b)
@@ -122,15 +125,38 @@ func renderBlock(b model.Block) string {
 		// Upgrading this to real OMML is tracked as follow-up work.
 		return renderMultilineParagraph("Code", b.Text)
 
+	case model.BlockToggle:
+		// Flatten: title as a heading-like paragraph, then children in order.
+		var sb strings.Builder
+		if strings.TrimSpace(b.Text) != "" {
+			sb.WriteString(paraXML(headingStyle(3), "", runXML(b.Text, false)))
+		}
+		sb.WriteString(renderChildBlocks(b.Children))
+		return sb.String()
+
+	case model.BlockSynced:
+		// Synced instances are host-resolved; DOCX flattens them away.
+		return ""
+
 	default:
 		// An unknown future block kind degrades to its text rather than
 		// vanishing -- the model is versioned and may grow kinds this
 		// exporter predates.
-		if strings.TrimSpace(b.Text) == "" {
-			return ""
+		var sb strings.Builder
+		if strings.TrimSpace(b.Text) != "" {
+			sb.WriteString(paraXML("", "", runXML(b.Text, false)))
 		}
-		return paraXML("", "", runXML(b.Text, false))
+		sb.WriteString(renderChildBlocks(b.Children))
+		return sb.String()
 	}
+}
+
+func renderChildBlocks(children []model.Block) string {
+	var sb strings.Builder
+	for _, c := range children {
+		sb.WriteString(renderBlock(c))
+	}
+	return sb.String()
 }
 
 // renderMultilineParagraph renders text as a single styled paragraph, mapping

@@ -734,12 +734,12 @@ func TestBuildQuoteBlocks(t *testing.T) {
 // JSON a v2 consumer would have seen for the same input, so this is v3 and not
 // a silent v2 extension. AGENTS.md's envelope schema documents the new kinds.
 func TestSchemaVersionV3(t *testing.T) {
-	if got, want := SchemaVersion, "eden-press.model/v4"; got != want {
+	if got, want := SchemaVersion, "eden-press.model/v6"; got != want {
 		t.Errorf("SchemaVersion = %q, want %q", got, want)
 	}
 	md := "# T\n\ntext\n"
 	doc, pc := markdown.Parse(md)
-	if got := Build(doc, []byte(md), pc).SchemaVersion; got != "eden-press.model/v4" {
+	if got := Build(doc, []byte(md), pc).SchemaVersion; got != "eden-press.model/v6" {
 		t.Errorf("Document.SchemaVersion = %q, want v3", got)
 	}
 }

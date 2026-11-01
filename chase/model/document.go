@@ -88,7 +88,18 @@ package model
 // replicating headingDivider's SYNTHETIC thematic breaks (which appear in no
 // source text whatsoever) and goldmark's setext-heading precedence in another
 // language.
-const SchemaVersion = "eden-press.model/v4"
+//
+// v4 -> v5 (AI doc-ops spike): ADDITIVE stable Block.ID for agent/editor
+// apply_ops addressing. Build still leaves ID empty (Markdown has no block
+// ids); NewDocument/ApplyOps assign them. omitempty keeps Build JSON a
+// strict superset of v4 apart from this version string -- proven by
+// TestV5BuildOmitsEmptyBlockID.
+//
+// v5 -> v6 (Docs readiness): ADDITIVE nested Children, toggle/synced kinds,
+// SyncRef, and Collapsed. Build still emits flat trees without children/
+// toggle/synced. omitempty keeps Build JSON a strict superset of v5 apart
+// from this version string.
+const SchemaVersion = "eden-press.model/v6"
 
 // Span is a half-open byte range [Start, Stop) into the Markdown source that
 // produced the node carrying it: source[Start:Stop] re-slices that node's
@@ -148,7 +159,20 @@ const (
 	// BlockQuote is a blockquote. Added in v3; before that a blockquote's
 	// text was emitted as an indistinguishable BlockParagraph.
 	BlockQuote BlockKind = "quote"
+	// BlockToggle is a collapsible container (schema v6). Title is Text;
+	// body lives in Children. Collapsed reports the UI default state.
+	BlockToggle BlockKind = "toggle"
+	// BlockSynced is a pointer to another block (schema v6). SyncRef names
+	// the source; instances are read-through at render. Mutate the source.
+	BlockSynced BlockKind = "synced"
 )
+
+// SyncRef points at a canonical block for a synced instance (schema v6).
+// PageID empty means the same Document; non-empty is resolved by Eden Docs.
+type SyncRef struct {
+	BlockID string `json:"blockId"`
+	PageID  string `json:"pageId,omitempty"`
+}
 
 // Block is one ordered piece of a Section's body content, materialized by the
 // same read-only AST walk that builds Sections/Outline (see build.go). Its
@@ -164,6 +188,13 @@ const (
 // raw code source and the raw math TeX are JSON-native and lossless here --
 // neither is recoverable from the rendered Output.HTML.
 type Block struct {
+	// ID is a stable block identifier for apply_ops / editor addressing
+	// (schema v5). Empty on Build()-produced blocks (Markdown has none);
+	// agents and ApplyOps assign ids when mutating a live document.
+	// omitempty so a Build render without ids stays a strict v4 superset
+	// apart from SchemaVersion.
+	ID string `json:"id,omitempty"`
+
 	// Kind is the block's discriminator (paragraph/list/code/math/heading).
 	Kind BlockKind `json:"kind"`
 
@@ -212,6 +243,16 @@ type Block struct {
 	// Title is an image block's optional title attribute -- the
 	// `![alt](src "title")` third argument (image blocks only).
 	Title string `json:"title,omitempty"`
+
+	// Children are nested body blocks (schema v6): toggle/quote containers
+	// and any parent that owns a subtree. omitempty when empty.
+	Children []Block `json:"children,omitempty"`
+
+	// Collapsed is the default collapsed state for a toggle block (v6).
+	Collapsed bool `json:"collapsed,omitempty"`
+
+	// SyncRef identifies the source block for a synced instance (v6).
+	SyncRef *SyncRef `json:"syncRef,omitempty"`
 
 	// Span is the byte range of the Markdown source this block came from
 	// (schema v4). Taken from the node's own line segments where it has them,

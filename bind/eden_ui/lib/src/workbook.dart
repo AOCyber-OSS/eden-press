@@ -28,11 +28,67 @@ const sheetRowLimit = 1048576;
 const sheetColumnLimit = 16384;
 
 /// JSON schema shared with `convert/xlsx.Workbook` in the Go engine.
-/// Writers emit v2. [EdenWorkbook.fromJson] still reads v1.
-const workbookSchema = 'eden-press.workbook/v2';
+/// Writers emit v3. [EdenWorkbook.fromJson] still reads v2 and v1.
+const workbookSchema = 'eden-press.workbook/v3';
+
+/// Sparse coordinate snapshot before columns / row ids / relations.
+const workbookSchemaV2 = 'eden-press.workbook/v2';
 
 /// Rectangular snapshot written before cells carried their own coordinates.
 const workbookSchemaV1 = 'eden-press.workbook/v1';
+
+/// Typed column property (workbook v3). Mirrors Go `xlsx.Column`.
+class EdenColumn {
+  const EdenColumn({
+    required this.id,
+    required this.name,
+    this.type = 'text',
+  });
+
+  final String id;
+  final String name;
+
+  /// `text` | `number` | `formula` | `relation`
+  final String type;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'type': type,
+  };
+
+  factory EdenColumn.fromJson(Map<String, dynamic> json) => EdenColumn(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    type: json['type'] as String? ?? 'text',
+  );
+}
+
+/// Relation target ref (workbook v3). Mirrors Go `xlsx.RelationRef`.
+class EdenRelationRef {
+  const EdenRelationRef({
+    required this.rowId,
+    this.pageId = '',
+    this.sheet = '',
+  });
+
+  final String rowId;
+  final String pageId;
+  final String sheet;
+
+  Map<String, dynamic> toJson() => {
+    'rowId': rowId,
+    if (pageId.isNotEmpty) 'pageId': pageId,
+    if (sheet.isNotEmpty) 'sheet': sheet,
+  };
+
+  factory EdenRelationRef.fromJson(Map<String, dynamic> json) =>
+      EdenRelationRef(
+        rowId: json['rowId'] as String? ?? '',
+        pageId: json['pageId'] as String? ?? '',
+        sheet: json['sheet'] as String? ?? '',
+      );
+}
 
 /// One worksheet. Cells are addressed 0-based and stored sparse. A value that
 /// starts with `=` is a formula; [cell] returns it with that prefix so the
@@ -44,6 +100,9 @@ class EdenSheet {
   final Map<int, Map<int, String>> _cells = {};
   final Set<int> headerRows = {};
   final List<String> aligns = [];
+  final List<EdenColumn> columns = [];
+  final Map<int, String> rowIds = {};
+  final Map<int, Map<int, List<EdenRelationRef>>> _relCells = {};
   int maxRow = -1;
   int maxCol = -1;
 
@@ -51,6 +110,75 @@ class EdenSheet {
   void Function(int row, int column)? onChanged;
 
   String cell(int row, int column) => _cells[row]?[column] ?? '';
+
+  String rowId(int row) => rowIds[row] ?? '';
+
+  List<EdenRelationRef> relations(int row, int column) =>
+      List<EdenRelationRef>.from(_relCells[row]?[column] ?? const []);
+
+  void setRelations(int row, int column, List<EdenRelationRef> refs) {
+    if (row < 0 ||
+        row >= sheetRowLimit ||
+        column < 0 ||
+        column >= sheetColumnLimit) {
+      throw ArgumentError(
+        'cell $row,$column is outside 0..${sheetRowLimit - 1} x 0..${sheetColumnLimit - 1}',
+      );
+    }
+    if (refs.isEmpty) {
+      final rowRels = _relCells[row];
+      if (rowRels == null) {
+        return;
+      }
+      rowRels.remove(column);
+      if (rowRels.isEmpty) {
+        _relCells.remove(row);
+      }
+    } else {
+      _relCells.putIfAbsent(row, () => {})[column] =
+          List<EdenRelationRef>.from(refs);
+      if (row > maxRow) {
+        maxRow = row;
+      }
+      if (column > maxCol) {
+        maxCol = column;
+      }
+    }
+    onChanged?.call(row, column);
+  }
+
+  void setColumn(EdenColumn column) {
+    if (column.id.isEmpty) {
+      throw ArgumentError('column id is empty');
+    }
+    for (var i = 0; i < columns.length; i++) {
+      if (columns[i].id == column.id) {
+        columns[i] = column;
+        return;
+      }
+    }
+    columns.add(column);
+  }
+
+  void ensureRowId(int row, [String id = '']) {
+    if (rowIds.containsKey(row) && (rowIds[row] ?? '').isNotEmpty) {
+      return;
+    }
+    if (id.isNotEmpty) {
+      rowIds[row] = id;
+      return;
+    }
+    var max = 0;
+    for (final existing in rowIds.values) {
+      if (existing.startsWith('r_')) {
+        final n = int.tryParse(existing.substring(2)) ?? 0;
+        if (n > max) {
+          max = n;
+        }
+      }
+    }
+    rowIds[row] = 'r_${max + 1}';
+  }
 
   void setCell(int row, int column, String value) {
     if (row < 0 ||
@@ -117,6 +245,16 @@ class EdenSheet {
         }
       }
     });
+    _relCells.forEach((row, cols) {
+      if (row > maxRow) {
+        maxRow = row;
+      }
+      for (final column in cols.keys) {
+        if (column > maxCol) {
+          maxCol = column;
+        }
+      }
+    });
     for (final row in headerRows) {
       if (row > maxRow) {
         maxRow = row;
@@ -131,6 +269,13 @@ class EdenSheet {
     });
     next.headerRows.addAll(headerRows);
     next.aligns.addAll(aligns);
+    next.columns.addAll(columns);
+    next.rowIds.addAll(rowIds);
+    _relCells.forEach((row, cols) {
+      next._relCells[row] = {
+        for (final e in cols.entries) e.key: List<EdenRelationRef>.from(e.value),
+      };
+    });
     next.maxRow = maxRow;
     next.maxCol = maxCol;
     return next;
@@ -286,9 +431,11 @@ class EdenWorkbook {
 
   factory EdenWorkbook.fromJson(Map<String, dynamic> json) {
     final schema = json['schema'];
-    if (schema != workbookSchema && schema != workbookSchemaV1) {
+    if (schema != workbookSchema &&
+        schema != workbookSchemaV2 &&
+        schema != workbookSchemaV1) {
       throw FormatException(
-        'workbook schema $schema, want $workbookSchema or $workbookSchemaV1',
+        'workbook schema $schema, want $workbookSchema, $workbookSchemaV2, or $workbookSchemaV1',
       );
     }
     final book = EdenWorkbook(title: json['title'] as String? ?? '');
@@ -305,6 +452,28 @@ class EdenWorkbook {
       final aligns = raw['aligns'];
       if (aligns is List) {
         sheet.aligns.addAll(aligns.map((e) => e?.toString() ?? ''));
+      }
+      final columns = raw['columns'];
+      if (columns is List) {
+        for (final col in columns) {
+          if (col is Map) {
+            sheet.columns.add(
+              EdenColumn.fromJson(Map<String, dynamic>.from(col)),
+            );
+          }
+        }
+      }
+      final rowIds = raw['rowIds'];
+      if (rowIds is List) {
+        for (final entry in rowIds) {
+          if (entry is Map) {
+            final r = _asInt(entry['r']);
+            final id = entry['id'] as String? ?? '';
+            if (id.isNotEmpty) {
+              sheet.rowIds[r] = id;
+            }
+          }
+        }
       }
       if (schema == workbookSchemaV1) {
         _readV1Rows(sheet, raw['rows']);
@@ -418,7 +587,17 @@ void _readV2(EdenSheet sheet, Map raw) {
     if (cell is! Map) {
       continue;
     }
-    _applyCell(sheet, _asInt(cell['r']), _asInt(cell['c']), cell);
+    final row = _asInt(cell['r']);
+    final column = _asInt(cell['c']);
+    _applyCell(sheet, row, column, cell);
+    final rels = cell['rels'];
+    if (rels is List && rels.isNotEmpty) {
+      sheet.setRelations(row, column, [
+        for (final r in rels)
+          if (r is Map)
+            EdenRelationRef.fromJson(Map<String, dynamic>.from(r)),
+      ]);
+    }
   }
 }
 
@@ -454,23 +633,55 @@ int _asInt(Object? value) {
 
 Map<String, dynamic> _sheetJson(EdenSheet sheet) {
   final cells = <Map<String, dynamic>>[];
-  final rowNumbers = sheet._cells.keys.toList()..sort();
+  final seen = <String>{};
+  void putCell(int row, int column) {
+    final key = '$row:$column';
+    if (!seen.add(key)) {
+      return;
+    }
+    final raw = sheet._cells[row]?[column] ?? '';
+    final rels = sheet.relations(row, column);
+    final cell = <String, dynamic>{'r': row, 'c': column};
+    if (raw.startsWith('=')) {
+      cell['f'] = raw.substring(1);
+    } else if (raw.isNotEmpty) {
+      cell['v'] = raw;
+    }
+    if (rels.isNotEmpty) {
+      cell['rels'] = [for (final r in rels) r.toJson()];
+    }
+    if (cell.containsKey('v') ||
+        cell.containsKey('f') ||
+        cell.containsKey('rels')) {
+      cells.add(cell);
+    }
+  }
+
+  final rowNumbers = {...sheet._cells.keys, ...sheet._relCells.keys}.toList()
+    ..sort();
   for (final row in rowNumbers) {
-    final columns = sheet._cells[row]!.keys.toList()..sort();
+    final columns = {
+      ...?sheet._cells[row]?.keys,
+      ...?sheet._relCells[row]?.keys,
+    }.toList()
+      ..sort();
     for (final column in columns) {
-      final raw = sheet._cells[row]![column] ?? '';
-      if (raw.startsWith('=')) {
-        cells.add({'r': row, 'c': column, 'f': raw.substring(1)});
-      } else if (raw.isNotEmpty) {
-        cells.add({'r': row, 'c': column, 'v': raw});
-      }
+      putCell(row, column);
     }
   }
   final headers = sheet.headerRows.toList()..sort();
   final aligns = _trimAligns(sheet.aligns);
+  final rowIds = sheet.rowIds.entries.toList()
+    ..sort((a, b) => a.key.compareTo(b.key));
   return {
     'name': sheet.name,
     if (aligns.isNotEmpty) 'aligns': aligns,
+    if (sheet.columns.isNotEmpty)
+      'columns': [for (final c in sheet.columns) c.toJson()],
+    if (rowIds.isNotEmpty)
+      'rowIds': [
+        for (final e in rowIds) {'r': e.key, 'id': e.value},
+      ],
     if (headers.isNotEmpty) 'headerRows': headers,
     'cells': cells,
   };

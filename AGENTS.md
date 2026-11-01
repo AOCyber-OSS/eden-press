@@ -3,12 +3,155 @@
 `eden-press` is a pure-Go CLI: it converts a Marp-compatible Markdown deck to
 static output with **no browser, no Node, and no JavaScript runtime**. This
 document is the scriptable contract an AI agent (or any non-interactive
-caller) needs to inspect and export a deck without reading the Go source.
+caller) needs to inspect, create, edit, and export documents without reading
+the Go source.
+
+**Source of truth for live documents is the docmodel** (`eden-press.model/v6`
+JSON), not Markdown. Markdown remains the import/export prose format
+(`doc import` / `doc export`, `--format html`/`pptx`/…). Agents should create
+and edit via `eden-press doc` ops against JSON pages; do not rewrite Markdown
+as the primary edit path.
+
+**Source of truth for live sheets is the workbook snapshot**
+(`eden-press.workbook/v3` JSON). `.xlsx` is interchange only — relation refs
+and typed columns survive in the JSON snapshot; xlsx export flattens
+relations to display text (lossy).
 
 The whole surface described here is CI-enforced chromedp-free:
 `scripts/check-no-chromedp.sh` scans `./cmd/...`'s transitive dependency
 closure (alongside `./press/...`, `./chase/...`, `./profiles/...`,
 `./bind/...`) and fails the build if `chromedp` ever appears in it.
+
+## Docmodel CRUD (`eden-press doc`)
+
+Agent write surface (CLI first; an MCP server can wrap these later). Always
+prints a JSON error envelope on stderr on failure (even without `--format json`).
+
+| Command | Purpose |
+|---|---|
+| `doc create [--title T] [-o page.json]` | Empty single-section page JSON (`eden-press.model/v6`) |
+| `doc get <page.json\|->` | Validate / pretty-print; assigns missing block ids |
+| `doc apply <page.json\|-> --ops ops.json [-o out.json]` | Apply a batch of document ops |
+| `doc import <in.md\|-> [-o page.json]` | Markdown → docmodel JSON via `press.Render` (**always assigns block ids**) |
+| `doc export <page.json\|-> [-o out.md]` | Docmodel → Marp-compatible Markdown (nested/toggle/synced best-effort; some features lossy) |
+
+`apply` ops JSON may be a bare array or `{"ops":[...]}`.
+
+### Block id policy
+
+- Import (`doc import`) and `doc get` / `doc apply` always run `EnsureBlockIDs`:
+  depth-first over section blocks and nested `children`, assigning `b_N` when
+  `id` is missing. Existing ids are preserved.
+- `Build`/raw Markdown render paths used by `--format html|json|pptx|xlsx`
+  still omit ids; only the `doc` edit surface guarantees them.
+- Agents should address blocks by `blockId` (and optional `parentBlockId` for
+  nest insert/move).
+
+### Document ops (`doc apply`)
+
+| `op` | Required fields | Notes |
+|---|---|---|
+| `insert_block` | `sectionId` **or** `parentBlockId`, `block` | Optional `index` (0-based). Leaf kinds + `toggle`/`synced`. Auto-assigns `block.id` when omitted |
+| `update_block` | `blockId`, `block` | Replaces the block in place (keeps id). Synced instances: mutate the **source** block, not the instance |
+| `delete_block` | `blockId` | Removes the block (and its children) |
+| `move_block` | `blockId` | Optional `sectionId` / `parentBlockId` / `index`. Cycle into own descendant is rejected |
+| `insert_section` | | Optional `index`, `attrs`, `notes`. Section ids are renumbered 1..N after structural ops |
+| `delete_section` | `sectionId` | Cannot delete the last section |
+| `move_section` | `sectionId`, `index` | Renumbers afterward |
+| `set_section_attrs` | `sectionId` | `attrs` map (omit/empty clears) |
+| `set_section_notes` | `sectionId` | `notes` string array |
+| `set_meta_directives` | `directives` | Merges into `meta.directives` unless `replaceDirectives: true` |
+
+Editable block kinds: `paragraph`, `heading`, `list`, `code`, `math`, `table`,
+`image`, `quote`, `toggle`, `synced`.
+
+Schema v6 additions:
+
+- `children` — nested body under containers (`toggle`, optionally `quote`)
+- `toggle` — title in `text`; body in `children`; optional `collapsed` bool
+- `synced` — `syncRef: { "blockId": "...", "pageId": "..." }`. Same-document
+  refs omit `pageId`. Cross-page resolution is a host (Docs) concern; Press
+  stores the ref only.
+
+```bash
+# Create → edit → read (agent flow):
+eden-press doc create --title "Q3" -o page.json
+cat > ops.json <<'EOF'
+[
+  {"op":"insert_block","sectionId":1,"block":{"id":"b_title","kind":"heading","level":1,"text":"Q3 plan"}},
+  {"op":"insert_block","sectionId":1,"block":{"id":"b_p","kind":"paragraph","text":"Ship the spike."}},
+  {"op":"insert_block","sectionId":1,"block":{"id":"b_tog","kind":"toggle","text":"Details","children":[
+    {"kind":"paragraph","text":"Nested body"}
+  ]}}
+]
+EOF
+eden-press doc apply page.json --ops ops.json -o page.json
+eden-press doc get page.json | jq '.outline'
+eden-press doc export page.json -o page.md
+
+# Import existing Markdown into the docmodel (ids assigned):
+eden-press doc import deck.md -o page.json
+```
+
+## Workbook CRUD (`eden-press workbook`)
+
+| Command | Purpose |
+|---|---|
+| `workbook create [--title T] [-o book.json]` | Empty workbook with `Sheet1` (`eden-press.workbook/v3`) |
+| `workbook get <book.json\|->` | Validate / pretty-print; ensures row ids on occupied rows |
+| `workbook apply <book.json\|-> --ops ops.json [-o out.json]` | Apply workbook ops |
+| `workbook import <book.xlsx\|book.json\|-> [-o book.json]` | `.xlsx` or JSON → v3 snapshot |
+| `workbook export <book.json\|-> [--format xlsx\|json] [-o out]` | Snapshot → `.xlsx` (default) or JSON |
+
+### Workbook snapshot v3
+
+Writers emit `eden-press.workbook/v3`. Readers still accept v2 and v1.
+
+- Occupied cells: `{ "r", "c", "v" }` or `{ "r", "c", "f" }` (formula without `=`)
+- Optional `rels`: list of `{ "rowId", "pageId?", "sheet?" }` on a cell
+- `headerRows`: header-row indexes; `aligns`: per-column alignment
+- `columns[]`: `{ "id", "name", "type" }` where `type` is
+  `text` \| `number` \| `formula` \| `relation`
+- `rowIds[]`: `{ "r", "id" }` stable row ids (`r_N` when auto-assigned)
+
+JSON is authoritative for relations. `.xlsx` export does not preserve
+structured relation refs.
+
+### Workbook ops (`workbook apply`)
+
+| `op` | Required fields | Notes |
+|---|---|---|
+| `set_cell` | `sheet`, `row`, `column`, `value` | Formulas keep leading `=` |
+| `add_sheet` | `sheet` | Append worksheet |
+| `rename_sheet` | `sheet`, `newName` | |
+| `delete_sheet` | `sheet` | Cannot delete the last sheet |
+| `set_header_row` | `sheet`, `row`, `header` | |
+| `set_align` | `sheet`, `column`, `align` | `left`/`right`/`center`/`` |
+| `set_column` | `sheet`, `columnId`, `name`, `type` | Upsert typed property |
+| `set_relation` | `sheet`, `rels` | Address with `rowId` or `row`, plus `columnId` or `column`. Same-workbook target `rowId` must exist when `pageId`/`sheet` omitted |
+| `clear_relation` | `sheet` | Same addressing as `set_relation` |
+| `ensure_row_id` | `sheet`, `row` | Optional `rowId`; no-op if already set |
+
+```bash
+eden-press workbook create --title "Tasks" -o book.json
+cat > wb-ops.json <<'EOF'
+[
+  {"op":"set_cell","sheet":"Sheet1","row":0,"column":0,"value":"Alpha"},
+  {"op":"set_cell","sheet":"Sheet1","row":1,"column":0,"value":"Beta"},
+  {"op":"ensure_row_id","sheet":"Sheet1","row":0,"rowId":"r_a"},
+  {"op":"ensure_row_id","sheet":"Sheet1","row":1,"rowId":"r_b"},
+  {"op":"set_column","sheet":"Sheet1","columnId":"rel","name":"Related","type":"relation"},
+  {"op":"set_relation","sheet":"Sheet1","rowId":"r_a","columnId":"rel","rels":[{"rowId":"r_b"}]}
+]
+EOF
+eden-press workbook apply book.json --ops wb-ops.json -o book.json
+eden-press workbook export book.json -o book.xlsx --format xlsx
+```
+
+Flutter mirrors: `EdenEdit` subclasses (`EdenCellEdit`, `EdenSheetAdded`,
+`EdenSheetRenamed`, `EdenSheetDeleted`, `EdenHeaderRowEdit`, `EdenAlignEdit`,
+`EdenColumnEdit`, `EdenRelationEdit`, `EdenDocOpsEdit`) expose `toWire()` /
+`toWireOps()` matching the tables above.
 
 ## Formats (`--format`)
 
@@ -38,18 +181,20 @@ eden-press deck.md -o book.xlsx --format xlsx
 eden-press convert deck.md --output slides.pptx --format pptx
 ```
 
-## Workbook snapshot
+## Workbook snapshot (convert path)
 
 `Workbook.MarshalJSON` (and the Flutter `EdenWorkbook.toJson`) writes
-`eden-press.workbook/v2`. Each occupied cell is `{ "r", "c", "v" }` or
+`eden-press.workbook/v3`. Each occupied cell is `{ "r", "c", "v" }` or
 `{ "r", "c", "f" }` with 0-based coordinates. `f` is the formula without
 `=`. `headerRows` is a list of header-row indexes. `aligns` stays one entry
 per column. Blank cells are omitted, so a value on the last Excel row does
-not expand the snapshot to the whole grid.
+not expand the snapshot to the whole grid. v3 adds `columns`, `rowIds`, and
+optional cell `rels`.
 
 `ParseWorkbook` and `EdenWorkbook.fromJson` still read
-`eden-press.workbook/v1`. In v1, `sheets[].rows[].cells[]` is rectangular
-and the array position is the coordinate. New snapshots are v2.
+`eden-press.workbook/v2` and `eden-press.workbook/v1`. In v1,
+`sheets[].rows[].cells[]` is rectangular and the array position is the
+coordinate. New snapshots are v3.
 
 PNG/PDF export is intentionally **not** part of this binary (it requires
 Chrome); that lives in the separate `eden-press-export` binary — see
@@ -132,7 +277,11 @@ eden-press-export deck.md -o out.pdf --format pdf
             "rows": [["p95 latency", "550ms"]],
             "aligns": ["left", "right"] },
           { "kind": "image", "src": "chart.png", "text": "alt text", "title": "Quarterly" },
-          { "kind": "quote", "text": "a blockquote" }
+          { "kind": "quote", "text": "a blockquote" },
+          { "kind": "toggle", "text": "Details", "collapsed": false, "children": [
+            { "kind": "paragraph", "text": "Nested" }
+          ] },
+          { "kind": "synced", "syncRef": { "blockId": "b_src" } }
         ]
       }
     ],
@@ -166,10 +315,13 @@ Field notes an agent must get right:
   `![alt](src "title")` third argument in `title`. A **quote** block carries its
   concatenated text in `text` (multi-paragraph quotes are joined by a blank
   line; nested quotes are flattened in document order).
-- `model` is exactly `chase/model.Document`'s own schema-v3 JSON shape,
+- `model` is exactly `chase/model.Document`'s own schema-v6 JSON shape,
   reused verbatim; `cmd/eden-press` itself never imports that package
   directly (it re-marshals the already-typed value through `any`), but the
   wire shape is stable and versioned independently of Marp/goldmark churn.
+- Schema v6 adds optional `block.id`, nested `children`, and `toggle` /
+  `synced` kinds. Convert/`Build` may omit `id`; `doc import`/`apply`/`get`
+  always ensure ids.
 
 ## Exit codes
 
@@ -191,6 +343,7 @@ exits with the matching code above:
 
 For `--format html`/`--format pptx`/`--format xlsx`, a failure prints the same message as
 plain text to stderr (no JSON wrapping) with the same exit-code contract.
+`doc` / `workbook` subcommands always use the JSON error envelope on stderr.
 
 ## Copy-paste examples
 
@@ -208,6 +361,16 @@ eden-press deck.md --format json > out.json || echo "failed: exit $?"
 eden-press /no/such.md --format json
 # stderr: {"error":{"code":1,"message":"resolveInput: ..."}}
 # exit code: 1
+
+# Doc import → ops → Markdown export round-trip:
+eden-press doc import deck.md -o page.json
+eden-press doc apply page.json --ops ops.json -o page.json
+eden-press doc export page.json -o out.md
+
+# Workbook create → ops → xlsx export:
+eden-press workbook create -o book.json
+eden-press workbook apply book.json --ops wb-ops.json -o book.json
+eden-press workbook export book.json -o book.xlsx
 ```
 
 No browser, no Node, no JavaScript runtime is ever invoked by any of the

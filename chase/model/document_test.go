@@ -39,14 +39,15 @@ import (
 // for the additive Section.Blocks enrichment; EPD-R1 bumps it v2 -> v3 for the
 // table/image/quote block kinds (the quote kind re-classifies output a v2
 // consumer would already have seen, so the bump is not merely additive); AODex
-// Objective 16 bumps it v3 -> v4 for the additive source Spans -- additive, but
-// bumped anyway because this schema versions its SHAPE, not only its breaking
-// changes (see TestV4IsAStrictSupersetOfV3 for the proof it IS additive).
+// Objective 16 bumps it v3 -> v4 for the additive source Spans; the AI doc-ops
+// spike bumps it v4 -> v5 for additive Block.ID -- additive, but bumped anyway
+// because this schema versions its SHAPE, not only its breaking changes (see
+// TestV4IsAStrictSupersetOfV3 / TestV5BuildOmitsEmptyBlockID).
 func TestDocumentSchemaVersionConstant(t *testing.T) {
 	if SchemaVersion == "" {
 		t.Fatal("SchemaVersion must be non-empty")
 	}
-	const want = "eden-press.model/v4"
+	const want = "eden-press.model/v6"
 	if SchemaVersion != want {
 		t.Fatalf("SchemaVersion = %q, want %q", SchemaVersion, want)
 	}
@@ -78,7 +79,7 @@ func TestDocumentJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if !strings.Contains(string(b), `"schemaVersion":"eden-press.model/v4"`) {
+	if !strings.Contains(string(b), `"schemaVersion":"eden-press.model/v6"`) {
 		t.Fatalf("marshaled JSON missing expected schemaVersion field: %s", b)
 	}
 
@@ -121,7 +122,7 @@ func TestBlockOmitemptyAdditive(t *testing.T) {
 	if strings.Contains(got, "blocks") {
 		t.Fatalf("block-less document must NOT serialize a `blocks` key (omitempty violated): %s", got)
 	}
-	if !strings.Contains(got, `"schemaVersion":"eden-press.model/v4"`) {
+	if !strings.Contains(got, `"schemaVersion":"eden-press.model/v6"`) {
 		t.Fatalf("expected v4 schemaVersion: %s", got)
 	}
 
@@ -133,7 +134,7 @@ func TestBlockOmitemptyAdditive(t *testing.T) {
 	// proves the same for Objective 16's three Span fields -- a span-less
 	// document must still serialize with no `span` key anywhere.
 	const frozenV1 = `{"schemaVersion":"eden-press.model/v1","meta":{"directives":{"theme":"gaia"}},"sections":[{"id":1,"notes":["a note"]}],"outline":[{"sectionId":1,"level":1,"text":"H","slug":"h"}]}`
-	normalized := strings.ReplaceAll(got, "eden-press.model/v4", "eden-press.model/v1")
+	normalized := strings.ReplaceAll(got, "eden-press.model/v6", "eden-press.model/v1")
 	if normalized != frozenV1 {
 		t.Fatalf("block-less v4 JSON differs from frozen v1 by more than the version string:\n got  = %s\n want = %s", normalized, frozenV1)
 	}
@@ -174,8 +175,8 @@ func TestSchemaV3RoundTrip(t *testing.T) {
 		},
 	}
 
-	if doc.SchemaVersion != "eden-press.model/v4" {
-		t.Fatalf("SchemaVersion = %q, want v4", doc.SchemaVersion)
+	if doc.SchemaVersion != "eden-press.model/v6" {
+		t.Fatalf("SchemaVersion = %q, want v6", doc.SchemaVersion)
 	}
 
 	b1, err := json.Marshal(doc)
@@ -368,14 +369,16 @@ func TestV4IsAStrictSupersetOfV3(t *testing.T) {
 		t.Fatalf("only %d span keys stripped from the v4 render; the fixture's 15 positionable nodes should carry far more", removed)
 	}
 
-	// Normalize the ONE field that is allowed to differ.
+	// Normalize the ONE field that is allowed to differ. Current schema is
+	// v5; Build still emits no block ids, so stripping spans alone recovers
+	// the v3 golden after rewriting the version string.
 	if m, ok := stripped.(map[string]any); ok {
-		if got := m["schemaVersion"]; got != "eden-press.model/v4" {
-			t.Fatalf("v4 render reports schemaVersion %v, want eden-press.model/v4", got)
+		if got := m["schemaVersion"]; got != "eden-press.model/v6" {
+			t.Fatalf("current render reports schemaVersion %v, want eden-press.model/v6", got)
 		}
 		m["schemaVersion"] = "eden-press.model/v3"
 	} else {
-		t.Fatal("v4 render is not a JSON object")
+		t.Fatal("current render is not a JSON object")
 	}
 
 	gotJSON, wantJSON := canonicalJSON(t, stripped), canonicalJSON(t, v3)
@@ -415,6 +418,26 @@ func TestV4IsAStrictSupersetOfV3(t *testing.T) {
 		if !v4Keys[k] {
 			t.Errorf("v4 DROPPED v3 key %q", k)
 		}
+	}
+}
+
+// TestV5BuildOmitsEmptyBlockID proves Build()-produced blocks carry no id key
+// (Markdown has none), so a v5 Build render is a strict v4 superset apart from
+// the schemaVersion string.
+func TestV5BuildOmitsEmptyBlockID(t *testing.T) {
+	src := []byte("# Hello\n\nBody.\n")
+	astDoc, pc := markdown.Parse(string(src))
+	raw, err := json.Marshal(Build(astDoc, src, pc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v6"`) {
+		t.Fatalf("missing v6 version: %s", raw)
+	}
+	// Section.ID is numeric (`"id":1`). Block.ID is a string key (`"id":"..."`).
+	// Build must not emit the latter.
+	if strings.Contains(string(raw), `"id":"`) {
+		t.Fatalf("Build must omit empty block id keys: %s", raw)
 	}
 }
 
