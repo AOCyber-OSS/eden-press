@@ -38,11 +38,11 @@ import (
 	"go.aocyber.ai/eden-press/press/sanitize"
 	"go.aocyber.ai/eden-press/press/themes"
 
-	// Blank import: registers profiles/slides (the only Profile impl) via its
-	// init() side-effect, so profile.Default() resolves even for a caller that
-	// only imports "press" and never imports profiles/slides itself -- the
-	// Objective-7-begin gate (a consumer imports ONLY press/). Mirrors
-	// chase/chase.go's identical blank import.
+	// Blank import: registers profiles/slides (default) and profiles/paged
+	// (docs / article alias) via init() side-effects, so a consumer that
+	// only imports "press" still resolves both. Mirrors chase/chase.go's
+	// blank import posture.
+	_ "go.aocyber.ai/eden-press/profiles/paged"
 	_ "go.aocyber.ai/eden-press/profiles/slides"
 )
 
@@ -180,6 +180,13 @@ func resolveProfile(id string) (profile.Profile, error) {
 			return nil, fmt.Errorf("press: Render: no profile registered (import a profiles/* package for its init side-effect)")
 		}
 		return p, nil
+	}
+	// Docs clients often write profile: article; map it onto the paged
+	// long-form profile when registered.
+	if id == "article" {
+		if p, ok := profile.Get("paged"); ok {
+			return p, nil
+		}
 	}
 	p, ok := profile.Get(id)
 	if !ok {

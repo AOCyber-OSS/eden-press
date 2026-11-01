@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -66,14 +67,23 @@ Pitfall: a file literally named "doc" conflicts with this subcommand; use
 func newDocExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export <doc.json|->",
-		Short: "Export docmodel JSON to Marp-compatible Markdown",
+		Short: "Export docmodel JSON to Markdown or standalone HTML",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			in, err := readPathOrStdin(cmd, args[0])
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
-			raw, err := press.ExportMarkdownJSON(in)
+			format, _ := cmd.Flags().GetString("format")
+			var raw []byte
+			switch strings.ToLower(format) {
+			case "", "md", "markdown":
+				raw, err = press.ExportMarkdownJSON(in)
+			case "html":
+				raw, err = press.ExportHTMLJSON(in)
+			default:
+				return docFail(cmd, exitUsage, fmt.Errorf("doc export: unknown --format %q (want md|html)", format))
+			}
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
@@ -81,6 +91,7 @@ func newDocExportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringP("output", "o", "", `output file path; "" writes to stdout`)
+	cmd.Flags().String("format", "md", `export format: md (Marp-compatible Markdown) or html (standalone Docs HTML)`)
 	return cmd
 }
 

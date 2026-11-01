@@ -337,6 +337,52 @@ func TestServeIgnoresFormatSwitchQuery(t *testing.T) {
 	}
 }
 
+// TestServeJSONFormat: Flutter / eden_docs clients ask for JSON via
+// ?format=json (or Accept: application/json) and get the lowercase envelope
+// instead of HTML.
+func TestServeJSONFormat(t *testing.T) {
+	cmd := prepServeCmd(t, nil)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deck.md")
+	if err := os.WriteFile(path, []byte(testServeDeck), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hub := reload.NewHub()
+	srv := httptest.NewServer(serveMux(dir, hub, cmd))
+	t.Cleanup(srv.Close)
+
+	res, err := http.Get(srv.URL + "/deck.md?format=json")
+	if err != nil {
+		t.Fatalf("GET json: %v", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	s := string(body)
+	if !strings.Contains(s, `"model"`) || !strings.Contains(s, `"html"`) {
+		t.Fatalf("json envelope missing keys: %s", s)
+	}
+	if strings.Contains(s, "<!doctype html>") {
+		t.Fatalf("json response looks like HTML: %s", s)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/deck.md", nil)
+	req.Header.Set("Accept", "application/json")
+	res2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET Accept json: %v", err)
+	}
+	defer res2.Body.Close()
+	if ct := res2.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Accept negotiation Content-Type = %q", ct)
+	}
+}
+
 // TestResolveServeAddrDefaultsToNon8080Port is test-list case 6: with no
 // --port set, resolveServeAddr targets the product default 8321 (NEVER
 // 8080) on loopback; --port overrides it. Asserts the resolved ADDRESS

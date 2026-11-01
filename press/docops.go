@@ -26,6 +26,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
+	"strings"
 
 	"go.aocyber.ai/eden-press/chase/model"
 )
@@ -109,6 +111,41 @@ func ExportMarkdownJSON(docJSON []byte) ([]byte, error) {
 		return nil, fmt.Errorf("press.ExportMarkdownJSON: %w", err)
 	}
 	return []byte(model.ToMarkdown(&doc)), nil
+}
+
+// ExportHTMLJSON converts a docmodel JSON document to a standalone zero-JS
+// HTML document (flowing article markup + DocsCSS). Browsers / HTML clients
+// use this path; Flutter clients should request JSON and paint with the
+// bind/eden_docs package instead.
+func ExportHTMLJSON(docJSON []byte) ([]byte, error) {
+	var doc model.Document
+	if err := json.Unmarshal(docJSON, &doc); err != nil {
+		return nil, fmt.Errorf("press.ExportHTMLJSON: %w", err)
+	}
+	return []byte(AssembleDocsHTML(&doc)), nil
+}
+
+// AssembleDocsHTML wraps model.ToHTML in a complete standalone document with
+// DocsCSS. Title comes from meta.directives.title when present.
+func AssembleDocsHTML(doc *model.Document) string {
+	title := ""
+	if doc != nil && doc.Meta.Directives != nil {
+		title = doc.Meta.Directives["title"]
+	}
+	var b strings.Builder
+	b.WriteString("<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+	if title != "" {
+		b.WriteString("<title>")
+		b.WriteString(html.EscapeString(title))
+		b.WriteString("</title>\n")
+	}
+	b.WriteString("<style>\n")
+	b.WriteString(model.DocsCSS)
+	b.WriteString("\n</style>\n</head>\n<body>\n")
+	b.WriteString(model.ToHTML(doc))
+	b.WriteString("</body>\n</html>\n")
+	return b.String()
 }
 
 type opsEnvelope struct {
