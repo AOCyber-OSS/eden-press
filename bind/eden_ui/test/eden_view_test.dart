@@ -283,15 +283,24 @@ void main() {
     expect(find.text('Alpha'), findsOneWidget);
     expect(find.text('Beta'), findsNothing);
     expect(find.text('Slide 1 of 2'), findsOneWidget);
-
-    await tester.fling(
-      find.byKey(const Key('eden-slides')),
-      const Offset(-500, 0),
-      1200,
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('eden-slides-prev'))).onPressed,
+      isNull,
     );
+
+    await tester.tap(find.byKey(const Key('eden-slides-next')));
     await tester.pumpAndSettle();
     expect(find.text('Beta'), findsOneWidget);
     expect(find.text('Slide 2 of 2'), findsOneWidget);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('eden-slides-next'))).onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('eden-slides-prev')));
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha'), findsOneWidget);
+    expect(find.text('Slide 1 of 2'), findsOneWidget);
 
     final prose = _doc(
       directives: const {'profile': 'article'},
