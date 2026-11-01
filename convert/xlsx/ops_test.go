@@ -24,6 +24,7 @@ package xlsx
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -38,7 +39,9 @@ func TestApplyWorkbookOpsAndRelations(t *testing.T) {
 		{Op: WbOpEnsureRowID, Sheet: "Tasks", Row: 0, RowID: "r_a"},
 		{Op: WbOpEnsureRowID, Sheet: "Tasks", Row: 1, RowID: "r_b"},
 		{Op: WbOpSetColumn, Sheet: "Tasks", ColumnID: "rel", Name: "Related", Type: string(ColumnRelation)},
+		{Op: WbOpSetColumn, Sheet: "Tasks", ColumnID: "status", Name: "Status", Type: string(ColumnSelect), Options: []string{"todo", "done"}},
 		{Op: WbOpSetRelation, Sheet: "Tasks", RowID: "r_a", ColumnID: "rel", Rels: []RelationRef{{RowID: "r_b"}}},
+		{Op: WbOpSetNamedRange, RangeID: "nr1", Name: "Top", Sheet: "Tasks", R0: 0, R1: 1, C0: 0, C1: 0},
 		{Op: WbOpAddSheet, Sheet: "Extra"},
 		{Op: WbOpRenameSheet, Sheet: "Extra", NewName: "More"},
 		{Op: WbOpSetHeaderRow, Sheet: "Tasks", Row: 0, Header: true},
@@ -74,10 +77,14 @@ func TestApplyWorkbookOpsAndRelations(t *testing.T) {
 		t.Fatal(err)
 	}
 	gs, _ := got.Sheet("Tasks")
-	if len(gs.Columns()) != 1 || gs.Columns()[0].Type != ColumnRelation {
+	if len(gs.Columns()) != 2 {
 		t.Fatalf("columns = %+v", gs.Columns())
 	}
 	if _, ok := got.Sheet("More"); !ok {
 		t.Fatal("renamed sheet missing")
+	}
+	raw2, _ := got.MarshalJSON()
+	if !strings.Contains(string(raw2), `"namedRanges"`) && !strings.Contains(string(raw), "nr1") {
+		t.Fatalf("named range missing: %s", raw)
 	}
 }

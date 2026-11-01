@@ -37,7 +37,7 @@ func TestNewDocJSONAndApplyOpsJSON(t *testing.T) {
 	if err := json.Unmarshal(docJSON, &probe); err != nil {
 		t.Fatal(err)
 	}
-	if probe["schemaVersion"] != "eden-press.model/v6" {
+	if probe["schemaVersion"] != "eden-press.model/v7" {
 		t.Fatalf("schemaVersion = %v", probe["schemaVersion"])
 	}
 
@@ -68,7 +68,7 @@ func TestImportMarkdownModelJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc["schemaVersion"] != "eden-press.model/v6" {
+	if doc["schemaVersion"] != "eden-press.model/v7" {
 		t.Fatalf("schemaVersion = %v", doc["schemaVersion"])
 	}
 	sections, _ := doc["sections"].([]any)

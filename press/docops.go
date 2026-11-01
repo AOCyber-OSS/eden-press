@@ -42,6 +42,12 @@ func NewDocJSON(title string) ([]byte, error) {
 // the updated document JSON. opsJSON may be a bare array of ops or an
 // object {"ops":[...]}.
 func ApplyOpsJSON(docJSON, opsJSON []byte) ([]byte, error) {
+	return ApplyOpsJSONOpts(docJSON, opsJSON, false)
+}
+
+// ApplyOpsJSONOpts is ApplyOpsJSON with optional dry-run (validate without
+// mutating; on success returns the unchanged input document indented).
+func ApplyOpsJSONOpts(docJSON, opsJSON []byte, dryRun bool) ([]byte, error) {
 	var doc model.Document
 	if err := json.Unmarshal(docJSON, &doc); err != nil {
 		return nil, fmt.Errorf("press.ApplyOpsJSON: parse document: %w", err)
@@ -50,8 +56,14 @@ func ApplyOpsJSON(docJSON, opsJSON []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("press.ApplyOpsJSON: parse ops: %w", err)
 	}
-	if err := model.ApplyOps(&doc, ops); err != nil {
+	if err := model.ApplyOpsWithOptions(&doc, ops, model.ApplyOpsOptions{DryRun: dryRun}); err != nil {
 		return nil, err
+	}
+	if dryRun {
+		// Re-parse original so the caller sees an unchanged document.
+		var orig model.Document
+		_ = json.Unmarshal(docJSON, &orig)
+		return json.MarshalIndent(&orig, "", "  ")
 	}
 	return json.MarshalIndent(&doc, "", "  ")
 }
@@ -68,6 +80,7 @@ func ImportMarkdownModelJSON(md []byte, opts Options) ([]byte, error) {
 		return nil, fmt.Errorf("press.ImportMarkdownModelJSON: render returned nil model")
 	}
 	model.EnsureBlockIDs(out.Model)
+	model.EnsureListItemIDs(out.Model)
 	out.Model.SchemaVersion = model.SchemaVersion
 	return json.MarshalIndent(out.Model, "", "  ")
 }
@@ -83,6 +96,8 @@ func GetDocJSON(docJSON []byte) ([]byte, error) {
 		doc.SchemaVersion = model.SchemaVersion
 	}
 	model.EnsureBlockIDs(&doc)
+	model.EnsureListItemIDs(&doc)
+	model.EnsureTextRunsInvariant(&doc)
 	return json.MarshalIndent(&doc, "", "  ")
 }
 

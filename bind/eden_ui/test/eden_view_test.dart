@@ -32,7 +32,7 @@ ModelDocument _doc({
   Map<String, String> directives = const {},
 }) {
   return ModelDocument(
-    schemaVersion: 'eden-press.model/v6',
+    schemaVersion: 'eden-press.model/v7',
     meta: Meta(directives: directives),
     sections: sections,
     outline: const [],
@@ -283,15 +283,24 @@ void main() {
     expect(find.text('Alpha'), findsOneWidget);
     expect(find.text('Beta'), findsNothing);
     expect(find.text('Slide 1 of 2'), findsOneWidget);
-
-    await tester.fling(
-      find.byKey(const Key('eden-slides')),
-      const Offset(-500, 0),
-      1200,
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('eden-slides-prev'))).onPressed,
+      isNull,
     );
+
+    await tester.tap(find.byKey(const Key('eden-slides-next')));
     await tester.pumpAndSettle();
     expect(find.text('Beta'), findsOneWidget);
     expect(find.text('Slide 2 of 2'), findsOneWidget);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('eden-slides-next'))).onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('eden-slides-prev')));
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha'), findsOneWidget);
+    expect(find.text('Slide 1 of 2'), findsOneWidget);
 
     final prose = _doc(
       directives: const {'profile': 'article'},
@@ -304,5 +313,103 @@ void main() {
     expect(find.byKey(const Key('eden-slides')), findsNothing);
     expect(find.text('Alpha'), findsOneWidget);
     expect(find.text('Beta'), findsOneWidget);
+  });
+
+  test('a sheet embed keeps the surface as a document, not a spreadsheet', () {
+    final doc = _doc(
+      directives: const {'profile': 'article'},
+      sections: [
+        _section(1, [
+          _heading('Plan'),
+          const Block(
+            kind: BlockKind.sheet,
+            text: '',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+            sheetEmbed: {
+              'sheet': 'Tasks',
+              'snapshot': {
+                'cells': [
+                  {'r': 0, 'c': 0, 'v': 'A'},
+                ],
+              },
+            },
+          ),
+        ]),
+      ],
+    );
+    expect(inferEdenDocumentKind(doc), EdenDocumentKind.document);
+  });
+
+  testWidgets('document mode renders v7 todo, sheet, figure, and divider', (
+    tester,
+  ) async {
+    final doc = _doc(
+      directives: const {'profile': 'article'},
+      sections: [
+        _section(1, [
+          const Block(
+            kind: BlockKind.todo,
+            text: 'Ship v7',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+            checked: true,
+          ),
+          const Block(
+            kind: BlockKind.sheet,
+            text: '',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+            sheetEmbed: {'sheet': 'Tasks'},
+          ),
+          const Block(
+            kind: BlockKind.figure,
+            text: 'logo',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+            svg: '<svg/>',
+          ),
+          const Block(
+            kind: BlockKind.divider,
+            text: '',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+          ),
+          const Block(
+            kind: BlockKind.callout,
+            text: 'Watch latency',
+            level: 0,
+            language: '',
+            display: false,
+            ordered: false,
+            items: [],
+            tone: 'warn',
+            icon: '!',
+          ),
+        ]),
+      ],
+    );
+    await tester.pumpWidget(_app(EdenView(document: doc)));
+    expect(find.byKey(const Key('eden-slides')), findsNothing);
+    expect(find.textContaining('Ship v7'), findsOneWidget);
+    expect(find.text('[sheet:Tasks]'), findsOneWidget);
+    expect(find.text('[logo]'), findsOneWidget);
+    expect(find.byType(Divider), findsWidgets);
+    expect(find.text('! Watch latency'), findsOneWidget);
   });
 }

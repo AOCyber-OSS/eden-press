@@ -315,7 +315,7 @@ func TestBuildListBlocks(t *testing.T) {
 			t.Fatalf("Items = %+v, want %+v", lb.Items, want)
 		}
 		for i, w := range want {
-			if lb.Items[i] != w {
+			if lb.Items[i].Text != w.Text || lb.Items[i].Level != w.Level {
 				t.Errorf("Items[%d] = %+v, want %+v", i, lb.Items[i], w)
 			}
 		}
@@ -344,7 +344,7 @@ func TestBuildListBlocks(t *testing.T) {
 			t.Fatalf("Items = %+v, want %+v", lists[0].Items, want)
 		}
 		for i, w := range want {
-			if lists[0].Items[i] != w {
+			if lists[0].Items[i].Text != w.Text || lists[0].Items[i].Level != w.Level {
 				t.Errorf("Items[%d] = %+v, want %+v", i, lists[0].Items[i], w)
 			}
 		}
@@ -734,12 +734,12 @@ func TestBuildQuoteBlocks(t *testing.T) {
 // JSON a v2 consumer would have seen for the same input, so this is v3 and not
 // a silent v2 extension. AGENTS.md's envelope schema documents the new kinds.
 func TestSchemaVersionV3(t *testing.T) {
-	if got, want := SchemaVersion, "eden-press.model/v6"; got != want {
+	if got, want := SchemaVersion, "eden-press.model/v7"; got != want {
 		t.Errorf("SchemaVersion = %q, want %q", got, want)
 	}
 	md := "# T\n\ntext\n"
 	doc, pc := markdown.Parse(md)
-	if got := Build(doc, []byte(md), pc).SchemaVersion; got != "eden-press.model/v6" {
+	if got := Build(doc, []byte(md), pc).SchemaVersion; got != "eden-press.model/v7" {
 		t.Errorf("Document.SchemaVersion = %q, want v3", got)
 	}
 }

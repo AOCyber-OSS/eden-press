@@ -109,39 +109,59 @@ class _SlidesView extends StatefulWidget {
 }
 
 class _SlidesViewState extends State<_SlidesView> {
-  final PageController _pages = PageController();
   int _index = 0;
 
-  @override
-  void dispose() {
-    _pages.dispose();
-    super.dispose();
+  void _goTo(int index) {
+    final sections = widget.document.sections;
+    final count = sections.isEmpty ? 1 : sections.length;
+    if (index < 0 || index >= count || index == _index) {
+      return;
+    }
+    setState(() => _index = index);
   }
 
   @override
   Widget build(BuildContext context) {
     final sections = widget.document.sections;
     final count = sections.isEmpty ? 1 : sections.length;
+    final safeIndex = _index.clamp(0, count - 1);
+    final atFirst = safeIndex <= 0;
+    final atLast = safeIndex >= count - 1;
+    // One slide at a time (no PageView). Desktop mouse-drag on PageView was
+    // unreliable and mid-animation paint left blank frames; prev/next own
+    // the index and rebuild the visible slide immediately.
     return Column(
       children: [
         Expanded(
-          child: PageView(
+          child: KeyedSubtree(
             key: const Key('eden-slides'),
-            controller: _pages,
-            onPageChanged: (index) => setState(() => _index = index),
-            children: [
-              for (var i = 0; i < count; i++)
-                _slide(
-                  sections.isEmpty
-                      ? null
-                      : _outputFor(widget.document, sections[i]),
-                ),
-            ],
+            child: _slide(
+              sections.isEmpty
+                  ? null
+                  : _outputFor(widget.document, sections[safeIndex]),
+            ),
           ),
         ),
         Padding(
           padding: const EdgeInsets.all(8),
-          child: Text('Slide ${_index + 1} of $count'),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                key: const Key('eden-slides-prev'),
+                tooltip: atFirst ? 'First slide' : 'Previous slide',
+                onPressed: atFirst ? null : () => _goTo(safeIndex - 1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text('Slide ${safeIndex + 1} of $count'),
+              IconButton(
+                key: const Key('eden-slides-next'),
+                tooltip: atLast ? 'Last slide' : 'Next slide',
+                onPressed: atLast ? null : () => _goTo(safeIndex + 1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
         ),
       ],
     );

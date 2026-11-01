@@ -33,16 +33,24 @@ import (
 type OpKind string
 
 const (
-	OpInsertBlock        OpKind = "insert_block"
-	OpUpdateBlock        OpKind = "update_block"
-	OpDeleteBlock        OpKind = "delete_block"
-	OpMoveBlock          OpKind = "move_block"
-	OpInsertSection      OpKind = "insert_section"
-	OpDeleteSection      OpKind = "delete_section"
-	OpMoveSection        OpKind = "move_section"
-	OpSetSectionAttrs    OpKind = "set_section_attrs"
-	OpSetSectionNotes    OpKind = "set_section_notes"
-	OpSetMetaDirectives  OpKind = "set_meta_directives"
+	OpInsertBlock       OpKind = "insert_block"
+	OpUpdateBlock       OpKind = "update_block"
+	OpDeleteBlock       OpKind = "delete_block"
+	OpMoveBlock         OpKind = "move_block"
+	OpPatchBlock        OpKind = "patch_block"
+	OpReplaceText       OpKind = "replace_text"
+	OpInsertText        OpKind = "insert_text"
+	OpInsertSection     OpKind = "insert_section"
+	OpDeleteSection     OpKind = "delete_section"
+	OpMoveSection       OpKind = "move_section"
+	OpSetSectionAttrs   OpKind = "set_section_attrs"
+	OpSetSectionNotes   OpKind = "set_section_notes"
+	OpSetMetaDirectives OpKind = "set_meta_directives"
+	OpSetProperties     OpKind = "set_properties"
+	OpSetPropertyValue  OpKind = "set_property_value"
+	OpAddComment        OpKind = "add_comment"
+	OpResolveComment    OpKind = "resolve_comment"
+	OpApplySuggestion   OpKind = "apply_suggestion"
 )
 
 // Op is one mutation in an apply_ops batch.
@@ -65,6 +73,27 @@ type Op struct {
 	Directives map[string]string `json:"directives,omitempty"`
 	// ReplaceDirectives when true replaces meta.directives entirely.
 	ReplaceDirectives bool `json:"replaceDirectives,omitempty"`
+
+	// Text ops (schema v7).
+	Old    string `json:"old,omitempty"`
+	New    string `json:"new,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	All    bool   `json:"all,omitempty"`
+
+	// patch_block flags to clear bool fields that omitempty cannot express.
+	ClearChecked   bool `json:"clearChecked,omitempty"`
+	ClearCollapsed bool `json:"clearCollapsed,omitempty"`
+
+	// Page properties (schema v7).
+	Properties        []PropertyDef `json:"properties,omitempty"`
+	ReplaceProperties bool          `json:"replaceProperties,omitempty"`
+	PropertyID        string        `json:"propertyId,omitempty"`
+	Value             string        `json:"value,omitempty"`
+
+	// Comments (schema v7).
+	Comment   *Comment `json:"comment,omitempty"`
+	CommentID string   `json:"commentId,omitempty"`
 }
 
 // NewDocument returns an empty single-section page.
@@ -107,22 +136,7 @@ func ensureBlockIDsSlice(blocks *[]Block, doc *Document) {
 
 // ApplyOps applies ops in order, ensures ids, and rebuilds Outline.
 func ApplyOps(doc *Document, ops []Op) error {
-	if doc == nil {
-		return fmt.Errorf("model.ApplyOps: nil document")
-	}
-	if doc.SchemaVersion == "" {
-		doc.SchemaVersion = SchemaVersion
-	}
-	doc.SchemaVersion = SchemaVersion
-	EnsureBlockIDs(doc)
-	for i, op := range ops {
-		if err := applyOne(doc, op); err != nil {
-			return fmt.Errorf("model.ApplyOps: op[%d]: %w", i, err)
-		}
-	}
-	EnsureBlockIDs(doc)
-	rebuildOutline(doc)
-	return nil
+	return ApplyOpsWithOptions(doc, ops, ApplyOpsOptions{})
 }
 
 func applyOne(doc *Document, op Op) error {
@@ -135,6 +149,12 @@ func applyOne(doc *Document, op Op) error {
 		return deleteBlock(doc, op)
 	case OpMoveBlock:
 		return moveBlock(doc, op)
+	case OpPatchBlock:
+		return patchBlock(doc, op)
+	case OpReplaceText:
+		return replaceText(doc, op)
+	case OpInsertText:
+		return insertText(doc, op)
 	case OpInsertSection:
 		return insertSection(doc, op)
 	case OpDeleteSection:
@@ -147,6 +167,16 @@ func applyOne(doc *Document, op Op) error {
 		return setSectionNotes(doc, op)
 	case OpSetMetaDirectives:
 		return setMetaDirectives(doc, op)
+	case OpSetProperties:
+		return setProperties(doc, op)
+	case OpSetPropertyValue:
+		return setPropertyValue(doc, op)
+	case OpAddComment:
+		return addComment(doc, op)
+	case OpResolveComment:
+		return resolveComment(doc, op)
+	case OpApplySuggestion:
+		return applySuggestion(doc, op)
 	default:
 		return fmt.Errorf("unknown op %q", op.Op)
 	}
@@ -160,6 +190,7 @@ func insertBlock(doc *Document, op Op) error {
 		return err
 	}
 	b := *op.Block
+	SyncTextFromRuns(&b)
 	if b.ID == "" {
 		b.ID = nextBlockID(doc)
 	} else if findBlockPtr(doc, b.ID) != nil {
@@ -219,6 +250,7 @@ func updateBlock(doc *Document, op Op) error {
 		return fmt.Errorf("update_block: mutate the source block, not synced instance %q", op.BlockID)
 	}
 	b := *op.Block
+	SyncTextFromRuns(&b)
 	if b.ID == "" {
 		b.ID = op.BlockID
 	} else if b.ID != op.BlockID {
@@ -409,6 +441,33 @@ func validateEditableBlock(b Block) error {
 		}
 		if len(b.Children) > 0 {
 			return fmt.Errorf("synced block cannot have children")
+		}
+		return nil
+	case BlockTodo:
+		return validateChildren(b)
+	case BlockCallout:
+		return validateChildren(b)
+	case BlockDivider:
+		if b.Text != "" || len(b.Children) > 0 {
+			return fmt.Errorf("divider must not carry text or children")
+		}
+		return nil
+	case BlockFile:
+		if b.Src == "" {
+			return fmt.Errorf("file block missing src")
+		}
+		return nil
+	case BlockSheet:
+		if b.SheetEmbed == nil {
+			return fmt.Errorf("sheet block missing sheetEmbed")
+		}
+		if b.SheetEmbed.Sheet == "" && b.SheetEmbed.Snapshot == nil {
+			return fmt.Errorf("sheet embed needs sheet name or snapshot")
+		}
+		return nil
+	case BlockFigure:
+		if b.Src == "" && b.SVG == "" {
+			return fmt.Errorf("figure block needs src or svg")
 		}
 		return nil
 	default:

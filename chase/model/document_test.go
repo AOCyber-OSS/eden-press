@@ -47,7 +47,7 @@ func TestDocumentSchemaVersionConstant(t *testing.T) {
 	if SchemaVersion == "" {
 		t.Fatal("SchemaVersion must be non-empty")
 	}
-	const want = "eden-press.model/v6"
+	const want = "eden-press.model/v7"
 	if SchemaVersion != want {
 		t.Fatalf("SchemaVersion = %q, want %q", SchemaVersion, want)
 	}
@@ -79,7 +79,7 @@ func TestDocumentJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if !strings.Contains(string(b), `"schemaVersion":"eden-press.model/v6"`) {
+	if !strings.Contains(string(b), `"schemaVersion":"eden-press.model/v7"`) {
 		t.Fatalf("marshaled JSON missing expected schemaVersion field: %s", b)
 	}
 
@@ -122,7 +122,7 @@ func TestBlockOmitemptyAdditive(t *testing.T) {
 	if strings.Contains(got, "blocks") {
 		t.Fatalf("block-less document must NOT serialize a `blocks` key (omitempty violated): %s", got)
 	}
-	if !strings.Contains(got, `"schemaVersion":"eden-press.model/v6"`) {
+	if !strings.Contains(got, `"schemaVersion":"eden-press.model/v7"`) {
 		t.Fatalf("expected v4 schemaVersion: %s", got)
 	}
 
@@ -134,7 +134,7 @@ func TestBlockOmitemptyAdditive(t *testing.T) {
 	// proves the same for Objective 16's three Span fields -- a span-less
 	// document must still serialize with no `span` key anywhere.
 	const frozenV1 = `{"schemaVersion":"eden-press.model/v1","meta":{"directives":{"theme":"gaia"}},"sections":[{"id":1,"notes":["a note"]}],"outline":[{"sectionId":1,"level":1,"text":"H","slug":"h"}]}`
-	normalized := strings.ReplaceAll(got, "eden-press.model/v6", "eden-press.model/v1")
+	normalized := strings.ReplaceAll(got, "eden-press.model/v7", "eden-press.model/v1")
 	if normalized != frozenV1 {
 		t.Fatalf("block-less v4 JSON differs from frozen v1 by more than the version string:\n got  = %s\n want = %s", normalized, frozenV1)
 	}
@@ -175,7 +175,7 @@ func TestSchemaV3RoundTrip(t *testing.T) {
 		},
 	}
 
-	if doc.SchemaVersion != "eden-press.model/v6" {
+	if doc.SchemaVersion != "eden-press.model/v7" {
 		t.Fatalf("SchemaVersion = %q, want v6", doc.SchemaVersion)
 	}
 
@@ -373,8 +373,8 @@ func TestV4IsAStrictSupersetOfV3(t *testing.T) {
 	// v5; Build still emits no block ids, so stripping spans alone recovers
 	// the v3 golden after rewriting the version string.
 	if m, ok := stripped.(map[string]any); ok {
-		if got := m["schemaVersion"]; got != "eden-press.model/v6" {
-			t.Fatalf("current render reports schemaVersion %v, want eden-press.model/v6", got)
+		if got := m["schemaVersion"]; got != "eden-press.model/v7" {
+			t.Fatalf("current render reports schemaVersion %v, want eden-press.model/v7", got)
 		}
 		m["schemaVersion"] = "eden-press.model/v3"
 	} else {
@@ -431,7 +431,7 @@ func TestV5BuildOmitsEmptyBlockID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v6"`) {
+	if !strings.Contains(string(raw), `"schemaVersion":"eden-press.model/v7"`) {
 		t.Fatalf("missing v6 version: %s", raw)
 	}
 	// Section.ID is numeric (`"id":1`). Block.ID is a string key (`"id":"..."`).

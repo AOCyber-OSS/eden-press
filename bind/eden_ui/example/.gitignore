@@ -1,0 +1,8 @@
+# Copyright (c) 2026 AO Cyber Systems
+# SPDX-License-Identifier: MIT
+.dart_tool/
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/

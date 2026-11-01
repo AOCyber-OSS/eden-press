@@ -134,6 +134,7 @@ func newDocApplyCmd() *cobra.Command {
 			if opsPath == "" {
 				return docFail(cmd, exitUsage, fmt.Errorf("doc apply: --ops is required"))
 			}
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			docRaw, err := readPathOrStdin(cmd, args[0])
 			if err != nil {
 				return docFail(cmd, exitRender, err)
@@ -142,7 +143,7 @@ func newDocApplyCmd() *cobra.Command {
 			if err != nil {
 				return docFail(cmd, exitRender, fmt.Errorf("read ops %q: %w", opsPath, err))
 			}
-			out, err := press.ApplyOpsJSON(docRaw, opsRaw)
+			out, err := press.ApplyOpsJSONOpts(docRaw, opsRaw, dryRun)
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
@@ -150,6 +151,7 @@ func newDocApplyCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("ops", "", "path to ops JSON (array or {\"ops\":[...]})")
+	cmd.Flags().Bool("dry-run", false, "validate ops without mutating the document")
 	cmd.Flags().StringP("output", "o", "", `output file path; "" writes to stdout`)
 	return cmd
 }

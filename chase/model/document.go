@@ -99,7 +99,12 @@ package model
 // SyncRef, and Collapsed. Build still emits flat trees without children/
 // toggle/synced. omitempty keeps Build JSON a strict superset of v5 apart
 // from this version string.
-const SchemaVersion = "eden-press.model/v6"
+//
+// v6 -> v7 (agent-document upgrade): ADDITIVE rich-text Runs, list-item ids,
+// todo/callout/divider/file/sheet/figure kinds, SheetEmbed, page Properties,
+// Comments/suggestions. Build still emits plain Text without Runs. omitempty
+// keeps Build JSON a strict superset of v6 apart from this version string.
+const SchemaVersion = "eden-press.model/v7"
 
 // Span is a half-open byte range [Start, Stop) into the Markdown source that
 // produced the node carrying it: source[Start:Stop] re-slices that node's
@@ -165,6 +170,20 @@ const (
 	// BlockSynced is a pointer to another block (schema v6). SyncRef names
 	// the source; instances are read-through at render. Mutate the source.
 	BlockSynced BlockKind = "synced"
+	// BlockTodo is a checkbox item (schema v7). Checked reports done state;
+	// optional Children hold nested body.
+	BlockTodo BlockKind = "todo"
+	// BlockCallout is a highlighted note (schema v7). Tone/Icon are optional.
+	BlockCallout BlockKind = "callout"
+	// BlockDivider is a thematic break (schema v7); no body.
+	BlockDivider BlockKind = "divider"
+	// BlockFile is an attachment ref only (schema v7); bytes live in the host.
+	BlockFile BlockKind = "file"
+	// BlockSheet embeds a workbook sheet/range (schema v7); see SheetEmbed.
+	BlockSheet BlockKind = "sheet"
+	// BlockFigure is design/media interchange (schema v7): asset ref and/or
+	// inline SVG. Press does not author or layout figures.
+	BlockFigure BlockKind = "figure"
 )
 
 // SyncRef points at a canonical block for a synced instance (schema v6).
@@ -172,6 +191,105 @@ const (
 type SyncRef struct {
 	BlockID string `json:"blockId"`
 	PageID  string `json:"pageId,omitempty"`
+}
+
+// TextRun is one rich-text span (schema v7). Marks are wire strings such as
+// "bold", "italic", "code", "strike". Link is an optional href.
+type TextRun struct {
+	Text  string   `json:"text"`
+	Marks []string `json:"marks,omitempty"`
+	Link  string   `json:"link,omitempty"`
+}
+
+// SheetRange addresses a rectangular or id-stable subset of a sheet.
+type SheetRange struct {
+	R0        int      `json:"r0,omitempty"`
+	R1        int      `json:"r1,omitempty"`
+	C0        int      `json:"c0,omitempty"`
+	C1        int      `json:"c1,omitempty"`
+	ColumnIDs []string `json:"columnIds,omitempty"`
+	RowIDs    []string `json:"rowIds,omitempty"`
+	RangeID   string   `json:"rangeId,omitempty"`
+}
+
+// SheetSnapshot is a sparse v3-compatible cell subset for offline embed render.
+type SheetSnapshot struct {
+	Columns []SheetColumnSnap `json:"columns,omitempty"`
+	RowIDs  []SheetRowIDSnap  `json:"rowIds,omitempty"`
+	Cells   []SheetCellSnap   `json:"cells,omitempty"`
+}
+
+// SheetColumnSnap mirrors workbook column property JSON.
+type SheetColumnSnap struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Options []string `json:"options,omitempty"`
+}
+
+// SheetRowIDSnap mirrors workbook rowIds JSON.
+type SheetRowIDSnap struct {
+	R  int    `json:"r"`
+	ID string `json:"id"`
+}
+
+// SheetCellSnap mirrors workbook sparse cell JSON (v/f + optional rels).
+type SheetCellSnap struct {
+	R    int              `json:"r"`
+	C    int              `json:"c"`
+	V    string           `json:"v,omitempty"`
+	F    string           `json:"f,omitempty"`
+	Rels []map[string]string `json:"rels,omitempty"`
+}
+
+// SheetEmbed is a live ref + optional snapshot for a sheet block (schema v7).
+type SheetEmbed struct {
+	PageID       string         `json:"pageId,omitempty"`
+	WorkbookHint string         `json:"workbookHint,omitempty"`
+	Sheet        string         `json:"sheet,omitempty"`
+	Range        *SheetRange    `json:"range,omitempty"`
+	Snapshot     *SheetSnapshot `json:"snapshot,omitempty"`
+}
+
+// PropertyType is a typed page property (schema v7).
+type PropertyType string
+
+const (
+	PropText        PropertyType = "text"
+	PropNumber      PropertyType = "number"
+	PropSelect      PropertyType = "select"
+	PropMultiSelect PropertyType = "multi_select"
+	PropDate        PropertyType = "date"
+	PropCheckbox    PropertyType = "checkbox"
+	PropURL         PropertyType = "url"
+	PropEmail       PropertyType = "email"
+	PropRelation    PropertyType = "relation"
+)
+
+// PropertyDef is one document-level typed property schema entry.
+type PropertyDef struct {
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Type    PropertyType `json:"type"`
+	Options []string     `json:"options,omitempty"`
+}
+
+// Comment is a review annotation anchored to a block (schema v7). UI/fanout
+// belong to the host; Press stores the data model only.
+type Comment struct {
+	ID         string            `json:"id"`
+	BlockID    string            `json:"blockId"`
+	Start      *int              `json:"start,omitempty"`
+	Stop       *int              `json:"stop,omitempty"`
+	Body       string            `json:"body"`
+	Resolved   bool              `json:"resolved,omitempty"`
+	Suggestion *CommentSuggestion `json:"suggestion,omitempty"`
+}
+
+// CommentSuggestion is an optional proposed text/runs replace for a comment.
+type CommentSuggestion struct {
+	Text string    `json:"text,omitempty"`
+	Runs []TextRun `json:"runs,omitempty"`
 }
 
 // Block is one ordered piece of a Section's body content, materialized by the
@@ -201,7 +319,36 @@ type Block struct {
 	// Text is the block's primary text payload: paragraph/heading plain text,
 	// a code block's RAW source (pre-chroma), or a math construct's RAW TeX.
 	// Empty for a pure list block (its content lives in Items).
+	// Authoritative plain string for search/replace (schema v7); when Runs is
+	// set, Text must equal the concatenation of run texts (FlattenRuns).
 	Text string `json:"text,omitempty"`
+
+	// Runs is optional rich text (schema v7). omitempty when plain-only.
+	Runs []TextRun `json:"runs,omitempty"`
+
+	// Checked is the done state for a todo block (schema v7).
+	Checked bool `json:"checked,omitempty"`
+
+	// Icon is an optional callout/figure glyph name or emoji (schema v7).
+	Icon string `json:"icon,omitempty"`
+
+	// Tone is an optional callout tone: info|warn|success|danger or "" (v7).
+	Tone string `json:"tone,omitempty"`
+
+	// Name is a file block's display name (schema v7).
+	Name string `json:"name,omitempty"`
+
+	// Mime is a file block's MIME type (schema v7).
+	Mime string `json:"mime,omitempty"`
+
+	// Size is a file block's byte length when known (schema v7).
+	Size int64 `json:"size,omitempty"`
+
+	// SVG is inline SVG markup for a figure block (schema v7).
+	SVG string `json:"svg,omitempty"`
+
+	// SheetEmbed carries a sheet/range embed (schema v7, kind=sheet).
+	SheetEmbed *SheetEmbed `json:"sheetEmbed,omitempty"`
 
 	// Level is the heading level 1-6 (heading blocks only).
 	Level int `json:"level,omitempty"`
@@ -280,8 +427,14 @@ type Block struct {
 // ListItem is one entry of a list Block, carrying its editable Text and its
 // 0-based nesting Level (0 = top level, 1 = one level of indentation, ...).
 type ListItem struct {
+	// ID is a stable list-item id for apply_ops (schema v7). omitempty.
+	ID string `json:"id,omitempty"`
+
 	// Text is the item's editable plain text.
 	Text string `json:"text"`
+
+	// Runs is optional rich text for the item (schema v7).
+	Runs []TextRun `json:"runs,omitempty"`
 
 	// Level is the item's 0-based nesting depth within the list.
 	Level int `json:"level,omitempty"`
@@ -311,6 +464,16 @@ type Document struct {
 	// i.e. already grouped by owning Section, without needing a nested
 	// shape.
 	Outline []OutlineEntry `json:"outline"`
+
+	// Properties is the typed page-property schema (schema v7).
+	Properties []PropertyDef `json:"properties,omitempty"`
+
+	// PropertyValues maps property id -> string value (schema v7).
+	// multi_select and relation may use JSON-encoded lists in the string.
+	PropertyValues map[string]string `json:"propertyValues,omitempty"`
+
+	// Comments are review annotations (schema v7). Host owns UI/fanout.
+	Comments []Comment `json:"comments,omitempty"`
 }
 
 // Section is the JSON-serializable projection of a *markdown.Section: its

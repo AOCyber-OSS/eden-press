@@ -159,15 +159,36 @@ func buildBodyShapes(blocks []model.Block, gen *shapeIDGen, width, startY int64)
 	return children, bottomY
 }
 
-// flattenBlocks expands toggle/quote children into a flat list for PPTX
-// (synced instances are skipped; hosts resolve them before export if needed).
+// flattenBlocks expands toggle/quote/todo/callout children into a flat list
+// for PPTX (synced instances are skipped; sheet embeds become table-like
+// paragraphs from snapshot text; hosts resolve live refs).
 func flattenBlocks(blocks []model.Block) []model.Block {
 	out := make([]model.Block, 0, len(blocks))
 	for _, b := range blocks {
 		switch b.Kind {
 		case model.BlockSynced:
 			continue
-		case model.BlockToggle:
+		case model.BlockDivider:
+			out = append(out, model.Block{Kind: model.BlockParagraph, Text: "—"})
+		case model.BlockSheet:
+			text := sheetEmbedPlain(b)
+			out = append(out, model.Block{Kind: model.BlockParagraph, Text: text})
+		case model.BlockFigure:
+			alt := b.Text
+			if alt == "" {
+				alt = b.Title
+			}
+			if alt == "" {
+				alt = "[figure]"
+			}
+			out = append(out, model.Block{Kind: model.BlockParagraph, Text: alt})
+		case model.BlockFile:
+			name := b.Name
+			if name == "" {
+				name = b.Src
+			}
+			out = append(out, model.Block{Kind: model.BlockParagraph, Text: name})
+		case model.BlockToggle, model.BlockTodo, model.BlockCallout:
 			title := b
 			title.Children = nil
 			out = append(out, title)
@@ -183,6 +204,29 @@ func flattenBlocks(blocks []model.Block) []model.Block {
 		}
 	}
 	return out
+}
+
+func sheetEmbedPlain(b model.Block) string {
+	if b.SheetEmbed == nil {
+		return "[sheet]"
+	}
+	if b.SheetEmbed.Snapshot != nil && len(b.SheetEmbed.Snapshot.Cells) > 0 {
+		var parts []string
+		for _, c := range b.SheetEmbed.Snapshot.Cells {
+			if c.V != "" {
+				parts = append(parts, c.V)
+			} else if c.F != "" {
+				parts = append(parts, "="+c.F)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " | ")
+		}
+	}
+	if b.SheetEmbed.Sheet != "" {
+		return "[sheet:" + b.SheetEmbed.Sheet + "]"
+	}
+	return "[sheet]"
 }
 
 // buildSlide renders one Section to a ppt/slides/slideN.xml document and its

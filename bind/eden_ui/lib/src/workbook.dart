@@ -43,24 +43,32 @@ class EdenColumn {
     required this.id,
     required this.name,
     this.type = 'text',
+    this.options = const <String>[],
   });
 
   final String id;
   final String name;
 
-  /// `text` | `number` | `formula` | `relation`
+  /// `text` | `number` | `formula` | `relation` | `select` | `multi_select` |
+  /// `date` | `checkbox` | `url` | `email`
   final String type;
+  final List<String> options;
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'type': type,
+    if (options.isNotEmpty) 'options': options,
   };
 
   factory EdenColumn.fromJson(Map<String, dynamic> json) => EdenColumn(
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
     type: json['type'] as String? ?? 'text',
+    options:
+        json['options'] is List
+            ? (json['options'] as List).map((e) => e?.toString() ?? '').toList()
+            : const <String>[],
   );
 }
 
