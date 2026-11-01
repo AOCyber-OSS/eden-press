@@ -32,7 +32,7 @@ import (
 // that request --format html / serve ?format=html get this instead of the
 // Marp slide scaffold when the document is rendered from the docmodel.
 const DocsCSS = `
-.eden-docs { max-width: 720px; margin: 0 auto; padding: 24px; font: 16px/1.45 system-ui, sans-serif; color: #202124; }
+.eden-docs { max-width: 45rem; margin: 0 auto; padding: 24px; font: 16px/1.45 system-ui, sans-serif; color: #202124; }
 .eden-docs h1 { font-size: 1.75rem; margin: 0.6em 0 0.4em; }
 .eden-docs h2 { font-size: 1.4rem; margin: 0.6em 0 0.4em; }
 .eden-docs h3 { font-size: 1.15rem; margin: 0.6em 0 0.4em; }
