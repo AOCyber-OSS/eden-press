@@ -80,15 +80,15 @@ func writeBlock(b *strings.Builder, doc *Document, bl Block, depth int) {
 		b.WriteString(pad)
 		b.WriteString(strings.Repeat("#", bl.Level))
 		b.WriteByte(' ')
-		b.WriteString(bl.Text)
+		b.WriteString(runsOrText(bl))
 		b.WriteString("\n\n")
 	case BlockParagraph:
 		b.WriteString(pad)
-		b.WriteString(bl.Text)
+		b.WriteString(runsOrText(bl))
 		b.WriteString("\n\n")
 	case BlockQuote:
 		b.WriteString("> ")
-		b.WriteString(strings.ReplaceAll(bl.Text, "\n", "\n> "))
+		b.WriteString(strings.ReplaceAll(runsOrText(bl), "\n", "\n> "))
 		b.WriteString("\n\n")
 		writeBlocks(b, doc, bl.Children, depth+1)
 	case BlockCode:
@@ -182,13 +182,143 @@ func writeBlock(b *strings.Builder, doc *Document, bl Block, depth int) {
 			}
 		}
 		b.WriteByte('\n')
+	case BlockTodo:
+		mark := "- [ ] "
+		if bl.Checked {
+			mark = "- [x] "
+		}
+		b.WriteString(mark)
+		b.WriteString(runsOrText(bl))
+		b.WriteString("\n\n")
+		writeBlocks(b, doc, bl.Children, depth)
+	case BlockCallout:
+		b.WriteString("> ")
+		if bl.Icon != "" {
+			b.WriteString(bl.Icon)
+			b.WriteByte(' ')
+		}
+		b.WriteString(strings.ReplaceAll(runsOrText(bl), "\n", "\n> "))
+		b.WriteString("\n\n")
+		writeBlocks(b, doc, bl.Children, depth)
+	case BlockDivider:
+		b.WriteString("---\n\n")
+	case BlockFile:
+		name := bl.Name
+		if name == "" {
+			name = bl.Text
+		}
+		if name == "" {
+			name = bl.Src
+		}
+		b.WriteString(fmt.Sprintf("[%s](%s)\n\n", name, bl.Src))
+	case BlockSheet:
+		if bl.SheetEmbed != nil && bl.SheetEmbed.Snapshot != nil {
+			writeSheetSnapshotTable(b, bl.SheetEmbed.Snapshot)
+		} else {
+			sheet := ""
+			if bl.SheetEmbed != nil {
+				sheet = bl.SheetEmbed.Sheet
+			}
+			b.WriteString(fmt.Sprintf("<!-- eden-sheet: %s -->\n\n", sheet))
+		}
+	case BlockFigure:
+		if bl.SVG != "" {
+			b.WriteString(bl.SVG)
+			if !strings.HasSuffix(bl.SVG, "\n") {
+				b.WriteByte('\n')
+			}
+			b.WriteByte('\n')
+		} else if bl.Src != "" {
+			alt := bl.Text
+			if alt == "" {
+				alt = bl.Title
+			}
+			title := ""
+			if bl.Title != "" {
+				title = fmt.Sprintf(` "%s"`, bl.Title)
+			}
+			b.WriteString(fmt.Sprintf("![%s](%s%s)\n\n", alt, bl.Src, title))
+		}
 	default:
-		if bl.Text != "" {
-			b.WriteString(bl.Text)
+		if t := runsOrText(bl); t != "" {
+			b.WriteString(t)
 			b.WriteString("\n\n")
 		}
 		writeBlocks(b, doc, bl.Children, depth)
 	}
+}
+
+func runsOrText(bl Block) string {
+	if len(bl.Runs) > 0 {
+		return renderRunsMarkdown(bl.Runs)
+	}
+	return bl.Text
+}
+
+func renderRunsMarkdown(runs []TextRun) string {
+	var b strings.Builder
+	for _, r := range runs {
+		t := r.Text
+		for _, m := range r.Marks {
+			switch m {
+			case "bold":
+				t = "**" + t + "**"
+			case "italic":
+				t = "*" + t + "*"
+			case "code":
+				t = "`" + t + "`"
+			case "strike":
+				t = "~~" + t + "~~"
+			}
+		}
+		if r.Link != "" {
+			t = "[" + t + "](" + r.Link + ")"
+		}
+		b.WriteString(t)
+	}
+	return b.String()
+}
+
+func writeSheetSnapshotTable(b *strings.Builder, snap *SheetSnapshot) {
+	if snap == nil || len(snap.Cells) == 0 {
+		b.WriteString("<!-- eden-sheet empty -->\n\n")
+		return
+	}
+	maxR, maxC := 0, 0
+	grid := map[[2]int]string{}
+	for _, c := range snap.Cells {
+		if c.R > maxR {
+			maxR = c.R
+		}
+		if c.C > maxC {
+			maxC = c.C
+		}
+		v := c.V
+		if c.F != "" {
+			v = "=" + c.F
+		}
+		grid[[2]int{c.R, c.C}] = v
+	}
+	for r := 0; r <= maxR; r++ {
+		cells := make([]string, maxC+1)
+		for c := 0; c <= maxC; c++ {
+			cells[c] = grid[[2]int{r, c}]
+		}
+		b.WriteString("| ")
+		b.WriteString(strings.Join(cells, " | "))
+		b.WriteString(" |\n")
+		if r == 0 {
+			b.WriteString("| ")
+			for i := 0; i <= maxC; i++ {
+				if i > 0 {
+					b.WriteString(" | ")
+				}
+				b.WriteString("---")
+			}
+			b.WriteString(" |\n")
+		}
+	}
+	b.WriteByte('\n')
 }
 
 func needsYAMLQuotes(v string) bool {
