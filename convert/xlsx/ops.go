@@ -42,6 +42,7 @@ const (
 	WbOpSetRelation   WbOpKind = "set_relation"
 	WbOpClearRelation WbOpKind = "clear_relation"
 	WbOpEnsureRowID   WbOpKind = "ensure_row_id"
+	WbOpSetNamedRange WbOpKind = "set_named_range"
 )
 
 // WbOp is one workbook mutation.
@@ -58,8 +59,16 @@ type WbOp struct {
 	ColumnID string `json:"columnId,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Type     string `json:"type,omitempty"`
+	Options  []string `json:"options,omitempty"`
 	RowID    string `json:"rowId,omitempty"`
 	Rels     []RelationRef `json:"rels,omitempty"`
+
+	// Named range fields.
+	RangeID string `json:"rangeId,omitempty"`
+	R0      int    `json:"r0,omitempty"`
+	R1      int    `json:"r1,omitempty"`
+	C0      int    `json:"c0,omitempty"`
+	C1      int    `json:"c1,omitempty"`
 }
 
 // ApplyWorkbookOps applies ops in order and ensures every occupied row has a row id.
@@ -163,7 +172,9 @@ func (s *Sheet) SetColumn(col Column) error {
 		return fmt.Errorf("xlsx: column id is empty")
 	}
 	switch col.Type {
-	case ColumnText, ColumnNumber, ColumnFormula, ColumnRelation, "":
+	case ColumnText, ColumnNumber, ColumnFormula, ColumnRelation,
+		ColumnSelect, ColumnMultiSelect, ColumnDate, ColumnCheckbox,
+		ColumnURL, ColumnEmail, "":
 		if col.Type == "" {
 			col.Type = ColumnText
 		}
@@ -230,7 +241,23 @@ func applyWbOne(wb *Workbook, op WbOp) error {
 		if err != nil {
 			return err
 		}
-		return s.SetColumn(Column{ID: op.ColumnID, Name: op.Name, Type: ColumnType(op.Type)})
+		return s.SetColumn(Column{ID: op.ColumnID, Name: op.Name, Type: ColumnType(op.Type), Options: append([]string{}, op.Options...)})
+	case WbOpSetNamedRange:
+		if op.RangeID == "" || op.Name == "" || op.Sheet == "" {
+			return fmt.Errorf("set_named_range: rangeId, name, and sheet are required")
+		}
+		if _, err := requireSheet(wb, op.Sheet); err != nil {
+			return err
+		}
+		nr := NamedRange{ID: op.RangeID, Name: op.Name, Sheet: op.Sheet, R0: op.R0, R1: op.R1, C0: op.C0, C1: op.C1}
+		for i := range wb.namedRanges {
+			if wb.namedRanges[i].ID == nr.ID {
+				wb.namedRanges[i] = nr
+				return nil
+			}
+		}
+		wb.namedRanges = append(wb.namedRanges, nr)
+		return nil
 	case WbOpSetRelation:
 		s, err := requireSheet(wb, op.Sheet)
 		if err != nil {

@@ -44,17 +44,35 @@ const (
 type ColumnType string
 
 const (
-	ColumnText     ColumnType = "text"
-	ColumnNumber   ColumnType = "number"
-	ColumnFormula  ColumnType = "formula"
-	ColumnRelation ColumnType = "relation"
+	ColumnText        ColumnType = "text"
+	ColumnNumber      ColumnType = "number"
+	ColumnFormula     ColumnType = "formula"
+	ColumnRelation    ColumnType = "relation"
+	ColumnSelect      ColumnType = "select"
+	ColumnMultiSelect ColumnType = "multi_select"
+	ColumnDate        ColumnType = "date"
+	ColumnCheckbox    ColumnType = "checkbox"
+	ColumnURL         ColumnType = "url"
+	ColumnEmail       ColumnType = "email"
 )
 
-// Column is a named typed property (workbook v3).
+// Column is a named typed property (workbook v3+).
 type Column struct {
-	ID   string     `json:"id"`
-	Name string     `json:"name"`
-	Type ColumnType `json:"type"`
+	ID      string     `json:"id"`
+	Name    string     `json:"name"`
+	Type    ColumnType `json:"type"`
+	Options []string   `json:"options,omitempty"`
+}
+
+// NamedRange is a stable named rectangle on a sheet (additive v3 field).
+type NamedRange struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Sheet string `json:"sheet"`
+	R0    int    `json:"r0"`
+	R1    int    `json:"r1"`
+	C0    int    `json:"c0"`
+	C1    int    `json:"c1"`
 }
 
 // RelationRef points at a row (optionally on another page/sheet).
@@ -76,8 +94,9 @@ const (
 // .xlsx bytes those edits become. It is the management surface on top of the
 // same OOXML packager ToXLSX uses. Formulas are stored, not evaluated.
 type Workbook struct {
-	title  string
-	sheets []*Sheet
+	title       string
+	sheets      []*Sheet
+	namedRanges []NamedRange
 }
 
 // Sheet is one worksheet. Cells are sparse. A value that starts with "=" is
@@ -411,9 +430,10 @@ func checkCell(row, col int) error {
 }
 
 type workbookSnapshot struct {
-	Schema string          `json:"schema"`
-	Title  string          `json:"title,omitempty"`
-	Sheets []sheetSnapshot `json:"sheets"`
+	Schema      string          `json:"schema"`
+	Title       string          `json:"title,omitempty"`
+	Sheets      []sheetSnapshot `json:"sheets"`
+	NamedRanges []NamedRange    `json:"namedRanges,omitempty"`
 }
 
 type sheetSnapshot struct {
@@ -454,7 +474,7 @@ func (w *Workbook) MarshalJSON() ([]byte, error) {
 	if w == nil {
 		return nil, fmt.Errorf("xlsx: workbook is nil")
 	}
-	snap := workbookSnapshot{Schema: WorkbookSchema, Title: w.title, Sheets: []sheetSnapshot{}}
+	snap := workbookSnapshot{Schema: WorkbookSchema, Title: w.title, Sheets: []sheetSnapshot{}, NamedRanges: append([]NamedRange{}, w.namedRanges...)}
 	for _, s := range w.sheets {
 		snap.Sheets = append(snap.Sheets, s.snapshot())
 	}
@@ -473,6 +493,7 @@ func ParseWorkbook(b []byte) (*Workbook, error) {
 		return nil, fmt.Errorf("xlsx: workbook schema %q, want %s, %s, or %s", snap.Schema, WorkbookSchema, workbookSchemaV2, workbookSchemaV1)
 	}
 	wb := NewWorkbook(snap.Title)
+	wb.namedRanges = append([]NamedRange{}, snap.NamedRanges...)
 	for _, sh := range snap.Sheets {
 		sheet, err := wb.AddSheet(sh.Name)
 		if err != nil {

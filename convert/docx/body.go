@@ -138,6 +138,58 @@ func renderBlock(b model.Block) string {
 		// Synced instances are host-resolved; DOCX flattens them away.
 		return ""
 
+	case model.BlockTodo:
+		mark := "☐ "
+		if b.Checked {
+			mark = "☑ "
+		}
+		var sb strings.Builder
+		sb.WriteString(paraXML("", "", runXML(mark+b.Text, false)))
+		sb.WriteString(renderChildBlocks(b.Children))
+		return sb.String()
+
+	case model.BlockCallout:
+		var sb strings.Builder
+		sb.WriteString(renderMultilineParagraph("Quote", b.Text))
+		sb.WriteString(renderChildBlocks(b.Children))
+		return sb.String()
+
+	case model.BlockDivider:
+		return paraXML("", "", runXML("―", false))
+
+	case model.BlockFile:
+		name := b.Name
+		if name == "" {
+			name = b.Text
+		}
+		if name == "" {
+			name = b.Src
+		}
+		return paraXML("Caption", "", runXML(fmt.Sprintf("[%s](%s)", name, b.Src), false))
+
+	case model.BlockSheet:
+		if b.SheetEmbed != nil && b.SheetEmbed.Snapshot != nil {
+			return renderSheetSnapshot(b.SheetEmbed.Snapshot)
+		}
+		sheet := ""
+		if b.SheetEmbed != nil {
+			sheet = b.SheetEmbed.Sheet
+		}
+		return paraXML("Caption", "", runXML("[sheet:"+sheet+"]", false))
+
+	case model.BlockFigure:
+		alt := b.Text
+		if alt == "" {
+			alt = b.Title
+		}
+		if alt == "" {
+			alt = "figure"
+		}
+		if b.Src != "" {
+			return paraXML("Caption", "", runXML(fmt.Sprintf("[%s: %s]", alt, b.Src), false))
+		}
+		return paraXML("Caption", "", runXML("["+alt+"]", false))
+
 	default:
 		// An unknown future block kind degrades to its text rather than
 		// vanishing -- the model is versioned and may grow kinds this
@@ -157,6 +209,38 @@ func renderChildBlocks(children []model.Block) string {
 		sb.WriteString(renderBlock(c))
 	}
 	return sb.String()
+}
+
+func renderSheetSnapshot(snap *model.SheetSnapshot) string {
+	if snap == nil || len(snap.Cells) == 0 {
+		return ""
+	}
+	maxR, maxC := 0, 0
+	grid := map[[2]int]string{}
+	for _, c := range snap.Cells {
+		if c.R > maxR {
+			maxR = c.R
+		}
+		if c.C > maxC {
+			maxC = c.C
+		}
+		v := c.V
+		if c.F != "" {
+			v = "=" + c.F
+		}
+		grid[[2]int{c.R, c.C}] = v
+	}
+	rows := make([][]string, 0, maxR+1)
+	for r := 0; r <= maxR; r++ {
+		row := make([]string, maxC+1)
+		for c := 0; c <= maxC; c++ {
+			row[c] = grid[[2]int{r, c}]
+		}
+		rows = append(rows, row)
+	}
+	headers := rows[0]
+	body := rows[1:]
+	return renderTable(model.Block{Kind: model.BlockTable, Headers: headers, Rows: body})
 }
 
 // renderMultilineParagraph renders text as a single styled paragraph, mapping
