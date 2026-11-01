@@ -65,17 +65,30 @@ bool _tableOnly(ModelDocument document) {
         case BlockKind.table:
           tables++;
         case BlockKind.heading:
+        case BlockKind.divider:
+          // Structural chrome — allowed beside tables.
           break;
+        case BlockKind.sheet:
+        case BlockKind.figure:
+        case BlockKind.file:
+        case BlockKind.synced:
+          // Sheet embeds / figures / files are never a pure table workbook.
+          return false;
         case BlockKind.paragraph:
         case BlockKind.list:
         case BlockKind.code:
         case BlockKind.math:
         case BlockKind.image:
         case BlockKind.quote:
+        case BlockKind.toggle:
+        case BlockKind.todo:
+        case BlockKind.callout:
         case BlockKind.unknown:
           if (block.text.trim().isEmpty &&
               block.items.isEmpty &&
-              block.rows.isEmpty) {
+              block.rows.isEmpty &&
+              block.children.isEmpty &&
+              block.runs.isEmpty) {
             break;
           }
           return false;
