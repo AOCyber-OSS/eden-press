@@ -308,3 +308,9 @@ func orDefault(v, d string) string {
 	}
 	return v
 }
+
+// BlockHTML is a RED-phase stub; the real writer lands in the GREEN commit.
+func BlockHTML(doc *Document, bl Block) string { return "" }
+
+// BlockHTMLEmbedded is a RED-phase stub; the real writer lands in the GREEN commit.
+func BlockHTMLEmbedded(doc *Document, bl Block) string { return "" }
