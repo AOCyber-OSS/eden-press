@@ -24,6 +24,9 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -436,5 +439,221 @@ func TestCodecSpansSurviveAnEditAndKeepIDs(t *testing.T) {
 	}
 	if got.Sections[0].Blocks[1].ID != "b_2" || got.Sections[0].Blocks[1].Span == nil {
 		t.Fatalf("edited block: %+v", got.Sections[0].Blocks[1])
+	}
+}
+
+// TestCodecIDsSweepIdentity: random trees with ids come back identical, ids
+// included, both with Prev and from the trailer alone.
+func TestCodecIDsSweepIdentity(t *testing.T) {
+	rng := rand.New(rand.NewSource(404))
+	fails := 0
+	for i := 0; i < 3000; i++ {
+		d := fxIDs(fxDoc(genV7Tree(rng)))
+		md := ToMarkdown(d)
+		for _, opts := range []FromMarkdownOptions{{Prev: d}, {}} {
+			got, err := FromMarkdown(md, opts)
+			if err == nil && reflect.DeepEqual(got, d) {
+				continue
+			}
+			fails++
+			if fails <= 2 {
+				gotJSON := "nil"
+				if got != nil {
+					gotJSON = docJSON(t, got)
+				}
+				t.Errorf("ids do not round-trip (Prev=%v)\n markdown: %q\n error: %v\n want: %s\n got: %s", opts.Prev != nil, md, err, docJSON(t, d), gotJSON)
+			}
+		}
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
+	}
+}
+
+// TestCodecIDsAreStableOnGarbage gives ids to whatever random soup parses to and
+// checks that writing and reading it again, with Prev and without, gives the
+// same document, ids included.
+func TestCodecIDsAreStableOnGarbage(t *testing.T) {
+	alphabet := []string{
+		"a", "b", " ", "\n", "\n\n", "# ", "> ", "- ", "- [ ] ", "* [x] ", "1. ", "```", "$$", "---", "***", "|", "|-", ":::toggle\n", ":::callout {}\n",
+		":::file {\"src\":\"f\"}\n:::\n", ":::", "<!-- x -->", "<!-- eden:note \"n\" -->", "![i](u)", "*", "**", "[l](u)", "`", "\t",
+	}
+	rng := rand.New(rand.NewSource(6))
+	bad := 0
+	for i := 0; i < 20000 && bad < 3; i++ {
+		src := sweepText(rng, alphabet, 1+rng.Intn(18))
+		d, err := FromMarkdown(src, FromMarkdownOptions{Lenient: true, Prev: NewDocument("")})
+		if err != nil {
+			t.Fatalf("lenient read failed for %q: %v", src, err)
+		}
+		md := ToMarkdown(d)
+		for _, opts := range []FromMarkdownOptions{{Prev: d}, {}} {
+			got, err := FromMarkdown(md, opts)
+			if err == nil && reflect.DeepEqual(got, d) {
+				continue
+			}
+			bad++
+			var ue *UnrepresentableError
+			if errors.As(err, &ue) {
+				t.Errorf("canonical Markdown refused: %v\n source: %q\n canonical: %q", err, src, md)
+			} else {
+				t.Errorf("ids not stable (Prev=%v)\n source: %q\n canonical: %q\n first: %s\n second: %s", opts.Prev != nil, src, md, docJSON(t, d), docJSON(t, got))
+			}
+			break
+		}
+	}
+}
+
+// TestCodecIDsAfterRandomEdits: unrelated blocks keep their ids through a random
+// edit of the Markdown. Every paragraph's text is unique, so "the same block" is
+// never in doubt.
+func TestCodecIDsAfterRandomEdits(t *testing.T) {
+	rng := rand.New(rand.NewSource(808))
+	for i := 0; i < 1500; i++ {
+		n := 2 + rng.Intn(8)
+		var blocks []Block
+		for k := 0; k < n; k++ {
+			switch rng.Intn(4) {
+			case 0:
+				blocks = append(blocks, Block{Kind: BlockList, Items: fxItems(fmt.Sprintf("item %d a", k), fmt.Sprintf("item %d b", k))})
+			case 1:
+				blocks = append(blocks, Block{Kind: BlockHeading, Level: 2, Text: fmt.Sprintf("heading %d", k)})
+			default:
+				blocks = append(blocks, fxPara(fmt.Sprintf("paragraph %d", k)))
+			}
+		}
+		old := fxIDs(fxDoc(append([]Block(nil), blocks...)))
+		idOf := map[string]string{} // content label -> id
+		for _, b := range old.Sections[0].Blocks {
+			idOf[label(b)] = b.ID
+		}
+
+		edited := append([]Block(nil), blocks...)
+		what := rng.Intn(4)
+		at := rng.Intn(len(edited))
+		var touched string // the label of the one block the edit changes
+		switch what {
+		case 0: // delete
+			touched = label(edited[at])
+			edited = append(edited[:at], edited[at+1:]...)
+		case 1: // insert a new paragraph
+			edited = append(edited[:at], append([]Block{fxPara(fmt.Sprintf("inserted %d", i))}, edited[at:]...)...)
+		case 2: // edit a paragraph in place
+			if edited[at].Kind != BlockParagraph {
+				continue
+			}
+			touched = label(edited[at])
+			edited[at] = fxPara(edited[at].Text + " (edited)")
+		case 3: // swap two blocks
+			other := rng.Intn(len(edited))
+			edited[at], edited[other] = edited[other], edited[at]
+		}
+		md := ToMarkdown(fxDoc(edited))
+		got, err := FromMarkdown(md, FromMarkdownOptions{Prev: old})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, id := range blockIDs(got) {
+			if id == "" || seen[id] {
+				t.Fatalf("edit %d: ids are not unique and non-empty: %v\n%s", what, blockIDs(got), md)
+			}
+			seen[id] = true
+		}
+		for _, b := range got.Sections[0].Blocks {
+			l := label(b)
+			switch {
+			case what == 2 && strings.HasSuffix(b.Text, " (edited)"):
+				if b.ID != idOf[touched] {
+					t.Fatalf("an edited paragraph lost its id: got %s want %s\n%s", b.ID, idOf[touched], md)
+				}
+			case l != touched && idOf[l] != "":
+				if b.ID != idOf[l] {
+					t.Fatalf("edit %d: %q was not touched but its id went from %s to %s\n%s", what, l, idOf[l], b.ID, md)
+				}
+			case idOf[l] == "":
+				for _, oldID := range idOf {
+					if b.ID == oldID {
+						t.Fatalf("edit %d: new block %q was given the old id %s\n%s", what, l, oldID, md)
+					}
+				}
+			}
+		}
+	}
+}
+
+// label names a block by its content, for the edit sweep.
+func label(b Block) string {
+	if b.Kind == BlockList {
+		return "list:" + b.Items[0].Text
+	}
+	return string(b.Kind) + ":" + strings.TrimSuffix(b.Text, " (edited)")
+}
+
+// TestCodecOutlineMatchesApplyOps: the Outline read from Markdown is the one
+// ApplyOps keeps (rebuildOutline), slugs included: a repeated heading repeats its
+// slug, and a heading with no ASCII letters or digits has an empty one. Build's
+// goldmark ids would number repeats ("intro-1"); a document that came through
+// ops would not match them, so the codec follows ops.
+func TestCodecOutlineMatchesApplyOps(t *testing.T) {
+	doc := NewDocument("")
+	var ops []Op
+	for _, h := range []struct {
+		level int
+		text  string
+	}{{1, "Intro"}, {2, "Intro"}, {2, "日本語"}, {3, "Launch 🚀 plan!"}, {1, "Intro"}} {
+		ops = append(ops, Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockHeading, Level: h.level, Text: h.text}})
+	}
+	mustApply(t, doc, ops)
+	got := mustFromMarkdown(t, ToMarkdown(doc), FromMarkdownOptions{Prev: doc})
+	if !reflect.DeepEqual(got.Outline, doc.Outline) {
+		t.Fatalf("outline differs\n got: %+v\nwant: %+v", got.Outline, doc.Outline)
+	}
+	assertDocEqual(t, got, doc)
+}
+
+// TestCodecSpansStayInsideTheInput reads random soup with Spans on: every span of
+// every block, section and outline entry is inside the input and not inverted,
+// and the plain-text heading spans slice to the heading text.
+func TestCodecSpansStayInsideTheInput(t *testing.T) {
+	alphabet := []string{
+		"a", "é", "🎉", " ", "\n", "\n\n", "\r\n", "# ", "## ", "> ", "- ", "- [ ] ", "1. ", "```", "$$", "---", "***", "|", "|-",
+		":::toggle\n", "::::callout {}\n", ":::figure\n", ":::", "<!-- x -->", "<!-- eden:note \"n\" -->", "<!-- _class: x -->",
+		"![i](u)", "*", "**", "[l](u)", "`", "\t", "~~~", "Title\n===\n", "Sub\n---\n",
+	}
+	rng := rand.New(rand.NewSource(17))
+	for i := 0; i < 8000; i++ {
+		src := sweepText(rng, alphabet, 1+rng.Intn(16))
+		d, err := FromMarkdown(src, FromMarkdownOptions{Lenient: true, Spans: true})
+		if err != nil {
+			t.Fatalf("%q: %v", src, err)
+		}
+		bad := func(what string, s *Span) {
+			if s != nil && (s.Start < 0 || s.Start > s.Stop || s.Stop > len(src)) {
+				t.Fatalf("%s span %+v is outside %q", what, *s, src)
+			}
+		}
+		walkBlocks(d, func(b *Block) { bad("block "+string(b.Kind), b.Span) })
+		for _, sec := range d.Sections {
+			bad("section", sec.Span)
+		}
+		for _, e := range d.Outline {
+			bad("outline", e.Span)
+		}
+	}
+}
+
+// TestFromMarkdownSurvivesATabbedFenceLine: goldmark v1.8.4 panics on a short
+// tab-indented line that could open a code fence ("> \t`"); the codec guards it.
+func TestFromMarkdownSurvivesATabbedFenceLine(t *testing.T) {
+	for _, src := range []string{"> \t`", "> \t~", "- [ ] b\n\n> \t`", ":::toggle\n> \t`\n:::\n"} {
+		for _, lenient := range []bool{false, true} {
+			if _, err := FromMarkdown(src, FromMarkdownOptions{Lenient: lenient}); err != nil {
+				var ue *UnrepresentableError
+				if lenient || !errors.As(err, &ue) {
+					t.Fatalf("%q: %v", src, err)
+				}
+			}
+		}
 	}
 }

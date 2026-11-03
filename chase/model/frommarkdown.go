@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -47,12 +48,27 @@ import (
 
 // FromMarkdownOptions configures FromMarkdown.
 type FromMarkdownOptions struct {
-	// Prev is the previously stored Document, for reconciling block ids across
-	// a source-view edit. Reserved for TRD 02; ignored today.
+	// Prev is the previously stored Document, for keeping block and list-item ids
+	// across a source-view edit: blocks of the new Document that match blocks of
+	// Prev (unchanged, moved or edited in place; see codec_ids.go) take their ids
+	// and everything else gets the next free id. Without Prev the trailer in the
+	// Markdown, if it carries ids, plays the same part; with neither, no ids are
+	// assigned. Prev is only read for ids: properties, property values and
+	// comments come from the Markdown's trailer, so Markdown without a trailer
+	// has none. Prev is not modified.
 	Prev *Document
 
-	// Spans asks for byte spans on blocks and outline entries. Reserved for
-	// TRD 02; ignored today.
+	// Spans asks for byte spans: every block, section and outline entry gets a
+	// Span into the input (a half-open byte range, see Span), and without Spans
+	// no Span is set. A span covers what goldmark parsed as the node's lines: a
+	// paragraph or heading's text (an ATX heading without its "## " and closing
+	// hashes, so for a plain heading md[span] is exactly the outline text), a
+	// code block's content between the fences, a list, table or quote from its
+	// first positioned descendant to its last, and a directive, display-math
+	// block or divider as written, fences included. A section's span runs from
+	// its first to its last node, comments included and the "---" rules not.
+	// Offsets are into the string as given, so CRLF input is counted in its
+	// original bytes.
 	Spans bool
 
 	// Lenient applies the documented, deterministic mapping for a construct the
@@ -63,8 +79,10 @@ type FromMarkdownOptions struct {
 
 // FromMarkdown reads Markdown into a v7 Document. It is the reading half of the
 // lossless codec: for a Document d in canonical form (the form ToMarkdown and
-// FromMarkdown produce), FromMarkdown(ToMarkdown(d)) equals d, ids and spans
-// aside.
+// FromMarkdown produce), FromMarkdown(ToMarkdown(d)) equals d. Block, list-item
+// and comment ids come back too when d has them, from the trailer (see
+// codec_ids.go) or from FromMarkdownOptions.Prev; spans are only set when asked
+// for, so they are never part of the comparison.
 //
 // It does not go through press.Render and the HTML sanitizer: it walks a
 // goldmark AST (CommonMark, GFM tables, strikethrough and task lists, plus
@@ -106,10 +124,8 @@ type FromMarkdownOptions struct {
 //
 // An empty source yields the Document NewDocument produces: one empty Section.
 func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
-	if strings.Contains(md, "\r") {
-		md = strings.ReplaceAll(strings.ReplaceAll(md, "\r\n", "\n"), "\r", "\n")
-	}
-	r := &mdReader{lenient: opts.Lenient}
+	md, crAt := normalizeNewlines(md, opts.Spans)
+	r := &mdReader{lenient: opts.Lenient, spans: opts.Spans, crAt: crAt}
 	meta, bodyStart := r.frontMatter(md)
 	if r.err != nil {
 		return nil, r.err
@@ -130,7 +146,36 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 		doc.Properties, doc.PropertyValues, doc.Comments = tr.Properties, tr.PropertyValues, tr.Comments
 	}
 	rebuildOutline(doc)
+	if opts.Spans {
+		r.outlineSpans(doc)
+	}
+	r.reconcileIDs(doc, opts.Prev)
 	return doc, nil
+}
+
+// normalizeNewlines turns "\r\n" and "\r" into "\n". When track is set it also
+// returns, in order, the offsets in the result of each "\n" that replaced a
+// "\r\n", which is what orig needs to count a span in the original bytes.
+func normalizeNewlines(md string, track bool) (string, []int) {
+	if !strings.Contains(md, "\r") {
+		return md, nil
+	}
+	var b strings.Builder
+	var crAt []int
+	for i := 0; i < len(md); i++ {
+		if md[i] != '\r' {
+			b.WriteByte(md[i])
+			continue
+		}
+		if i+1 < len(md) && md[i+1] == '\n' {
+			if track {
+				crAt = append(crAt, b.Len())
+			}
+			continue
+		}
+		b.WriteByte('\n')
+	}
+	return b.String(), crAt
 }
 
 // mdEngine is the codec's goldmark: CommonMark plus GFM tables, strikethrough
@@ -138,6 +183,7 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 // extender, no HTML renderer: the AST is read directly. Linkify is not
 // registered, so a bare URL stays text (and needs no escaping on the way out).
 var mdEngine = goldmark.New(
+	goldmark.WithParser(newCodecParser()),
 	goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
 	goldmark.WithParserOptions(
 		parser.WithBlockParsers(
@@ -148,6 +194,38 @@ var mdEngine = goldmark.New(
 	),
 )
 
+// newCodecParser is goldmark's default parser with its fenced-code parser guarded.
+// goldmark v1.8.4 marks a line as having no block start (BlockOffset -1) when its
+// indent width in columns reaches its length in bytes, which a tab does on a short
+// line ("> \t`"), and its fenced-code parser then indexes the line with -1 and
+// panics. Later goldmark releases return early there; this does the same without
+// a change to go.mod.
+func newCodecParser() parser.Parser {
+	var blocks []util.PrioritizedValue
+	for _, pv := range parser.DefaultBlockParsers() {
+		if bp, ok := pv.Value.(parser.BlockParser); ok && bytes.IndexByte(bp.Trigger(), '`') >= 0 {
+			pv.Value = &guardedFence{bp}
+		}
+		blocks = append(blocks, pv)
+	}
+	return parser.NewParser(
+		parser.WithBlockParsers(blocks...),
+		parser.WithInlineParsers(parser.DefaultInlineParsers()...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+	)
+}
+
+// guardedFence is goldmark's fenced-code block parser that declines a line that
+// has no block start instead of indexing it.
+type guardedFence struct{ parser.BlockParser }
+
+func (g *guardedFence) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	if pc.BlockOffset() < 0 {
+		return nil, parser.NoChildren
+	}
+	return g.BlockParser.Open(parent, reader, pc)
+}
+
 // mdReader holds the state of one FromMarkdown call.
 type mdReader struct {
 	src     []byte
@@ -155,7 +233,11 @@ type mdReader struct {
 	lenient bool
 	err     *UnrepresentableError
 
-	trailer *modelTrailer // the eden:model comment, once seen
+	trailer     *modelTrailer // the eden:model comment, once seen
+	trailerNode ast.Node      // the HTML block it was read from
+
+	spans bool  // Spans were asked for
+	crAt  []int // see normalizeNewlines
 }
 
 // refuse records the first strict-mode refusal. Callers go on to apply the
@@ -253,16 +335,29 @@ func (r *mdReader) frontMatterValue(off int, raw string) (string, bool) {
 
 func (r *mdReader) sections(root ast.Node) []Section {
 	secs := []Section{{ID: 1}}
+	ext := []extent{{}}
 	for c := root.FirstChild(); c != nil; c = c.NextSibling() {
 		if tb, ok := c.(*ast.ThematicBreak); ok && r.isSectionRule(tb) {
 			secs = append(secs, Section{ID: len(secs) + 1})
+			ext = append(ext, extent{})
 			continue
 		}
 		cur := &secs[len(secs)-1]
 		if hb, ok := c.(*ast.HTMLBlock); ok && r.sectionComment(hb, cur) {
+			if c != r.trailerNode {
+				r.addExtent(&ext[len(ext)-1], c)
+			}
 			continue
 		}
+		r.addExtent(&ext[len(ext)-1], c)
 		cur.Blocks = append(cur.Blocks, r.block(c)...)
+	}
+	if r.spans {
+		for i := range secs {
+			if ext[i].ok {
+				secs[i].Span = &Span{Start: r.orig(ext[i].lo), Stop: r.orig(ext[i].hi)}
+			}
+		}
 	}
 	return secs
 }
@@ -318,7 +413,7 @@ func (r *mdReader) sectionComment(v *ast.HTMLBlock, cur *Section) bool {
 			bad(fmt.Errorf("eden:model: %w", err))
 			break
 		}
-		r.trailer = &tr
+		r.trailer, r.trailerNode = &tr, v
 	case isNote(body):
 		cur.Notes = append(cur.Notes, body)
 	default:
@@ -397,8 +492,17 @@ func (r *mdReader) isSectionRule(tb *ast.ThematicBreak) bool {
 	return p >= 0 && p < len(r.src) && r.src[p] == '-'
 }
 
-// block converts one block node into zero or more Blocks.
+// block converts one block node into zero or more Blocks. With Spans, a single
+// block takes the node's span unless its converter set a more exact one.
 func (r *mdReader) block(n ast.Node) []Block {
+	out := r.convert(n)
+	if r.spans && len(out) == 1 && out[0].Span == nil {
+		out[0].Span = r.span(n)
+	}
+	return out
+}
+
+func (r *mdReader) convert(n ast.Node) []Block {
 	switch v := n.(type) {
 	case *ast.Heading:
 		// A heading is one line; a setext heading can span several, which read as
@@ -585,6 +689,7 @@ type mathBlockNode struct {
 	ast.BaseBlock
 	lines  []string
 	closed bool
+	stop   int // offset one past the last byte of the block seen so far
 }
 
 var kindMathBlock = ast.NewNodeKind("EdenMathBlock")
@@ -602,13 +707,13 @@ type mathBlockParser struct{}
 func (*mathBlockParser) Trigger() []byte { return []byte{'$'} }
 
 func (*mathBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
-	line, _ := reader.PeekLine()
+	line, segment := reader.PeekLine()
 	width, pos := util.IndentWidth(line, reader.LineOffset())
 	if width > 3 || !bytes.HasPrefix(line[pos:], []byte("$$")) {
 		return nil, parser.NoChildren
 	}
 	rest := strings.TrimRight(string(line[pos+2:]), "\n")
-	node := &mathBlockNode{}
+	node := &mathBlockNode{stop: segment.Start + len(bytes.TrimRight(line, "\n"))}
 	if idx := indexDoubleDollar([]byte(rest)); idx >= 0 {
 		if strings.TrimSpace(rest[idx+2:]) != "" {
 			return nil, parser.NoChildren // $$x$$ followed by text is inline math
@@ -630,7 +735,8 @@ func (*mathBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Co
 	if n.closed {
 		return parser.Close
 	}
-	line, _ := reader.PeekLine()
+	line, segment := reader.PeekLine()
+	n.stop = segment.Start + len(bytes.TrimRight(line, "\n"))
 	content := strings.TrimRight(string(line), "\n")
 	if idx := indexDoubleDollar([]byte(content)); idx >= 0 {
 		if before := content[:idx]; strings.TrimSpace(before) != "" {
@@ -803,6 +909,9 @@ func (r *mdReader) todos(l *ast.List) []Block {
 	for li := l.FirstChild(); li != nil; li = li.NextSibling() {
 		first := li.FirstChild()
 		bl := Block{Kind: BlockTodo, Checked: taskBox(li).IsChecked}
+		if r.spans {
+			bl.Span = r.span(li)
+		}
 		w := &inlineWalker{r: r, taskBox: true}
 		w.children(first)
 		bl.Text, bl.Runs = richFields(w.runs)
@@ -1154,4 +1263,110 @@ func decodeEntity(s []byte) (string, int, bool) {
 		return string(e.Characters), i + 1, true
 	}
 	return "", 0, false
+}
+
+// ---- spans ----
+
+// extent is the byte range, in the reader's source, of a run of nodes.
+type extent struct {
+	lo, hi int
+	ok     bool
+}
+
+func (r *mdReader) addExtent(e *extent, n ast.Node) {
+	if !r.spans {
+		return
+	}
+	lo, hi, ok := r.localSpan(n)
+	if !ok {
+		return
+	}
+	if !e.ok {
+		*e = extent{lo, hi, true}
+		return
+	}
+	e.lo, e.hi = min(e.lo, lo), max(e.hi, hi)
+}
+
+// span is the Span of n in the input as given, or nil when Spans was not asked
+// for or n has no position.
+func (r *mdReader) span(n ast.Node) *Span {
+	if !r.spans {
+		return nil
+	}
+	lo, hi, ok := r.localSpan(n)
+	if !ok {
+		return nil
+	}
+	return &Span{Start: r.orig(lo), Stop: r.orig(hi)}
+}
+
+// localSpan is n's byte range in r.src (see FromMarkdownOptions.Spans). It reuses
+// spanOf, which Build uses for the same purpose: the node's own lines, else the
+// union of its positioned descendants. A node with neither (a divider, an empty
+// code block) takes its own source line. Trailing newlines are not part of a span.
+func (r *mdReader) localSpan(n ast.Node) (int, int, bool) {
+	var start, stop int
+	switch v := n.(type) {
+	case *directiveNode:
+		start, stop = v.Pos(), v.stop
+	case *mathBlockNode:
+		start, stop = v.Pos(), v.stop
+	case *ast.HTMLBlock:
+		lines := v.Lines()
+		if lines.Len() == 0 {
+			return 0, 0, false
+		}
+		start, stop = lines.At(0).Start, lines.At(lines.Len()-1).Stop
+		if v.HasClosure() {
+			stop = v.ClosureLine.Stop
+		}
+	default:
+		if sp := spanOf(n); sp != nil {
+			start, stop = sp.Start, sp.Stop
+		} else {
+			start = n.Pos()
+			stop = start
+			for stop < len(r.src) && r.src[stop] != '\n' {
+				stop++
+			}
+		}
+	}
+	for stop > start && stop <= len(r.src) && r.src[stop-1] == '\n' {
+		stop--
+	}
+	if start < 0 || stop > len(r.src) || start > stop {
+		return 0, 0, false
+	}
+	return start, stop, true
+}
+
+// orig maps an offset in r.src to the same position in the input as given: the
+// front matter that precedes r.src is added back, and so is every "\r" that
+// normalizeNewlines took out before the position.
+func (r *mdReader) orig(off int) int {
+	p := r.base + off
+	return p + sort.SearchInts(r.crAt, p)
+}
+
+// outlineSpans copies each heading block's span onto its outline entry. Outline
+// entries are in the order rebuildOutline walks the blocks.
+func (r *mdReader) outlineSpans(doc *Document) {
+	i := 0
+	var walk func([]Block)
+	walk = func(bs []Block) {
+		for _, b := range bs {
+			if b.Kind == BlockHeading && i < len(doc.Outline) {
+				if b.Span != nil {
+					sp := *b.Span
+					doc.Outline[i].Span = &sp
+				}
+				i++
+			}
+			walk(b.Children)
+		}
+	}
+	for _, sec := range doc.Sections {
+		walk(sec.Blocks)
+	}
 }

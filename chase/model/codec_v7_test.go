@@ -279,11 +279,10 @@ func TestCodecV7IsStableOnGarbage(t *testing.T) {
 	}
 }
 
-// TestCodecV7BlockSweep builds random trees of the v7 kinds (and the containers
-// that hold them) from text heavy on Markdown and fence punctuation, and checks
-// that each comes back from ToMarkdown then FromMarkdown unchanged.
-func TestCodecV7BlockSweep(t *testing.T) {
-	rng := rand.New(rand.NewSource(1026))
+// genV7Tree returns a random document body: trees of the v7 kinds (and the
+// containers that hold them) built from text heavy on Markdown and fence
+// punctuation, kept inside the canonical form.
+func genV7Tree(rng *rand.Rand) []Block {
 	alphabet := []string{"a", "B", "1", ".", " ", "*", "_", "`", "~", "#", ">", "-", "+", "|", "$", "<", "[", "]", "!", "&", "\\", ":", "::", ":::", "{", "}", "\"", "é", "x"}
 	line := func() string { return sweepText(rng, alphabet, rng.Intn(7)) }
 	text := func() string {
@@ -344,39 +343,46 @@ func TestCodecV7BlockSweep(t *testing.T) {
 			return Block{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: "S" + line(), WorkbookHint: line()}}
 		}
 	}
-	// Two limits of the canonical form, which the generator stays inside:
-	//   - a whitespace-only line inside a list item is a blank line to the item, so
-	//     code nested in a todo cannot keep one;
-	//   - goldmark ends a todo (a list item) at the first block after a nested list
-	//     whose last item is empty and is followed by a blank line, so a child list
-	//     never ends in an empty item here.
-	var clean func(bs []Block)
-	clean = func(bs []Block) {
-		fix := func(s string) string {
-			lines := strings.Split(s, "\n")
-			for i, ln := range lines {
-				if strings.TrimSpace(ln) == "" {
-					lines[i] = ""
-				}
-			}
-			return strings.Join(lines, "\n")
-		}
-		for i := range bs {
-			bs[i].SVG = fix(bs[i].SVG)
-			if bs[i].Kind == BlockCode {
-				bs[i].Text = fix(bs[i].Text)
-			}
-			clean(bs[i].Children)
-		}
+	var blocks []Block
+	for n := 1 + rng.Intn(4); n > 0; n-- {
+		blocks = append(blocks, gen(0))
 	}
+	cleanV7Tree(blocks)
+	return blocks
+}
+
+// cleanV7Tree keeps a generated tree inside two limits of the canonical form:
+//   - a whitespace-only line inside a list item is a blank line to the item, so
+//     code nested in a todo cannot keep one;
+//   - goldmark ends a todo (a list item) at the first block after a nested list
+//     whose last item is empty and is followed by a blank line, so a child list
+//     never ends in an empty item here (genV7Tree never makes one).
+func cleanV7Tree(bs []Block) {
+	fix := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, ln := range lines {
+			if strings.TrimSpace(ln) == "" {
+				lines[i] = ""
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	for i := range bs {
+		bs[i].SVG = fix(bs[i].SVG)
+		if bs[i].Kind == BlockCode {
+			bs[i].Text = fix(bs[i].Text)
+		}
+		cleanV7Tree(bs[i].Children)
+	}
+}
+
+// TestCodecV7BlockSweep checks that each random tree comes back from ToMarkdown
+// then FromMarkdown unchanged.
+func TestCodecV7BlockSweep(t *testing.T) {
+	rng := rand.New(rand.NewSource(1026))
 	fails := 0
 	for i := 0; i < 3000; i++ {
-		var blocks []Block
-		for n := 1 + rng.Intn(4); n > 0; n-- {
-			blocks = append(blocks, gen(0))
-		}
-		clean(blocks)
-		d := fxDoc(blocks)
+		d := fxDoc(genV7Tree(rng))
 		md := ToMarkdown(d)
 		got, err := FromMarkdown(md, FromMarkdownOptions{})
 		if err == nil && reflect.DeepEqual(got, d) {
