@@ -35,9 +35,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
     case BlockKind.heading:
       return Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 8),
-        child: Text.rich(
-          richSpanFor(block, style: _headingStyle(block.level)),
-        ),
+        child: Text.rich(richSpanFor(block, style: _headingStyle(block.level))),
       );
     case BlockKind.paragraph:
     case BlockKind.unknown:
@@ -51,9 +49,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
         margin: const EdgeInsets.symmetric(vertical: 8),
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
         decoration: const BoxDecoration(
-          border: Border(
-            left: BorderSide(color: Color(0xFFBDBDBD), width: 3),
-          ),
+          border: Border(left: BorderSide(color: Color(0xFFBDBDBD), width: 3)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,10 +198,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
           title: Text.rich(
             richSpanFor(
               block,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
           children: [for (final child in block.children) nest(child)],
@@ -293,19 +286,17 @@ Widget _table(Block block) {
   if (columns == 0) return const SizedBox.shrink();
 
   TableRow row(List<String> cells, {required bool header}) => TableRow(
-        children: List<Widget>.generate(columns, (i) {
-          final text = i < cells.length ? cells[i] : '';
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Text(
-              text,
-              style: header
-                  ? const TextStyle(fontWeight: FontWeight.w600)
-                  : null,
-            ),
-          );
-        }),
+    children: List<Widget>.generate(columns, (i) {
+      final text = i < cells.length ? cells[i] : '';
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(
+          text,
+          style: header ? const TextStyle(fontWeight: FontWeight.w600) : null,
+        ),
       );
+    }),
+  );
 
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 8),
@@ -466,7 +457,10 @@ Widget _imageCard({required String caption, required String subtitle}) {
               if (subtitle.isNotEmpty)
                 Text(
                   subtitle,
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF5F6368)),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF5F6368),
+                  ),
                 ),
             ],
           ),

@@ -93,7 +93,11 @@ void main() {
                 },
               },
             ),
-            _b(BlockKind.figure, text: 'logo', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'),
+            _b(
+              BlockKind.figure,
+              text: 'logo',
+              svg: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+            ),
             _b(
               BlockKind.toggle,
               text: 'Details',
@@ -108,7 +112,9 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: EdenDocsView(document: doc))),
+      MaterialApp(
+        home: Scaffold(body: EdenDocsView(document: doc)),
+      ),
     );
 
     expect(find.byKey(const Key('eden-docs')), findsOneWidget);

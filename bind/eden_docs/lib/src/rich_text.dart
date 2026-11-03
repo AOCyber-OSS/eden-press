@@ -31,9 +31,7 @@ InlineSpan richSpanFor(Block block, {TextStyle? style}) {
   }
   return TextSpan(
     style: base,
-    children: [
-      for (final run in block.runs) _spanForRun(run, base),
-    ],
+    children: [for (final run in block.runs) _spanForRun(run, base)],
   );
 }
 

@@ -43,33 +43,30 @@ Set<String> _keys(YamlMap doc, String section) =>
     (doc[section] as YamlMap? ?? YamlMap()).keys.cast<String>().toSet();
 
 void main() {
-  test(
-    'pubspec dependencies contain eden_press_model and not eden_press',
-    () {
-      final pubspec = File('pubspec.yaml');
-      expect(
-        pubspec.existsSync(),
-        isTrue,
-        reason: 'run tests from bind/eden_docs/',
-      );
-      final doc = loadYaml(pubspec.readAsStringSync()) as YamlMap;
+  test('pubspec dependencies contain eden_press_model and not eden_press', () {
+    final pubspec = File('pubspec.yaml');
+    expect(
+      pubspec.existsSync(),
+      isTrue,
+      reason: 'run tests from bind/eden_docs/',
+    );
+    final doc = loadYaml(pubspec.readAsStringSync()) as YamlMap;
 
-      expect(_keys(doc, 'dependencies'), contains('eden_press_model'));
-      for (final section in [
-        'dependencies',
-        'dev_dependencies',
-        'dependency_overrides',
-      ]) {
-        expect(
-          _keys(doc, section),
-          isNot(contains('eden_press')),
-          reason:
-              '$section names eden_press, the FFI plugin; eden_docs must use '
-              'eden_press_model so host apps need no native artifacts',
-        );
-      }
-    },
-  );
+    expect(_keys(doc, 'dependencies'), contains('eden_press_model'));
+    for (final section in [
+      'dependencies',
+      'dev_dependencies',
+      'dependency_overrides',
+    ]) {
+      expect(
+        _keys(doc, section),
+        isNot(contains('eden_press')),
+        reason:
+            '$section names eden_press, the FFI plugin; eden_docs must use '
+            'eden_press_model so host apps need no native artifacts',
+      );
+    }
+  });
 
   test('the resolved package graph contains no eden_press plugin', () {
     // `flutter test` runs `pub get` first, so the resolution exists. This
