@@ -39,7 +39,8 @@ package model
 //   - marks appear in the order bold, italic, strike, code, math;
 //   - a list's first item is level 0 and no item is more than one level
 //     deeper than the one before it;
-//   - Section IDs are 1..n and Outline is the list of top-level headings.
+//   - Section IDs are 1..n and Outline is what rebuildOutline derives from the
+//     blocks (the function ApplyOps uses), written out here as literals.
 
 // codecFixture pairs a hand-built Document with the exact Markdown ToMarkdown
 // must emit for it.
@@ -137,6 +138,23 @@ func codecFixtures() []codecFixture {
 				return d
 			},
 			md: "# Title\n\n## **Two** words\n\n### Three\n\n#### Four *x*\n\n##### Five\n\n###### Six\n",
+		},
+		{
+			// A trailing run of '#' after a space is an ATX closing sequence and
+			// would be dropped, so a heading escapes it.
+			name: "heading_trailing_hash_is_escaped",
+			doc: func() *Document {
+				d := fxDoc([]Block{
+					{Kind: BlockHeading, Level: 2, Text: "Issue #"},
+					{Kind: BlockHeading, Level: 3, Text: "C#"},
+				})
+				d.Outline = []OutlineEntry{
+					{SectionID: 1, Level: 2, Text: "Issue #", Slug: "issue"},
+					{SectionID: 1, Level: 3, Text: "C#", Slug: "c"},
+				}
+				return d
+			},
+			md: "## Issue \\#\n\n### C#\n",
 		},
 		{
 			name: "bullet_list_levels_0_1_2_with_item_runs",
@@ -405,7 +423,7 @@ func codecEscapeCases() []codecEscapeCase {
 		{"backtick_tilde_backslash", "`tick` ~tilde~ \\back", "\\`tick\\` \\~tilde\\~ \\\\back"},
 		{"entity_lookalikes", "AT&T &amp; &copy; &#65;", `AT&T \&amp; \&copy; \&#65;`},
 		{"hash_inside_text", "C# and #1", `C# and #1`},
-		{"trailing_hash_after_space", "issue #", `issue \#`},
+		{"trailing_hash_in_a_paragraph_is_literal", "issue #", `issue #`},
 		{"leading_and_trailing_space", " lead and trail ", `&#32;lead and trail&#32;`},
 		{"hard_break", "two\nlines", "two\\\nlines"},
 		{"marker_after_hard_break", "line\n- inner", "line\\\n\\- inner"},
