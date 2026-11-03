@@ -725,3 +725,20 @@ func TestCodecSectionLayerIsStableOnGarbage(t *testing.T) {
 		}
 	}
 }
+
+// TestCodecV7DeepNestingIsLinear: a long chain of untitled toggles (each one looks
+// at its first child to decide whether that child would read as its title)
+// renders and reads back in a moment, with the fence one longer at every level.
+func TestCodecV7DeepNestingIsLinear(t *testing.T) {
+	const depth = 60
+	inner := Block{Kind: BlockToggle, Children: []Block{fxPara("core")}}
+	for i := 1; i < depth; i++ {
+		inner = Block{Kind: BlockToggle, Children: []Block{inner}}
+	}
+	d := fxDoc([]Block{inner})
+	md := ToMarkdown(d)
+	if want := strings.Repeat(":", depth+2) + "toggle\n"; !strings.HasPrefix(md, want) {
+		t.Fatalf("outer fence is wrong, starts %q", md[:40])
+	}
+	assertDocEqual(t, mustFromMarkdown(t, md, FromMarkdownOptions{}), d)
+}

@@ -167,12 +167,25 @@ func sortedMapKeys(m map[string]string) []string {
 // todo is a bullet list item, so the same holds between a todo and a bullet
 // list; consecutive todos share a marker, because they are meant to be one list.
 func renderBlocks(doc *Document, blocks []Block) string {
-	var b strings.Builder
+	return joinParts(renderParts(doc, blocks))
+}
+
+// renderedBlock is one block that rendered to something, with how it joins the
+// block before it.
+type renderedBlock struct {
+	bl    *Block
+	s     string
+	tight bool // joined to the previous block by one newline, not a blank line
+}
+
+// renderParts renders each block once, dropping those that render to nothing.
+func renderParts(doc *Document, blocks []Block) []renderedBlock {
+	var parts []renderedBlock
 	var prev *Block // the last block that rendered to something
 	prevAlt := false
+	bullet := func(k *Block) bool { return k != nil && (k.Kind == BlockTodo || (k.Kind == BlockList && !k.Ordered)) }
 	for i := range blocks {
 		bl := &blocks[i]
-		bullet := func(k *Block) bool { return k != nil && (k.Kind == BlockTodo || (k.Kind == BlockList && !k.Ordered)) }
 		alt := false
 		switch {
 		case bl.Kind == BlockList && bl.Ordered:
@@ -188,15 +201,24 @@ func renderBlocks(doc *Document, blocks []Block) string {
 		if s == "" {
 			continue
 		}
-		if prev != nil {
-			if bl.Kind == BlockTodo && prev.Kind == BlockTodo && len(prev.Children) == 0 {
+		tight := bl.Kind == BlockTodo && prev != nil && prev.Kind == BlockTodo && len(prev.Children) == 0
+		parts = append(parts, renderedBlock{bl: bl, s: s, tight: tight})
+		prev, prevAlt = bl, alt
+	}
+	return parts
+}
+
+func joinParts(parts []renderedBlock) string {
+	var b strings.Builder
+	for i, p := range parts {
+		if i > 0 {
+			if p.tight {
 				b.WriteString("\n")
 			} else {
 				b.WriteString("\n\n")
 			}
 		}
-		b.WriteString(s)
-		prev, prevAlt = bl, alt
+		b.WriteString(p.s)
 	}
 	return b.String()
 }
@@ -349,8 +371,9 @@ func renderDirective(doc *Document, bl Block, name string) string {
 		}
 	} else {
 		text := renderRuns(runsOfBlock(bl), inlineBlock)
-		kids := renderBlocks(doc, bl.Children)
-		if text == "" && kids != "" && startsAsParagraph(firstRendered(doc, bl.Children)) {
+		parts := renderParts(doc, bl.Children)
+		kids := joinParts(parts)
+		if text == "" && len(parts) > 0 && startsAsParagraph(parts[0].bl) {
 			h.NoText = true
 		}
 		body = joinNonEmpty([]string{text}, kids)
@@ -381,16 +404,6 @@ func colonFenceLen(body string) int {
 		}
 	}
 	return n
-}
-
-// firstRendered is the first block that renders to something.
-func firstRendered(doc *Document, blocks []Block) *Block {
-	for i := range blocks {
-		if renderBlocks(doc, blocks[i:i+1]) != "" {
-			return &blocks[i]
-		}
-	}
-	return nil
 }
 
 // startsAsParagraph reports whether the Markdown of bl begins as a paragraph, so
