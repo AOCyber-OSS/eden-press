@@ -81,10 +81,7 @@ func TestToMarkdownIsDeterministic(t *testing.T) {
 		"theme: gaia\n" +
 		"title: T\n" +
 		"---\n\n" +
-		"<!-- class: lead -->\n" +
-		"<!-- data-theme: y -->\n" +
-		"<!-- lang: en -->\n" +
-		"<!-- style: x -->\n" +
+		"<!-- eden:attrs {\"class\":\"lead\",\"data-theme\":\"y\",\"lang\":\"en\",\"style\":\"x\"} -->\n\n" +
 		"body\n"
 	doc := build()
 	for i := 0; i < 50; i++ {
@@ -116,7 +113,7 @@ func TestToMarkdownEmitsNoDerivedAttrs(t *testing.T) {
 	held := fxDoc([]Block{fxPara("body")})
 	held.Sections[0].Attrs = map[string]string{"data-theme": "gaia"}
 	got = ToMarkdown(held)
-	if n := strings.Count(got, "<!-- data-theme: gaia -->"); n != 1 {
+	if n := strings.Count(got, `"data-theme":"gaia"`); n != 1 {
 		t.Fatalf("held data-theme emitted %d times, want 1:\n%s", n, got)
 	}
 	if strings.Contains(got, "style") {
@@ -254,7 +251,6 @@ type refusalCase struct {
 func refusalCases() []refusalCase {
 	return []refusalCase{
 		{"raw_html_block", "para\n\n<div class=\"x\">hi</div>\n", "raw-html", `<div`},
-		{"raw_html_comment", "intro\n\n<!-- note -->\n", "raw-html", `<!--`},
 		{"raw_html_inline", "a <b>bold</b> c\n", "raw-html", `<b>`},
 		{"table_cell_emphasis", "| a |\n| --- |\n| **b** |\n", "table-cell-formatting", `**b**`},
 		{"table_cell_code", "| a |\n| --- |\n| `c` |\n", "table-cell-formatting", "`c`"},

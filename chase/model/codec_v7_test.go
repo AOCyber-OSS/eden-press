@@ -394,3 +394,223 @@ func TestCodecV7BlockSweep(t *testing.T) {
 		t.Fatalf("%d round-trip failures", fails)
 	}
 }
+
+// ---- sections, notes, attrs, front matter, properties and comments (TRD 02, Task 2) ----
+
+func TestCodecSectionLayerExactBytes(t *testing.T) {
+	for _, fx := range codecSectionFixtures() {
+		t.Run(fx.name, func(t *testing.T) {
+			if got := ToMarkdown(fx.doc()); got != fx.md {
+				t.Fatalf("ToMarkdown mismatch\n got: %q\nwant: %q", got, fx.md)
+			}
+		})
+	}
+}
+
+// TestCodecSectionLayerIdentity (Test list 2 and 4): section attrs, notes (order
+// kept), front matter, properties, property values and comments survive
+// docmodel -> Markdown -> docmodel exactly, and the Markdown is a fixed point.
+func TestCodecSectionLayerIdentity(t *testing.T) {
+	for _, fx := range codecSectionFixtures() {
+		t.Run(fx.name, func(t *testing.T) {
+			want := stripIDsAndSpans(fx.doc())
+			md := ToMarkdown(fx.doc())
+			got := stripIDsAndSpans(mustFromMarkdown(t, md, FromMarkdownOptions{}))
+			assertDocEqual(t, got, want)
+			if again := ToMarkdown(got); again != md {
+				t.Fatalf("Markdown is not a fixed point\n first: %q\nsecond: %q", md, again)
+			}
+			assertDocEqual(t, stripIDsAndSpans(mustFromMarkdown(t, fx.md, FromMarkdownOptions{})), want)
+		})
+	}
+}
+
+// TestCodecNoTrailerWithoutDocumentLevelData: a document with no properties,
+// property values, comments or ids keeps its Markdown free of the trailer.
+func TestCodecNoTrailerWithoutDocumentLevelData(t *testing.T) {
+	all := append(append(codecFixtures(), codecV7Fixtures()...), codecSectionFixtures()[:3]...)
+	for _, fx := range all {
+		if got := ToMarkdown(fx.doc()); strings.Contains(got, "eden:model") {
+			t.Fatalf("%s: trailer emitted for a document with no document-level data:\n%s", fx.name, got)
+		}
+	}
+	if got := ToMarkdown(NewDocument("T")); strings.Contains(got, "eden:model") {
+		t.Fatalf("empty document: %q", got)
+	}
+}
+
+// TestCodecLegacyMarpInput (Test list 3): Marp-spelled input still reads. A
+// comment whose YAML keys are all known directives is a section attr, any other
+// comment is a note, and front matter becomes Meta.Directives. What is read is
+// then written in the canonical spellings and reads back unchanged.
+func TestCodecLegacyMarpInput(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want func() *Document
+	}{
+		{
+			name: "spot_directive_note_and_front_matter",
+			src:  "---\ntheme: gaia\nsize: 16:9\n---\n\n<!-- _class: lead -->\n\n# Title\n\n<!-- TODO: fix -->\n\nbody\n",
+			want: func() *Document {
+				d := fxDoc([]Block{{Kind: BlockHeading, Level: 1, Text: "Title"}, fxPara("body")})
+				d.Meta.Directives = map[string]string{"theme": "gaia", "size": "16:9"}
+				d.Sections[0].Attrs = map[string]string{"_class": "lead"}
+				d.Sections[0].Notes = []string{"TODO: fix"}
+				d.Outline = []OutlineEntry{{SectionID: 1, Level: 1, Text: "Title", Slug: "title"}}
+				return d
+			},
+		},
+		{
+			name: "multi_line_yaml_comment_is_several_attrs",
+			src:  "<!--\n_class: lead\npaginate: true\n-->\n\nx\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("x")})
+				d.Sections[0].Attrs = map[string]string{"_class": "lead", "paginate": "true"}
+				return d
+			},
+		},
+		{
+			name: "one_unknown_key_makes_the_whole_comment_a_note",
+			src:  "<!-- _class: lead\nTODO: fix -->\n\nx\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("x")})
+				d.Sections[0].Notes = []string{"_class: lead\nTODO: fix"}
+				return d
+			},
+		},
+		{
+			name: "plain_comment_is_a_note_and_order_is_kept",
+			src:  "<!-- one -->\n\ntext\n\n<!-- two -->\n\nmore\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("text"), fxPara("more")})
+				d.Sections[0].Notes = []string{"one", "two"}
+				return d
+			},
+		},
+		{
+			name: "attrs_belong_to_the_section_they_are_in",
+			src:  "<!-- _class: lead -->\n\na\n\n---\n\n<!-- _class: end -->\n<!-- paginate: false -->\n\nb\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("a")}, []Block{fxPara("b")})
+				d.Sections[0].Attrs = map[string]string{"_class": "lead"}
+				d.Sections[1].Attrs = map[string]string{"_class": "end", "paginate": "false"}
+				return d
+			},
+		},
+		{
+			name: "a_comment_straight_after_a_paragraph_line",
+			src:  "line\n<!-- _footer: hi -->\nnext\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("line"), fxPara("next")})
+				d.Sections[0].Attrs = map[string]string{"_footer": "hi"}
+				return d
+			},
+		},
+		{
+			name: "an_unknown_eden_comment_is_an_ordinary_note",
+			src:  "<!-- eden:future thing -->\n\nx\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("x")})
+				d.Sections[0].Notes = []string{"eden:future thing"}
+				return d
+			},
+		},
+		{
+			name: "an_empty_comment_is_an_empty_note",
+			src:  "<!---->\n\nx\n",
+			want: func() *Document {
+				d := fxDoc([]Block{fxPara("x")})
+				d.Sections[0].Notes = []string{""}
+				return d
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.want()
+			got := stripIDsAndSpans(mustFromMarkdown(t, tc.src, FromMarkdownOptions{}))
+			assertDocEqual(t, got, want)
+
+			md := ToMarkdown(got)
+			if strings.Contains(md, "<!-- _") || strings.Contains(md, "<!-- paginate") || strings.Contains(md, "<!-- TODO") {
+				t.Fatalf("a legacy spelling was written back instead of the canonical one:\n%s", md)
+			}
+			assertDocEqual(t, stripIDsAndSpans(mustFromMarkdown(t, md, FromMarkdownOptions{})), want)
+		})
+	}
+}
+
+// TestCodecTrailerCanSitAnywhere: the trailer is found wherever it is at the top
+// level, never becomes a note, and is not part of any section.
+func TestCodecTrailerCanSitAnywhere(t *testing.T) {
+	src := "body\n\n<!-- eden:model {\"v\":1,\"propertyValues\":{\"a\":\"b\"}} -->\n\nmore\n\n---\n\nnext\n"
+	d := stripIDsAndSpans(mustFromMarkdown(t, src, FromMarkdownOptions{}))
+	want := fxDoc([]Block{fxPara("body"), fxPara("more")}, []Block{fxPara("next")})
+	want.PropertyValues = map[string]string{"a": "b"}
+	assertDocEqual(t, d, want)
+}
+
+// commentRefusalCases are malformed canonical comments (Test list 7's
+// "directive-json" for the section layer) and a comment that is not just a
+// comment. Offset is the `<!--`.
+func commentRefusalCases() []refusalCase {
+	return []refusalCase{
+		{"attrs_not_json", "<!-- eden:attrs {nope} -->\n\nx\n", "directive-json", "<!--"},
+		{"attrs_not_an_object", "<!-- eden:attrs [\"a\"] -->\n\nx\n", "directive-json", "<!--"},
+		{"attrs_value_not_a_string", "<!-- eden:attrs {\"a\":1} -->\n\nx\n", "directive-json", "<!--"},
+		{"note_not_json", "intro\n\n<!-- eden:note not-json -->\n", "directive-json", "<!--"},
+		{"note_not_a_string", "<!-- eden:note 5 -->\n\nx\n", "directive-json", "<!--"},
+		{"trailer_not_json", "x\n\n<!-- eden:model {nope} -->\n", "directive-json", "<!--"},
+		{"trailer_unknown_version", "x\n\n<!-- eden:model {\"v\":2} -->\n", "directive-json", "<!--"},
+		{"trailer_unknown_key", "x\n\n<!-- eden:model {\"v\":1,\"bogus\":1} -->\n", "directive-json", "<!--"},
+		{"trailer_twice", "x\n\n<!-- eden:model {\"v\":1} -->\n\n<!-- eden:model {\"v\":1} -->\n", "directive-json", "<!-- eden:model {\"v\":1} -->\n"},
+		{"comment_with_trailing_text", "intro\n\n<!-- note --> trailing\n", "raw-html", "<!--"},
+		{"comment_inside_a_quote", "> <!-- note -->\n", "raw-html", "<!--"},
+	}
+}
+
+func TestCodecCommentStrictRefusals(t *testing.T) {
+	for _, tc := range commentRefusalCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := FromMarkdown(tc.src, FromMarkdownOptions{})
+			var ue *UnrepresentableError
+			if !errors.As(err, &ue) {
+				t.Fatalf("error is %v, want *UnrepresentableError", err)
+			}
+			if ue.Construct != tc.construct {
+				t.Fatalf("Construct = %q, want %q (%v)", ue.Construct, tc.construct, err)
+			}
+			want := strings.Index(tc.src, tc.at)
+			if tc.name == "trailer_twice" {
+				want = strings.LastIndex(tc.src, tc.at)
+			}
+			if ue.Offset != want {
+				t.Fatalf("Offset = %d, want %d", ue.Offset, want)
+			}
+		})
+	}
+}
+
+// TestCodecMalformedCommentsAreNotesWhenLenient: nothing is dropped; a comment
+// that cannot be read as what it claims to be stays as a note, verbatim.
+func TestCodecMalformedCommentsAreNotesWhenLenient(t *testing.T) {
+	cases := []struct{ name, src, note string }{
+		{"attrs", "<!-- eden:attrs {nope} -->\n\nx\n", "eden:attrs {nope}"},
+		{"note", "<!-- eden:note not-json -->\n\nx\n", "eden:note not-json"},
+		{"trailer", "x\n\n<!-- eden:model {nope} -->\n", "eden:model {nope}"},
+		{"trailer_version", "x\n\n<!-- eden:model {\"v\":2} -->\n", "eden:model {\"v\":2}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := stripIDsAndSpans(mustFromMarkdown(t, tc.src, FromMarkdownOptions{Lenient: true}))
+			if len(d.Sections) != 1 || !reflect.DeepEqual(d.Sections[0].Notes, []string{tc.note}) {
+				t.Fatalf("notes = %q, want [%q]\n%s", d.Sections[0].Notes, tc.note, docJSON(t, d))
+			}
+			md := ToMarkdown(d)
+			if again := stripIDsAndSpans(mustFromMarkdown(t, md, FromMarkdownOptions{})); !reflect.DeepEqual(again, d) {
+				t.Fatalf("a kept note is not stable:\n%s", md)
+			}
+		})
+	}
+}

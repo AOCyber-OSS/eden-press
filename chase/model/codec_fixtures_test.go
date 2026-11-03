@@ -692,3 +692,119 @@ func codecV7Fixtures() []codecFixture {
 		},
 	}
 }
+
+// ---- sections, notes, attrs, properties and comments (objective 1026, TRD 02) ----
+
+func intp(n int) *int { return &n }
+
+// codecSectionFixtures cover the layer around the blocks: a section's attrs and
+// notes, document-level properties, and comments. The JSON is what json.Marshal
+// produces (sorted map keys, `<` `>` `&` escaped), written out by hand.
+func codecSectionFixtures() []codecFixture {
+	return []codecFixture{
+		{
+			// Attrs and notes use the same `<!-- ... -->` syntax in Marp, so the
+			// canonical spellings name themselves: no string can be mistaken for
+			// the other, including a note that looks like `key: value` or holds `-->`.
+			name: "section_attrs_and_notes_are_unambiguous",
+			doc: func() *Document {
+				d := fxDoc([]Block{fxPara("body")})
+				d.Sections[0].Attrs = map[string]string{"paginate": "true", "data-theme": "gaia"}
+				d.Sections[0].Notes = []string{"key: value", "a --> b", "plain"}
+				return d
+			},
+			md: `<!-- eden:attrs {"data-theme":"gaia","paginate":"true"} -->
+
+body
+
+<!-- eden:note "key: value" -->
+<!-- eden:note "a --\u003e b" -->
+<!-- eden:note "plain" -->
+`,
+		},
+		{
+			name: "sections_with_attrs_only_notes_only_and_nothing",
+			doc: func() *Document {
+				d := fxDoc(
+					[]Block{{Kind: BlockHeading, Level: 1, Text: "One"}},
+					nil,
+					nil,
+					[]Block{fxPara("four")},
+				)
+				d.Sections[0].Attrs = map[string]string{"_class": "lead"}
+				d.Sections[1].Notes = []string{"only a note"}
+				d.Outline = []OutlineEntry{{SectionID: 1, Level: 1, Text: "One", Slug: "one"}}
+				return d
+			},
+			md: `<!-- eden:attrs {"_class":"lead"} -->
+
+# One
+
+---
+
+<!-- eden:note "only a note" -->
+
+---
+
+---
+
+four
+`,
+		},
+		{
+			name: "notes_with_newlines_quotes_markup_and_nothing",
+			doc: func() *Document {
+				d := fxDoc()
+				d.Sections[0].Notes = []string{"line1\nline2", "say \"hi\"", "é ☕ <b>", ""}
+				return d
+			},
+			md: `<!-- eden:note "line1\nline2" -->
+<!-- eden:note "say \"hi\"" -->
+<!-- eden:note "é ☕ \u003cb\u003e" -->
+<!-- eden:note "" -->
+`,
+		},
+		{
+			// Properties, property values and comments have no place in the body, so
+			// they ride in one trailing comment. Comments keep their anchors, ranges,
+			// resolved flag and suggestions (with runs).
+			name: "document_level_data_rides_in_one_trailing_comment",
+			doc: func() *Document {
+				d := fxDoc([]Block{fxPara("hello")})
+				d.Meta.Directives = map[string]string{"title": "A: B # c"}
+				d.Properties = []PropertyDef{
+					{ID: "status", Name: "Status", Type: PropSelect, Options: []string{"todo", "done"}},
+					{ID: "due", Name: "Due", Type: PropDate},
+				}
+				d.PropertyValues = map[string]string{"status": "todo", "due": "2026-11-03"}
+				d.Comments = []Comment{
+					{ID: "c_1", BlockID: "b_1", Start: intp(0), Stop: intp(5), Body: "fix <this>"},
+					{ID: "c_2", BlockID: "b_1", Body: "done already", Resolved: true},
+					{ID: "c_3", BlockID: "b_2", Body: "suggest", Suggestion: &CommentSuggestion{
+						Text: "fixed text", Runs: []TextRun{fxRun("fixed", "bold"), fxRun(" text")},
+					}},
+				}
+				return d
+			},
+			md: `---
+title: "A: B # c"
+---
+
+hello
+
+<!-- eden:model {"v":1,"properties":[{"id":"status","name":"Status","type":"select","options":["todo","done"]},{"id":"due","name":"Due","type":"date"}],"propertyValues":{"due":"2026-11-03","status":"todo"},"comments":[{"id":"c_1","blockId":"b_1","start":0,"stop":5,"body":"fix \u003cthis\u003e"},{"id":"c_2","blockId":"b_1","body":"done already","resolved":true},{"id":"c_3","blockId":"b_2","body":"suggest","suggestion":{"text":"fixed text","runs":[{"text":"fixed","marks":["bold"]},{"text":" text"}]}}]} -->
+`,
+		},
+		{
+			// A document with only document-level data still writes the trailer.
+			name: "trailer_alone_when_the_body_is_empty",
+			doc: func() *Document {
+				d := fxDoc()
+				d.PropertyValues = map[string]string{"k": "v"}
+				return d
+			},
+			md: `<!-- eden:model {"v":1,"propertyValues":{"k":"v"}} -->
+`,
+		},
+	}
+}
