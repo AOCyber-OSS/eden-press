@@ -768,3 +768,34 @@ func TestSpliceFragments(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderModelConcurrent backs the doc comment's concurrency claim: many
+// renders of one shared document, run under -race, neither race nor differ.
+func TestRenderModelConcurrent(t *testing.T) {
+	doc := docOf(map[string]string{"theme": "gaia"},
+		[]model.Block{head(1, "T"), {Kind: model.BlockTodo, Text: "x", Checked: true}, {Kind: model.BlockCode, Language: "go", Text: "a := 1"}},
+		[]model.Block{{Kind: model.BlockCallout, Text: "c"}},
+	)
+	want := mustRenderModel(t, doc, Options{Profile: "paged"})
+
+	const workers = 8
+	errs := make(chan string, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			out, err := RenderModel(doc, Options{Profile: "paged"})
+			switch {
+			case err != nil:
+				errs <- err.Error()
+			case out.HTML != want.HTML || out.CSS != want.CSS:
+				errs <- "concurrent render differs from the serial one"
+			default:
+				errs <- ""
+			}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		if msg := <-errs; msg != "" {
+			t.Error(msg)
+		}
+	}
+}
