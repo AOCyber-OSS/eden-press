@@ -24,11 +24,15 @@ package model
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 // ToMarkdown serializes doc to Marp-compatible Markdown. It is the writing half
@@ -49,7 +53,9 @@ import (
 //     Markdown (see escapeInline); a "\n" inside a paragraph is a hard line
 //     break (backslash + newline);
 //   - rich text uses `**` bold, `*` italic, `~~` strike, backtick code, `$`
-//     inline math and `[text](href)` links;
+//     inline math (a run marked "math") and `[text](href)` links; a block whose
+//     delimiters would not read back (CommonMark's flanking rules) is written
+//     with <strong>, <em> and <del> instead (see renderRuns);
 //   - lists number their items sequentially per level, indent children by the
 //     width of the parent's marker, and alternate the bullet (`-`/`*`) or the
 //     ordered delimiter (`.`/`)`) between ADJACENT lists so they do not merge;
@@ -57,6 +63,15 @@ import (
 //     code, and the code between the fences is exactly Block.Text: a trailing
 //     newline in Text is a blank line before the closing fence;
 //   - display math is `$$`, TeX, `$$` on separate lines with nothing added.
+//
+// Identity holds for Documents in canonical form (see canonRuns and FromMarkdown):
+// styled runs have no edge whitespace and no two neighbours share marks and
+// link; a list starts at level 0 and never skips a level; Section IDs are 1..n;
+// text never starts or ends with a newline or contains a blank line; a paragraph
+// is never only one image or only inline math (those are image and math blocks);
+// a math run is not followed by a digit; and a Document has at least one
+// Section. ToMarkdown still writes something sensible for anything else, but the
+// reader may not give the same Document back.
 //
 // Kinds with no GFM spelling (todo, callout, toggle, synced, file, sheet,
 // figure) keep their pre-codec spelling here; they are not yet read back.
@@ -277,7 +292,27 @@ func renderCode(bl Block) string {
 	if bl.Text != "" {
 		body = bl.Text + "\n"
 	}
-	return fence + bl.Language + "\n" + body + fence
+	return fence + escapeInfo(bl.Language) + "\n" + body + fence
+}
+
+// escapeInfo spells a fence's language: the info string takes backslash escapes
+// and character references like any other text.
+func escapeInfo(lang string) string {
+	var b strings.Builder
+	for i := 0; i < len(lang); i++ {
+		switch c := lang[i]; {
+		case i == 0 && (c == '~' || c == '`'):
+			b.WriteByte('\\') // would run into the fence
+			b.WriteByte(c)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '&' && entityAhead(lang[i:]):
+			b.WriteString(`\&`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func longestRun(s string, ch byte) int {
@@ -304,6 +339,7 @@ func renderList(bl Block, flip bool) string {
 	var out []string
 	var widths []int   // widths[l] = content column of the latest item at level l
 	var counters []int // counters[l] = ordinal of the latest item at level l
+	prevLevel, prevHasText := -1, false
 	for _, it := range bl.Items {
 		lvl := it.Level
 		if lvl < 0 {
@@ -338,7 +374,13 @@ func renderList(bl Block, flip bool) string {
 		first := strings.Repeat(" ", indent) + marker + lines[0]
 		if lines[0] == "" {
 			first = strings.TrimRight(first, " ")
+			if lvl > prevLevel && prevHasText {
+				// An empty item cannot interrupt its parent's text line (it would
+				// read as a continuation of it), so a blank line precedes it.
+				out = append(out, "")
+			}
 		}
+		prevLevel, prevHasText = lvl, lines[len(lines)-1] != "" || len(lines) > 1
 		out = append(out, first)
 		for _, ln := range lines[1:] {
 			out = append(out, strings.Repeat(" ", indent+len(marker))+ln)
@@ -551,21 +593,49 @@ func equalMarks(a, b []string) bool {
 	return true
 }
 
-// canonRuns drops empty runs, canonicalizes marks and merges adjacent runs that
-// carry the same marks and link, so any split of the same styled text yields
-// the same Markdown.
+// canonRuns puts runs in canonical form, the one FromMarkdown produces and
+// ToMarkdown writes: empty runs are dropped, marks are in markOrder, whitespace
+// at the edge of a styled or linked run moves out into the unstyled text next to
+// it (Markdown cannot open or close emphasis next to a space, and the space
+// carries no style), and adjacent runs with the same marks and link merge, so
+// any split of the same styled text yields the same Markdown.
+//
+// Code and math runs are exempt from the whitespace rule: their text is
+// verbatim and their delimiters can pad.
 func canonRuns(runs []TextRun) []TextRun {
 	var out []TextRun
-	for _, r := range runs {
+	add := func(r TextRun) {
 		if r.Text == "" {
-			continue
+			return
 		}
-		marks := canonMarks(r.Marks)
-		if n := len(out); n > 0 && out[n-1].Link == r.Link && equalMarks(out[n-1].Marks, marks) {
+		if n := len(out); n > 0 && out[n-1].Link == r.Link && equalMarks(out[n-1].Marks, r.Marks) {
 			out[n-1].Text += r.Text
+			return
+		}
+		out = append(out, r)
+	}
+	// Merge first, so whitespace between two pieces of one styled stretch is not
+	// mistaken for whitespace at its edge.
+	for _, r := range runs {
+		add(TextRun{Text: r.Text, Marks: canonMarks(r.Marks), Link: r.Link})
+	}
+	merged := out
+	out = nil
+	for _, r := range merged {
+		verbatim := hasMark(r, "code") || hasMark(r, "math")
+		if (len(r.Marks) == 0 && r.Link == "") || verbatim {
+			add(r)
 			continue
 		}
-		out = append(out, TextRun{Text: r.Text, Marks: marks, Link: r.Link})
+		core := strings.TrimFunc(r.Text, unicode.IsSpace)
+		if core == "" {
+			add(TextRun{Text: r.Text})
+			continue
+		}
+		lead := len(r.Text) - len(strings.TrimLeftFunc(r.Text, unicode.IsSpace))
+		add(TextRun{Text: r.Text[:lead]})
+		add(TextRun{Text: core, Marks: r.Marks, Link: r.Link})
+		add(TextRun{Text: r.Text[lead+len(core):]})
 	}
 	return out
 }
@@ -626,8 +696,57 @@ const (
 )
 
 // renderRuns writes runs as Markdown inline syntax.
+//
+// Styled text is written with delimiters (`**` `*` `~~`) whenever a Markdown
+// parser reads them back as the same runs. Delimiters are unreliable next to
+// punctuation and letters (CommonMark's flanking rules: `x~~**y**~~` does not
+// open), so the result is read back, and if it differs the block is written
+// with the tags <strong>, <em> and <del> instead, which FromMarkdown reads as
+// the same three marks. Plain text never needs the check.
 func renderRuns(runs []TextRun, mode inlineMode) string {
-	runs = canonRuns(runs)
+	canon := canonRuns(runs)
+	out := renderCanonRuns(canon, mode, false)
+	if !hasEmphasis(canon) || readsBackAs(out, canon, mode) {
+		return out
+	}
+	if alt := renderCanonRuns(canon, mode, true); readsBackAs(alt, canon, mode) {
+		return alt
+	}
+	return out
+}
+
+func hasEmphasis(runs []TextRun) bool {
+	for _, r := range runs {
+		if hasMark(r, "bold") || hasMark(r, "italic") || hasMark(r, "strike") {
+			return true
+		}
+	}
+	return false
+}
+
+// readsBackAs reports whether out, read as the content of a paragraph (or, in
+// flat mode, of a heading), gives exactly the runs want.
+func readsBackAs(out string, want []TextRun, mode inlineMode) bool {
+	src := out
+	if mode == inlineFlat {
+		src = "# " + out
+	}
+	r := &mdReader{src: []byte(src), lenient: true}
+	root := mdEngine.Parser().Parse(text.NewReader(r.src))
+	first := root.FirstChild()
+	if first == nil || first.NextSibling() != nil {
+		return false
+	}
+	switch first.(type) {
+	case *ast.Paragraph, *ast.Heading:
+		return reflect.DeepEqual(r.inline(first), want)
+	}
+	return false
+}
+
+// renderCanonRuns writes already-canonical runs. With tags set, bold, italic
+// and strike are written as HTML tags instead of delimiters.
+func renderCanonRuns(runs []TextRun, mode inlineMode, tags bool) string {
 	var out string
 	atLine := func() bool {
 		return mode == inlineBlock && (out == "" || strings.HasSuffix(out, "\n"))
@@ -640,12 +759,16 @@ func renderRuns(runs []TextRun, mode inlineMode) string {
 		if link := runs[i].Link; link != "" {
 			var inner strings.Builder
 			for _, r := range runs[i:j] {
-				inner.WriteString(renderMarked(r, false, mode))
+				inner.WriteString(renderMarked(r, false, mode, tags))
+			}
+			if strings.HasSuffix(out, "!") {
+				// "![" would start an image.
+				out = out[:len(out)-1] + `\!`
 			}
 			out += "[" + inner.String() + "](" + linkDest(link) + ")"
 		} else {
 			for _, r := range runs[i:j] {
-				out += renderMarked(r, atLine(), mode)
+				out += renderMarked(r, atLine(), mode, tags)
 			}
 		}
 		i = j
@@ -655,8 +778,8 @@ func renderRuns(runs []TextRun, mode inlineMode) string {
 
 // renderMarked writes one run with its marks: code and math are leaves written
 // verbatim; everything else is escaped text. italic is wrapped first, then
-// bold, then strike, so the outermost delimiter is the earliest in markOrder.
-func renderMarked(r TextRun, lineStart bool, mode inlineMode) string {
+// bold, then strike, so the outermost wrapper is the last in that order.
+func renderMarked(r TextRun, lineStart bool, mode inlineMode, tags bool) string {
 	wrapped := hasMark(r, "italic") || hasMark(r, "bold") || hasMark(r, "strike")
 	var s string
 	switch {
@@ -667,15 +790,19 @@ func renderMarked(r TextRun, lineStart bool, mode inlineMode) string {
 	default:
 		s = escapeInline(r.Text, lineStart && !wrapped, mode)
 	}
-	if hasMark(r, "italic") {
-		s = "*" + s + "*"
+	wrap := func(mark, delim, open, closeTag string) {
+		if !hasMark(r, mark) {
+			return
+		}
+		if tags {
+			s = open + s + closeTag
+		} else {
+			s = delim + s + delim
+		}
 	}
-	if hasMark(r, "bold") {
-		s = "**" + s + "**"
-	}
-	if hasMark(r, "strike") {
-		s = "~~" + s + "~~"
-	}
+	wrap("italic", "*", "<em>", "</em>")
+	wrap("bold", "**", "<strong>", "</strong>")
+	wrap("strike", "~~", "<del>", "</del>")
 	return s
 }
 
@@ -730,7 +857,16 @@ func escapeInline(s string, lineStart bool, mode inlineMode) string {
 			}
 			i++
 			continue
-		case '\\', '`', '*', '[', ']', '<', '|', '~', '$':
+		case '\\':
+			if mode == inlineBlock && i+1 < len(s) && s[i+1] == '\n' {
+				// A backslash before a hard break: `\\` + `\` + newline is not read
+				// as an escaped backslash then a break, so spell this one as a
+				// character reference.
+				b.WriteString("&#92;")
+			} else {
+				b.WriteString(`\\`)
+			}
+		case '`', '*', '[', ']', '<', '|', '~', '$':
 			b.WriteByte('\\')
 			b.WriteByte(c)
 		case '_':
@@ -754,12 +890,17 @@ func escapeInline(s string, lineStart bool, mode inlineMode) string {
 			}
 			b.WriteByte(c)
 		case '-', '+':
-			if atLine && (spaceOrEndAhead(s, i) || (c == '-' && restIs(s[i:], '-'))) {
+			if atLine && (spaceOrEndAhead(s, i) || (c == '-' && (restIs(s[i:], '-') || delimiterRowAhead(s[i:])))) {
 				b.WriteByte('\\')
 			}
 			b.WriteByte(c)
 		case '=':
 			if atLine && restIs(s[i:], '=') {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(c)
+		case ':':
+			if atLine && delimiterRowAhead(s[i:]) {
 				b.WriteByte('\\')
 			}
 			b.WriteByte(c)
@@ -809,6 +950,34 @@ func restIs(s string, ch byte) bool {
 		if s[i] != ch && s[i] != ' ' && s[i] != '\t' {
 			return false
 		}
+	}
+	return true
+}
+
+// delimiterRowAhead reports whether the line starting at s[0] is the shape of a
+// table delimiter cell (":-", "-:", ":---:"): after a line of text it would turn
+// that text into a table header.
+func delimiterRowAhead(s string) bool {
+	i := 0
+	if i < len(s) && s[i] == ':' {
+		i++
+	}
+	dashes := 0
+	for i < len(s) && s[i] == '-' {
+		i++
+		dashes++
+	}
+	if dashes == 0 {
+		return false
+	}
+	if i < len(s) && s[i] == ':' {
+		i++
+	}
+	for i < len(s) && s[i] != '\n' {
+		if s[i] != ' ' && s[i] != '\t' {
+			return false
+		}
+		i++
 	}
 	return true
 }

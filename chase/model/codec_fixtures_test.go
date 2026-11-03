@@ -171,6 +171,47 @@ func codecFixtures() []codecFixture {
 			md: "- one\n- two **bold**\n  - child a\n    - grandchild\n  - child b\n- three\n",
 		},
 		{
+			// An empty item cannot interrupt the text line above it (it would
+			// read as a continuation of it), so a blank line separates them.
+			name: "list_empty_nested_item_after_text_is_preceded_by_a_blank_line",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockList, Items: []ListItem{{Text: "a"}, {Level: 1}, {Text: "b"}}}})
+			},
+			md: "- a\n\n  -\n- b\n",
+		},
+		{
+			name: "list_empty_item_owning_a_nested_item",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockList, Items: []ListItem{{}, {Text: "x", Level: 1}}}})
+			},
+			md: "-\n  - x\n",
+		},
+		{
+			// "![" would start an image.
+			name: "link_after_an_exclamation_mark_is_not_an_image",
+			doc: func() *Document {
+				return fxDoc([]Block{fxRich(fxRun("wow!"), fxLink("x", "https://x.io"))})
+			},
+			md: "wow\\![x](https://x.io)\n",
+		},
+		{
+			// CommonMark's flanking rules do not open `~~` after a letter when
+			// a delimiter follows, so the block is written with tags that read
+			// back as the same marks.
+			name: "marks_delimiters_cannot_express_are_written_as_tags",
+			doc: func() *Document {
+				return fxDoc([]Block{fxRich(fxRun("aa"), fxRun("bb", "bold", "strike"), fxRun(" q"))})
+			},
+			md: "aa<del><strong>bb</strong></del> q\n",
+		},
+		{
+			name: "adjacent_strike_runs_use_tags_instead_of_a_tilde_wall",
+			doc: func() *Document {
+				return fxDoc([]Block{fxRich(fxRun("aa", "strike"), fxRun("bb", "bold", "strike"))})
+			},
+			md: "<del>aa</del><del><strong>bb</strong></del>\n",
+		},
+		{
 			name: "ordered_list_with_nested_ordered",
 			doc: func() *Document {
 				return fxDoc([]Block{{Kind: BlockList, Ordered: true, Items: []ListItem{
@@ -427,6 +468,9 @@ func codecEscapeCases() []codecEscapeCase {
 		{"leading_and_trailing_space", " lead and trail ", `&#32;lead and trail&#32;`},
 		{"hard_break", "two\nlines", "two\\\nlines"},
 		{"marker_after_hard_break", "line\n- inner", "line\\\n\\- inner"},
+		{"backslash_before_hard_break", "a\\\nb", "a&#92;\\\nb"},
+		{"table_delimiter_lookalike_colons", "x\n:--:", "x\\\n\\:--:"},
+		{"table_delimiter_lookalike_dash_colon", "x\n-:", "x\\\n\\-:"},
 		{"unicode_untouched", "café ☕ 日本語", "café ☕ 日本語"},
 	}
 }

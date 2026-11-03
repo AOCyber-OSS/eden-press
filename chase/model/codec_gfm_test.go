@@ -27,6 +27,7 @@ import (
 	"errors"
 	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -259,7 +260,7 @@ func refusalCases() []refusalCase {
 		{"table_cell_code", "| a |\n| --- |\n| `c` |\n", "table-cell-formatting", "`c`"},
 		{"table_cell_link", "| a |\n| --- |\n| [l](u) |\n", "table-cell-formatting", `[l](u)`},
 		{"ordered_list_start", "intro\n\n3. item\n", "list-start", `3.`},
-		{"nested_ordered_list_start", "1. a\n   3. b\n", "list-start", `3.`},
+		{"nested_ordered_list_start", "1. a\n\n   3. b\n", "list-start", `3.`},
 		{"nested_bullet_under_ordered", "1. a\n   - b\n", "list-mixed-type", `- b`},
 		{"nested_ordered_under_bullet", "- a\n  1. b\n", "list-mixed-type", `1. b`},
 		{"task_item", "- [ ] t\n", "todo", `[ ]`},
@@ -513,7 +514,8 @@ func TestFromMarkdownReadsCommonMarkSpellings(t *testing.T) {
 		{"spaced_star_rule", "a\n\n* * *\n\nb\n", "a\n\n***\n\nb\n"},
 		{"spaced_dash_rule_is_a_section_break", "a\n\n- - -\n\nb\n", "a\n\n---\n\nb\n"},
 		{"long_dash_rule", "a\n\n-----\n\nb\n", "a\n\n---\n\nb\n"},
-		{"soft_line_break", "one\ntwo\n", "one\\\ntwo\n"},
+		{"soft_line_break_is_a_space", "one\ntwo\n", "one two\n"},
+		{"soft_wrap_in_a_list_item_is_a_space", "- one\n  two\n", "- one two\n"},
 		{"two_space_hard_break", "one  \ntwo\n", "one\\\ntwo\n"},
 		{"backslash_hard_break", "one\\\ntwo\n", "one\\\ntwo\n"},
 		{"entities", "&copy; &amp; &#65; &#x42; &nbsp;|\n", "© & A B \u00a0\\|\n"},
@@ -526,15 +528,22 @@ func TestFromMarkdownReadsCommonMarkSpellings(t *testing.T) {
 		{"link_with_parens_in_destination", "[a](https://x.io/f_(1))\n", "[a](https://x.io/f_\\(1\\))\n"},
 		{"angle_destination", "[a](<my file.md>)\n", "[a](<my file.md>)\n"},
 		{"nested_quote", "> a\n>\n> > b\n", "> a\n>\n> > b\n"},
-		{"lazy_quote_continuation", "> a\nb\n", "> a\\\n> b\n"},
+		{"lazy_quote_continuation", "> a\nb\n", "> a b\n"},
 		{"quote_with_heading", "> # T\n> text\n", "> # T\n>\n> text\n"},
 		{"table_without_outer_pipes", "a | b\n--|--\n1 | 2\n", "| a | b |\n| --- | --- |\n| 1 | 2 |\n"},
 		{"table_alignment_spellings", "| a | b | c | d |\n|:-|:-:|-:|-|\n| 1 | 2 | 3 | 4 |\n", "| a | b | c | d |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |\n"},
 		{"strike_single_tilde", "~a~ ~~b~~\n", "~~a~~ ~~b~~\n"},
 		{"nested_marks_collapse", "**a *b* c**\n", "**a** ***b*** **c**\n"},
 		{"code_span_edge_spaces", "`` `a` ``\n", "`` `a` ``\n"},
-		{"crlf_line_endings", "# T\r\n\r\nbody\r\nmore\r\n", "# T\n\nbody\\\nmore\n"},
+		{"crlf_line_endings", "# T\r\n\r\nbody\r\nmore\r\n", "# T\n\nbody more\n"},
 		{"trailing_blank_lines", "a\n\n\n\n", "a\n"},
+		{"multi_line_setext_heading_is_one_line", "Line one\nline two\n=====\n", "# Line one line two\n"},
+		{"multi_line_image_alt_is_one_line", "![one\ntwo](a.png)\n", "![one two](a.png)\n"},
+		{"padded_inline_display_math_is_text", "a $$ x $$ b\n", "a \\$\\$ x \\$\\$ b\n"},
+		{"display_math_followed_by_a_digit_is_not_display_math", "a $$x$$1 b\n", "a \\$$x$\\$1 b\n"},
+		{"adjacent_inline_math_is_one_math_block", "$a$$b$\n", "$ab$\n"},
+		{"inline_math_with_escaped_backslashes", "x $a\\\\$ y\n", "x $a\\\\$ y\n"},
+		{"fence_language_with_a_backslash", "```a\\\\b\nx\n```\n", "```a\\\\b\nx\n```\n"},
 		{"three_adjacent_lists_in_source", "- a\n\n* b\n\n- c\n", "- a\n\n* b\n\n- c\n"},
 	}
 	for _, tc := range cases {
@@ -550,6 +559,20 @@ func TestFromMarkdownReadsCommonMarkSpellings(t *testing.T) {
 	}
 }
 
+// mergeAdjacentRuns joins neighbouring runs that have the same marks and link:
+// canonical form never has two of them side by side.
+func mergeAdjacentRuns(runs []TextRun) []TextRun {
+	var out []TextRun
+	for _, r := range runs {
+		if n := len(out); n > 0 && out[n-1].Link == r.Link && equalMarks(out[n-1].Marks, r.Marks) {
+			out[n-1].Text += r.Text
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // TestCodecMarkAdjacency: runs with different marks that touch each other, with
 // and without links, keep their marks and boundaries. Adjacent delimiters are
 // where Markdown emphasis is most ambiguous.
@@ -563,12 +586,12 @@ func TestCodecMarkAdjacency(t *testing.T) {
 				}
 				name := strings.Join(a, "+") + "|" + strings.Join(b, "+") + "|" + link
 				t.Run(name, func(t *testing.T) {
-					want := fxDoc([]Block{fxRich(
+					want := fxDoc([]Block{fxRich(mergeAdjacentRuns([]TextRun{
 						fxRun("p "),
-						TextRun{Text: "aa", Marks: a, Link: link},
-						TextRun{Text: "bb", Marks: b, Link: link},
+						{Text: "aa", Marks: a, Link: link},
+						{Text: "bb", Marks: b, Link: link},
 						fxRun(" q"),
-					)})
+					})...)})
 					md := ToMarkdown(want)
 					got := mustFromMarkdown(t, md, FromMarkdownOptions{})
 					assertDocEqual(t, got, want)
@@ -624,6 +647,227 @@ func TestFromMarkdownIsStableOnFragments(t *testing.T) {
 			if md2 := ToMarkdown(d2); md2 != md {
 				t.Fatalf("lenient=%v: Markdown not a fixed point\n%q\n%q", lenient, md, md2)
 			}
+		}
+	}
+}
+
+// ---- seeded sweeps (stdlib only; TRD 03 adds the all-kinds property test) ----
+
+func sweepText(rng *rand.Rand, alphabet []string, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		b.WriteString(alphabet[rng.Intn(len(alphabet))])
+	}
+	return b.String()
+}
+
+// sweepRoundTrip checks FromMarkdown(ToMarkdown(d)) == d for a one-block
+// document and reports at most a few failures.
+func sweepRoundTrip(t *testing.T, name string, blk Block, fails *int) {
+	t.Helper()
+	d := fxDoc([]Block{blk})
+	rebuildOutline(d)
+	md := ToMarkdown(d)
+	got, err := FromMarkdown(md, FromMarkdownOptions{})
+	if err == nil && reflect.DeepEqual(got, d) {
+		return
+	}
+	*fails++
+	if *fails > 5 {
+		return
+	}
+	gotJSON := "nil"
+	if got != nil {
+		gotJSON = docJSON(t, got)
+	}
+	t.Errorf("%s does not round-trip\n markdown: %q\n error: %v\n want: %s\n got: %s", name, md, err, docJSON(t, d), gotJSON)
+}
+
+// TestCodecEscapingSweep: random text built from Markdown metacharacters comes
+// back unchanged from a paragraph, a list item, a heading and a quote.
+func TestCodecEscapingSweep(t *testing.T) {
+	alphabet := []string{
+		"a", "B", "1", "2", ".", ")", "(", " ", "*", "_", "`", "~", "#", ">", "-", "+", "=", "|", "$", "<", ">",
+		"[", "]", "!", "&", "amp;", "#65;", "\\", "\n", "é", "x", ":", "/",
+	}
+	rng := rand.New(rand.NewSource(7))
+	fails := 0
+	for i := 0; i < 6000; i++ {
+		s := sweepText(rng, alphabet, 1+rng.Intn(8))
+		if strings.HasPrefix(s, "\n") || strings.HasSuffix(s, "\n") || strings.Contains(s, "\n\n") {
+			continue // an empty line is a paragraph break, not text
+		}
+		sweepRoundTrip(t, "paragraph "+strconv.Quote(s), Block{Kind: BlockParagraph, Text: s}, &fails)
+		sweepRoundTrip(t, "list item "+strconv.Quote(s), Block{Kind: BlockList, Items: []ListItem{{Text: s}}}, &fails)
+		sweepRoundTrip(t, "quote "+strconv.Quote(s), Block{Kind: BlockQuote, Text: s}, &fails)
+		if !strings.Contains(s, "\n") {
+			sweepRoundTrip(t, "heading "+strconv.Quote(s), Block{Kind: BlockHeading, Level: 2, Text: s}, &fails)
+		}
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
+	}
+}
+
+// TestCodecBlockSweep: random tables, images, code, display math and lists
+// come back unchanged.
+func TestCodecBlockSweep(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	fails := 0
+	textAlpha := []string{"a", "b", "1", " ", "*", "_", "`", "~", "|", "$", "[", "]", "(", ")", "<", ">", "&", "\\", ".", "-", "#", "!", ":", "é", "amp;"}
+	for i := 0; i < 2500; i++ {
+		cell := func() string { return strings.TrimSpace(sweepText(rng, textAlpha, rng.Intn(6))) }
+		n := 1 + rng.Intn(3)
+		headers, aligns := make([]string, n), make([]string, n)
+		for k := range headers {
+			headers[k] = cell()
+			aligns[k] = []string{"", "left", "right", "center"}[rng.Intn(4)]
+		}
+		var rows [][]string
+		for r := rng.Intn(3); r > 0; r-- {
+			row := make([]string, n)
+			for k := range row {
+				row[k] = cell()
+			}
+			rows = append(rows, row)
+		}
+		sweepRoundTrip(t, "table", Block{Kind: BlockTable, Headers: headers, Aligns: aligns, Rows: rows}, &fails)
+
+		src := sweepText(rng, []string{"a", "b", "/", ".", " ", "(", ")", "<", ">", "&", "amp;", "\\", "%", "#"}, 1+rng.Intn(6))
+		src = "x" + src + "y"
+		title := sweepText(rng, []string{"a", " ", "\"", "\\", "&", "amp;", "'"}, rng.Intn(4))
+		alt := strings.TrimSpace(sweepText(rng, textAlpha, rng.Intn(5)))
+		sweepRoundTrip(t, "image", Block{Kind: BlockImage, Src: src, Text: alt, Title: title}, &fails)
+
+		code := sweepText(rng, []string{"a", "`", "``", "\n", " ", "~", "$", "#", "-"}, rng.Intn(8))
+		sweepRoundTrip(t, "code", Block{Kind: BlockCode, Language: []string{"", "go", "c++", "x-y"}[rng.Intn(4)], Text: code}, &fails)
+
+		tex := sweepText(rng, []string{"a", "x", "^", "_", "{", "}", "\\", " ", "\n", "#", "-", "|", "<", ">", "&", "1"}, rng.Intn(8))
+		sweepRoundTrip(t, "display math", Block{Kind: BlockMath, Display: true, Text: tex}, &fails)
+
+		var items []ListItem
+		level := 0
+		for k := 1 + rng.Intn(5); k > 0; k-- {
+			if len(items) == 0 {
+				level = 0
+			} else {
+				level = rng.Intn(level + 2)
+			}
+			text := strings.TrimSpace(sweepText(rng, []string{"a", "b", "1", ".", "-", "*", " ", "#", ">"}, rng.Intn(4)))
+			items = append(items, ListItem{Text: text, Level: level})
+		}
+		sweepRoundTrip(t, "list", Block{Kind: BlockList, Ordered: rng.Intn(2) == 0, Items: items}, &fails)
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
+	}
+}
+
+// TestCodecRunsSweep: random canonical rich paragraphs (marks, links, math,
+// punctuation next to delimiters) come back unchanged. Bold, italic and strike
+// next to punctuation or letters are the case where `**` and `~~` would not
+// read back, so the serializer switches such a block to <strong>/<em>/<del>.
+func TestCodecRunsSweep(t *testing.T) {
+	rng := rand.New(rand.NewSource(5))
+	fails := 0
+	markSets := [][]string{nil, nil, {"bold"}, {"italic"}, {"bold", "italic"}, {"strike"}, {"code"}, {"bold", "strike"}, {"italic", "strike"}, {"bold", "italic", "strike"}, {"math"}}
+	words := []string{
+		"a", "bb", "x y", "(p)", "q.", "*", "_", "1", "é", ",", "x_1", "$", "a|b", "-", "[", "!", "**", "~~", "`",
+		"a\\", "\\", ")", "](", "<em>", "&amp;", "# h", "1. ", "> q", "x*y", "2*3*4", "a_b_c", "((", "))",
+	}
+	links := []string{"", "", "", "https://x.io", "dir/a b.md"}
+	for i := 0; i < 6000; i++ {
+		var runs []TextRun
+		for k := 1 + rng.Intn(5); k > 0; k-- {
+			marks := markSets[rng.Intn(len(markSets))]
+			text := words[rng.Intn(len(words))]
+			if len(marks) == 1 && marks[0] == "math" {
+				text = []string{"a^2", "x_1", "y"}[rng.Intn(3)]
+			}
+			runs = append(runs, TextRun{Text: text, Marks: marks, Link: links[rng.Intn(len(links))]})
+		}
+		runs = canonRuns(runs)
+		if len(runs) == 0 || (len(runs) == 1 && hasMark(runs[0], "math")) {
+			continue // a lone math run is a math block, not a paragraph
+		}
+		skip := false
+		for k, r := range runs {
+			// A closing $ followed by a digit does not close math.
+			if hasMark(r, "math") && k+1 < len(runs) && runs[k+1].Text[0] >= '0' && runs[k+1].Text[0] <= '9' {
+				skip = true
+			}
+		}
+		if skip {
+			continue
+		}
+		blk := Block{Kind: BlockParagraph, Text: FlattenRuns(runs), Runs: runs}
+		if len(runs) == 1 && len(runs[0].Marks) == 0 && runs[0].Link == "" {
+			blk.Runs = nil
+		}
+		sweepRoundTrip(t, "rich paragraph", blk, &fails)
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
+	}
+}
+
+// TestFromMarkdownIsStableOnGarbage reads seeded random soup of Markdown
+// punctuation. Whatever it parses to, writing that and reading it again must
+// give the same Document (strict refusals and the lenient mapping alike), and
+// nothing may panic.
+func TestFromMarkdownIsStableOnGarbage(t *testing.T) {
+	alphabet := []string{
+		"a", "b", " ", "  ", "\n", "\n\n", "\n    ", "#", "# ", "> ", "- ", "* ", "+ ", "1. ", "2) ", "`", "```", "~~~", "~~",
+		"*", "**", "_", "__", "[", "]", "(", ")", "![", "](", "|", "|-", "-|", "---", "***", "$", "$$", "\\", "&", "<", ">",
+		"<b>", "</b>", "<!--", "-->", "=", "===", ":", "-:", "[ ] ", "[x] ", "http://x.io", "é", "\t",
+	}
+	rng := rand.New(rand.NewSource(3))
+	bad := 0
+	for i := 0; i < 12000 && bad < 5; i++ {
+		src := sweepText(rng, alphabet, 1+rng.Intn(20))
+		for _, lenient := range []bool{false, true} {
+			d, err := FromMarkdown(src, FromMarkdownOptions{Lenient: lenient})
+			if err != nil {
+				var ue *UnrepresentableError
+				if lenient || !errors.As(err, &ue) {
+					t.Fatalf("lenient=%v: unexpected error %T %v for %q", lenient, err, err, src)
+				}
+				continue
+			}
+			md := ToMarkdown(d)
+			d2, err := FromMarkdown(md, FromMarkdownOptions{})
+			if err == nil && reflect.DeepEqual(d, d2) {
+				continue
+			}
+			bad++
+			second := "nil"
+			if d2 != nil {
+				second = docJSON(t, d2)
+			}
+			t.Errorf("not stable (lenient=%v)\n source: %q\n canonical: %q\n error: %v\n first: %s\n second: %s", lenient, src, md, err, docJSON(t, d), second)
+			break
+		}
+	}
+}
+
+// TestFromMarkdownIsSafeForConcurrentUse: the package-level parser is shared by
+// every caller, so concurrent reads must not interfere (run with -race).
+func TestFromMarkdownIsSafeForConcurrentUse(t *testing.T) {
+	src := "# T\n\ntext with *em*, `code` and $x$\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n$$\ny\n$$\n"
+	want := mustFromMarkdown(t, src, FromMarkdownOptions{})
+	done := make(chan *Document, 8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			var d *Document
+			for j := 0; j < 50; j++ {
+				d, _ = FromMarkdown(src, FromMarkdownOptions{})
+			}
+			done <- d
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		if got := <-done; !reflect.DeepEqual(got, want) {
+			t.Fatalf("concurrent read differs:\n%s", docJSON(t, got))
 		}
 	}
 }
