@@ -1,0 +1,423 @@
+{
+  "schemaVersion": "eden-press.model/v7",
+  "meta": {
+    "directives": {
+      "profile": "article",
+      "theme": "default",
+      "title": "Q3 \u003cReview\u003e \u0026 plan"
+    }
+  },
+  "sections": [
+    {
+      "id": 1,
+      "attrs": {
+        "class": "lead",
+        "data-tone": "warm"
+      },
+      "notes": [
+        "Speaker note one",
+        "Note two — ünïcödé"
+      ],
+      "blocks": [
+        {
+          "id": "b_head",
+          "kind": "heading",
+          "text": "Roadmap",
+          "level": 1,
+          "span": {
+            "start": 0,
+            "stop": 9
+          }
+        },
+        {
+          "id": "b_para",
+          "kind": "paragraph",
+          "text": "Hello bold link",
+          "runs": [
+            {
+              "text": "Hello "
+            },
+            {
+              "text": "bold",
+              "marks": [
+                "bold",
+                "italic"
+              ]
+            },
+            {
+              "text": " link",
+              "link": "https://aocyber.ai"
+            }
+          ],
+          "span": {
+            "start": 11,
+            "stop": 40
+          }
+        },
+        {
+          "id": "b_list",
+          "kind": "list",
+          "ordered": true,
+          "items": [
+            {
+              "id": "li_1",
+              "text": "First"
+            },
+            {
+              "id": "li_2",
+              "text": "Nested code",
+              "runs": [
+                {
+                  "text": "Nested "
+                },
+                {
+                  "text": "code",
+                  "marks": [
+                    "code"
+                  ]
+                }
+              ],
+              "level": 1
+            },
+            {
+              "text": ""
+            }
+          ]
+        },
+        {
+          "id": "b_code",
+          "kind": "code",
+          "text": "fmt.Println(\"\u003chi\u003e\")\n",
+          "language": "go"
+        },
+        {
+          "id": "b_math",
+          "kind": "math",
+          "text": "\\frac{a}{b}",
+          "display": true
+        },
+        {
+          "kind": "math",
+          "text": "x^2"
+        },
+        {
+          "id": "b_table",
+          "kind": "table",
+          "headers": [
+            "Metric",
+            "Q3"
+          ],
+          "rows": [
+            [
+              "p95 latency",
+              "550ms"
+            ],
+            [
+              "ragged"
+            ]
+          ],
+          "aligns": [
+            "left",
+            ""
+          ]
+        },
+        {
+          "id": "b_img",
+          "kind": "image",
+          "text": "Q3 chart",
+          "src": "chart.png",
+          "title": "Quarterly"
+        },
+        {
+          "id": "b_quote",
+          "kind": "quote",
+          "text": "Synthesized from the sync.",
+          "children": [
+            {
+              "kind": "paragraph",
+              "text": "Quoted child"
+            }
+          ]
+        },
+        {
+          "id": "b_toggle",
+          "kind": "toggle",
+          "text": "Details",
+          "children": [
+            {
+              "id": "b_toggle_child",
+              "kind": "paragraph",
+              "text": "Nested"
+            }
+          ],
+          "collapsed": true
+        },
+        {
+          "id": "b_sync",
+          "kind": "synced",
+          "syncRef": {
+            "blockId": "b_toggle"
+          }
+        },
+        {
+          "id": "b_sync_ext",
+          "kind": "synced",
+          "syncRef": {
+            "blockId": "b_remote",
+            "pageId": "page_2"
+          }
+        },
+        {
+          "id": "b_todo",
+          "kind": "todo",
+          "text": "Ship it",
+          "runs": [
+            {
+              "text": "Ship it",
+              "marks": [
+                "strike"
+              ]
+            }
+          ],
+          "checked": true,
+          "children": [
+            {
+              "id": "b_todo_child",
+              "kind": "paragraph",
+              "text": "Release notes"
+            }
+          ]
+        },
+        {
+          "id": "b_todo_open",
+          "kind": "todo",
+          "text": "Write docs"
+        },
+        {
+          "id": "b_callout",
+          "kind": "callout",
+          "text": "Watch latency",
+          "icon": "⚠️",
+          "tone": "warn"
+        },
+        {
+          "id": "b_div",
+          "kind": "divider"
+        },
+        {
+          "id": "b_file",
+          "kind": "file",
+          "name": "report.pdf",
+          "mime": "application/pdf",
+          "size": 5368709120,
+          "src": "files/report.pdf"
+        },
+        {
+          "id": "b_sheet",
+          "kind": "sheet",
+          "sheetEmbed": {
+            "pageId": "page_wb",
+            "workbookHint": "Budget",
+            "sheet": "Tasks",
+            "range": {
+              "r1": 3,
+              "c1": 2,
+              "columnIds": [
+                "col_a",
+                "col_b"
+              ],
+              "rowIds": [
+                "row_0",
+                "row_1"
+              ],
+              "rangeId": "rng_1"
+            },
+            "snapshot": {
+              "columns": [
+                {
+                  "id": "col_a",
+                  "name": "Item",
+                  "type": "text"
+                },
+                {
+                  "id": "col_b",
+                  "name": "Status",
+                  "type": "select",
+                  "options": [
+                    "todo",
+                    "done"
+                  ]
+                }
+              ],
+              "rowIds": [
+                {
+                  "r": 0,
+                  "id": "row_0"
+                },
+                {
+                  "r": 1,
+                  "id": "row_1"
+                }
+              ],
+              "cells": [
+                {
+                  "r": 0,
+                  "c": 0,
+                  "v": "A"
+                },
+                {
+                  "r": 0,
+                  "c": 1,
+                  "v": "B"
+                },
+                {
+                  "r": 1,
+                  "c": 0,
+                  "v": "3"
+                },
+                {
+                  "r": 1,
+                  "c": 1,
+                  "v": "Spec",
+                  "rels": [
+                    {
+                      "pageId": "page_9",
+                      "title": "Spec"
+                    }
+                  ]
+                },
+                {
+                  "r": 2,
+                  "c": 0,
+                  "v": "7",
+                  "f": "SUM(A1:A2)"
+                },
+                {
+                  "r": 2,
+                  "c": 1,
+                  "f": "A1*2"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "b_sheet_live",
+          "kind": "sheet",
+          "sheetEmbed": {
+            "sheet": "Live",
+            "range": {}
+          }
+        },
+        {
+          "id": "b_fig",
+          "kind": "figure",
+          "text": "logo",
+          "icon": "brand",
+          "svg": "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/\u003e",
+          "src": "assets/logo.svg",
+          "title": "Logo"
+        }
+      ],
+      "span": {
+        "start": 0,
+        "stop": 420
+      }
+    },
+    {
+      "id": 2
+    },
+    {
+      "id": 3,
+      "blocks": [
+        {
+          "kind": "heading",
+          "text": "Appendix",
+          "level": 2
+        },
+        {
+          "kind": "paragraph"
+        }
+      ]
+    }
+  ],
+  "outline": [
+    {
+      "sectionId": 1,
+      "level": 1,
+      "text": "Roadmap",
+      "slug": "roadmap",
+      "span": {
+        "start": 0,
+        "stop": 9
+      }
+    },
+    {
+      "sectionId": 3,
+      "level": 2,
+      "text": "Appendix",
+      "slug": "appendix"
+    }
+  ],
+  "properties": [
+    {
+      "id": "p_status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        "draft",
+        "final"
+      ]
+    },
+    {
+      "id": "p_due",
+      "name": "Due",
+      "type": "date"
+    },
+    {
+      "id": "p_done",
+      "name": "Done",
+      "type": "checkbox"
+    }
+  ],
+  "propertyValues": {
+    "p_done": "false",
+    "p_due": "2026-11-03",
+    "p_status": "draft"
+  },
+  "comments": [
+    {
+      "id": "c_1",
+      "blockId": "b_para",
+      "start": 0,
+      "stop": 5,
+      "body": "Tighten this",
+      "suggestion": {
+        "text": "Hi bold",
+        "runs": [
+          {
+            "text": "Hi "
+          },
+          {
+            "text": "bold",
+            "marks": [
+              "bold"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "c_2",
+      "blockId": "b_todo",
+      "body": "Done?",
+      "resolved": true
+    },
+    {
+      "id": "c_3",
+      "blockId": "b_code",
+      "body": "",
+      "suggestion": {}
+    }
+  ]
+}
