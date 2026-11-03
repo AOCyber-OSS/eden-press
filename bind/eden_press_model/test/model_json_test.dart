@@ -63,18 +63,22 @@ Map<String, dynamic> _goldenBlock(Map<String, dynamic> golden, String id) {
   throw StateError('golden has no block $id');
 }
 
-Block _bare(BlockKind kind, {String text = '', Span? span, bool checked = false}) =>
-    Block(
-      kind: kind,
-      text: text,
-      level: 0,
-      language: '',
-      display: false,
-      ordered: false,
-      items: const [],
-      checked: checked,
-      span: span,
-    );
+Block _bare(
+  BlockKind kind, {
+  String text = '',
+  Span? span,
+  bool checked = false,
+}) => Block(
+  kind: kind,
+  text: text,
+  level: 0,
+  language: '',
+  display: false,
+  ordered: false,
+  items: const [],
+  checked: checked,
+  span: span,
+);
 
 void main() {
   group('Test list 2: round trip against the Go golden', () {
@@ -83,17 +87,19 @@ void main() {
       expect(ModelDocument.fromJson(golden).toJson(), equals(golden));
     });
 
-    test('toJson writes keys in Go struct order, so re-encoding is identical',
-        () {
-      // jsonDecode keeps the golden's key order, which is Go's struct-field
-      // order (and sorted order for Go maps). Equal encodings therefore prove
-      // the order matches too, not only the key set.
-      final golden = _golden();
-      expect(
-        jsonEncode(ModelDocument.fromJson(golden).toJson()),
-        jsonEncode(golden),
-      );
-    });
+    test(
+      'toJson writes keys in Go struct order, so re-encoding is identical',
+      () {
+        // jsonDecode keeps the golden's key order, which is Go's struct-field
+        // order (and sorted order for Go maps). Equal encodings therefore prove
+        // the order matches too, not only the key set.
+        final golden = _golden();
+        expect(
+          jsonEncode(ModelDocument.fromJson(golden).toJson()),
+          jsonEncode(golden),
+        );
+      },
+    );
 
     test('toJson sorts map keys the way Go does', () {
       final doc = ModelDocument(
@@ -112,10 +118,10 @@ void main() {
       );
       final json = doc.toJson();
       expect((json['meta'] as Map)['directives'].keys, ['profile', 'theme']);
-      expect(
-        ((json['sections'] as List).single as Map)['attrs'].keys,
-        ['class', 'data-z'],
-      );
+      expect(((json['sections'] as List).single as Map)['attrs'].keys, [
+        'class',
+        'data-z',
+      ]);
       expect((json['propertyValues'] as Map).keys, ['p_a', 'p_b']);
     });
   });
@@ -150,7 +156,10 @@ void main() {
         'text': 'still visible',
       });
       expect(block.kind, BlockKind.unknown);
-      expect(block.toJson(), {'kind': 'some-future-kind', 'text': 'still visible'});
+      expect(block.toJson(), {
+        'kind': 'some-future-kind',
+        'text': 'still visible',
+      });
     });
   });
 
@@ -174,15 +183,21 @@ void main() {
     test('a null Span stays absent on block, section and outline entry', () {
       expect(_bare(BlockKind.paragraph).toJson().containsKey('span'), isFalse);
       expect(
-        const Section(id: 1, attrs: {}, notes: [], blocks: [])
-            .toJson()
-            .containsKey('span'),
+        const Section(
+          id: 1,
+          attrs: {},
+          notes: [],
+          blocks: [],
+        ).toJson().containsKey('span'),
         isFalse,
       );
       expect(
-        const OutlineEntry(sectionId: 1, level: 1, text: 'a', slug: 'a')
-            .toJson()
-            .containsKey('span'),
+        const OutlineEntry(
+          sectionId: 1,
+          level: 1,
+          text: 'a',
+          slug: 'a',
+        ).toJson().containsKey('span'),
         isFalse,
       );
     });
@@ -199,10 +214,9 @@ void main() {
     });
 
     test('a section with only an id marshals to its id alone', () {
-      expect(
-        const Section(id: 2, attrs: {}, notes: [], blocks: []).toJson(),
-        {'id': 2},
-      );
+      expect(const Section(id: 2, attrs: {}, notes: [], blocks: []).toJson(), {
+        'id': 2,
+      });
     });
 
     test('ListItem.text is written even when empty; level 0 is omitted', () {
@@ -231,36 +245,36 @@ void main() {
       final comment = ModelDocument.fromJson(golden).comments.first;
       expect(comment.start, 0);
       expect(comment.toJson()['start'], 0);
-      expect(
-        const Comment(id: 'c', blockId: 'b', body: '').toJson(),
-        {'id': 'c', 'blockId': 'b', 'body': ''},
-      );
-    });
-
-    test('empty sections and outline encode as [] (Go decodes [] and null alike)',
-        () {
-      final json = const ModelDocument(
-        schemaVersion: 'eden-press.model/v7',
-        meta: Meta(directives: {}),
-        sections: [],
-        outline: [],
-      ).toJson();
-      expect(json, {
-        'schemaVersion': 'eden-press.model/v7',
-        'meta': <String, dynamic>{},
-        'sections': <dynamic>[],
-        'outline': <dynamic>[],
+      expect(const Comment(id: 'c', blockId: 'b', body: '').toJson(), {
+        'id': 'c',
+        'blockId': 'b',
+        'body': '',
       });
     });
+
+    test(
+      'empty sections and outline encode as [] (Go decodes [] and null alike)',
+      () {
+        final json = const ModelDocument(
+          schemaVersion: 'eden-press.model/v7',
+          meta: Meta(directives: {}),
+          sections: [],
+          outline: [],
+        ).toJson();
+        expect(json, {
+          'schemaVersion': 'eden-press.model/v7',
+          'meta': <String, dynamic>{},
+          'sections': <dynamic>[],
+          'outline': <dynamic>[],
+        });
+      },
+    );
   });
 
   group('typed sheet embed', () {
     test('a formula cell parses into SheetCell and round-trips', () {
       final golden = _golden();
-      final block = ModelDocument.fromJson(golden)
-          .sections
-          .first
-          .blocks
+      final block = ModelDocument.fromJson(golden).sections.first.blocks
           .firstWhere((b) => b.id == 'b_sheet');
       final embed = block.typedSheetEmbed!;
       expect(embed.pageId, 'page_wb');
@@ -271,10 +285,14 @@ void main() {
       expect(embed.snapshot!.columns.last.options, ['todo', 'done']);
       expect(embed.snapshot!.rowIds.last.id, 'row_1');
 
-      final formula = embed.snapshot!.cells.firstWhere((c) => c.r == 2 && c.c == 0);
+      final formula = embed.snapshot!.cells.firstWhere(
+        (c) => c.r == 2 && c.c == 0,
+      );
       expect(formula.f, 'SUM(A1:A2)');
       expect(formula.v, '7');
-      final bare = embed.snapshot!.cells.firstWhere((c) => c.r == 2 && c.c == 1);
+      final bare = embed.snapshot!.cells.firstWhere(
+        (c) => c.r == 2 && c.c == 1,
+      );
       expect(bare.f, 'A1*2');
       expect(bare.toJson(), {'r': 2, 'c': 1, 'f': 'A1*2'});
       final linked = embed.snapshot!.cells.firstWhere((c) => c.rels.isNotEmpty);
@@ -286,12 +304,12 @@ void main() {
 
     test('an all-zero range still writes "range": {}', () {
       final golden = _golden();
-      final block = ModelDocument.fromJson(golden)
-          .sections
-          .first
-          .blocks
+      final block = ModelDocument.fromJson(golden).sections.first.blocks
           .firstWhere((b) => b.id == 'b_sheet_live');
-      expect(block.toJson()['sheetEmbed'], {'sheet': 'Live', 'range': <String, dynamic>{}});
+      expect(block.toJson()['sheetEmbed'], {
+        'sheet': 'Live',
+        'range': <String, dynamic>{},
+      });
     });
 
     test('a typed SheetEmbed builds a sheet block whose toJson matches Go', () {
