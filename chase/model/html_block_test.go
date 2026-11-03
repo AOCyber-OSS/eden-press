@@ -234,3 +234,24 @@ func TestBlockHTMLEmbedded(t *testing.T) {
 		t.Errorf("nested embedded sheet = %q", g)
 	}
 }
+
+// TestSheetSnapshotFarCellTerminates guards untrusted input: one cell at an
+// absurd coordinate must not make the dense-grid writer loop or allocate
+// without bound (the writer emits every row/column up to the largest
+// populated cell). Cells beyond the documented limits are not rendered.
+func TestSheetSnapshotFarCellTerminates(t *testing.T) {
+	sheet := Block{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: "Far", Snapshot: &SheetSnapshot{Cells: []SheetCellSnap{
+		{R: 0, C: 0, V: "near"},
+		{R: 1 << 30, C: 1 << 30, V: "far"},
+		{R: -1, C: -1, V: "negative"},
+	}}}}
+	doc := &Document{SchemaVersion: SchemaVersion, Sections: []Section{{ID: 1, Blocks: []Block{sheet}}}}
+	for name, got := range map[string]string{"flow": BlockHTML(doc, sheet), "embedded": BlockHTMLEmbedded(doc, sheet)} {
+		if !strings.Contains(got, "<td>near</td>") {
+			t.Errorf("%s: in-range cell lost: %q", name, got)
+		}
+		if strings.Contains(got, "far") || strings.Contains(got, "negative") {
+			t.Errorf("%s: out-of-range cell rendered: %q", name, got)
+		}
+	}
+}

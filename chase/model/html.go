@@ -70,19 +70,78 @@ func ToHTML(doc *Document) string {
 		if i > 0 {
 			b.WriteString("<hr class=\"section-break\"/>\n")
 		}
-		writeHTMLBlocks(&b, doc, sec.Blocks)
+		writeHTMLBlocks(&b, doc, sec.Blocks, htmlMode{})
 	}
 	b.WriteString("</article>\n")
 	return b.String()
 }
 
-func writeHTMLBlocks(b *strings.Builder, doc *Document, blocks []Block) {
+// BlockHTML returns the HTML fragment [ToHTML] emits for bl, byte for byte:
+// the per-block form of the flowing writer, for callers that place single
+// blocks into their own container (press.RenderModel substitutes v7-only kinds
+// into a Marp section this way).
+//
+// doc supplies context a block alone cannot: a same-document synced block
+// resolves its source through doc. A nil doc is tolerated; a synced block then
+// renders its labelled placeholder.
+//
+// The fragment is NOT sanitized. Text is HTML-escaped, but a figure's SVG is
+// emitted verbatim (authored interchange markup), so a caller that serves the
+// fragment to a browser must run it through its own sanitizer.
+func BlockHTML(doc *Document, bl Block) string {
+	return blockFragment(doc, bl, htmlMode{})
+}
+
+// BlockHTMLEmbedded is [BlockHTML] for a block that is placed INSIDE another
+// sectioning container (a paginated unit). It differs in exactly two ways:
+//
+//   - a sheet embed is a <div class="sheet-embed">, not a <section>, so the
+//     paginated unit stays the only <section> in its page and per-unit
+//     selectors (and unit counts) are not confused by a nested one;
+//   - a formula cell shows its cached value (V), falling back to "=" + F
+//     only when no value was stored. A rendered page shows what the formula
+//     computed; the flowing editor view keeps showing the formula.
+//
+// Every other kind is byte-identical to BlockHTML. The same sanitization
+// caveat applies.
+func BlockHTMLEmbedded(doc *Document, bl Block) string {
+	return blockFragment(doc, bl, htmlMode{embedded: true})
+}
+
+func blockFragment(doc *Document, bl Block, m htmlMode) string {
+	if doc == nil {
+		doc = &Document{}
+	}
+	var b strings.Builder
+	writeHTMLBlock(&b, doc, bl, m)
+	return b.String()
+}
+
+// maxSyncDepth bounds synced-block resolution. A synced block resolves to its
+// source block, which may itself be synced; a document that points a synced
+// block at itself (or two at each other) would otherwise recurse until the Go
+// stack overflows -- a fatal error no caller can recover from. Real documents
+// chain one or two deep, and ApplyOps refuses to build a cycle, but
+// press.RenderModelJSON renders documents it did not author. Past the limit the
+// block renders its labelled placeholder, exactly like an unresolvable ref.
+const maxSyncDepth = 8
+
+// htmlMode carries the per-render switches through the recursive writer. The
+// zero value is the flowing view ToHTML has always produced.
+type htmlMode struct {
+	// embedded selects the [BlockHTMLEmbedded] variant.
+	embedded bool
+	// syncDepth counts synced resolutions on the current path.
+	syncDepth int
+}
+
+func writeHTMLBlocks(b *strings.Builder, doc *Document, blocks []Block, m htmlMode) {
 	for _, bl := range blocks {
-		writeHTMLBlock(b, doc, bl)
+		writeHTMLBlock(b, doc, bl, m)
 	}
 }
 
-func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
+func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block, m htmlMode) {
 	switch bl.Kind {
 	case BlockHeading:
 		level := bl.Level
@@ -98,7 +157,7 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 	case BlockQuote:
 		b.WriteString("<blockquote>")
 		fmt.Fprintf(b, "<p>%s</p>", htmlRunsOrText(bl))
-		writeHTMLBlocks(b, doc, bl.Children)
+		writeHTMLBlocks(b, doc, bl.Children, m)
 		b.WriteString("</blockquote>\n")
 	case BlockCode:
 		fmt.Fprintf(b, "<pre><code class=\"language-%s\">%s</code></pre>\n",
@@ -152,15 +211,16 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 			open = " open"
 		}
 		fmt.Fprintf(b, "<details%s><summary>%s</summary>\n", open, htmlRunsOrText(bl))
-		writeHTMLBlocks(b, doc, bl.Children)
+		writeHTMLBlocks(b, doc, bl.Children, m)
 		b.WriteString("</details>\n")
 	case BlockSynced:
 		ref := ""
 		if bl.SyncRef != nil {
 			ref = bl.SyncRef.BlockID
-			if bl.SyncRef.PageID == "" {
+			if bl.SyncRef.PageID == "" && m.syncDepth < maxSyncDepth {
 				if src := findBlockPtr(doc, bl.SyncRef.BlockID); src != nil {
-					writeHTMLBlock(b, doc, *src)
+					m.syncDepth++
+					writeHTMLBlock(b, doc, *src, m)
 					return
 				}
 			}
@@ -174,7 +234,7 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 		b.WriteString(`<ul class="todo"><li>`)
 		fmt.Fprintf(b, `<label><input type="checkbox" disabled%s/> %s</label>`, checked, htmlRunsOrText(bl))
 		b.WriteString("</li></ul>\n")
-		writeHTMLBlocks(b, doc, bl.Children)
+		writeHTMLBlocks(b, doc, bl.Children, m)
 	case BlockCallout:
 		tone := bl.Tone
 		if tone == "" {
@@ -185,7 +245,7 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 			fmt.Fprintf(b, `<span class="icon">%s</span> `, html.EscapeString(bl.Icon))
 		}
 		b.WriteString(htmlRunsOrText(bl))
-		writeHTMLBlocks(b, doc, bl.Children)
+		writeHTMLBlocks(b, doc, bl.Children, m)
 		b.WriteString("</aside>\n")
 	case BlockDivider:
 		b.WriteString("<hr/>\n")
@@ -204,14 +264,18 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 		if bl.SheetEmbed != nil {
 			name = bl.SheetEmbed.Sheet
 		}
-		b.WriteString(`<section class="sheet-embed">`)
+		tag := "section"
+		if m.embedded {
+			tag = "div"
+		}
+		fmt.Fprintf(b, `<%s class="sheet-embed">`, tag)
 		fmt.Fprintf(b, "<header>%s</header>\n", html.EscapeString(orDefault(name, "Sheet")))
 		if bl.SheetEmbed != nil && bl.SheetEmbed.Snapshot != nil {
-			writeHTMLSheetSnapshot(b, bl.SheetEmbed.Snapshot)
+			writeHTMLSheetSnapshot(b, bl.SheetEmbed.Snapshot, m)
 		} else {
 			b.WriteString("<p>Live sheet reference (no offline snapshot)</p>\n")
 		}
-		b.WriteString("</section>\n")
+		fmt.Fprintf(b, "</%s>\n", tag)
 	case BlockFigure:
 		b.WriteString(`<figure class="figure">`)
 		if bl.SVG != "" {
@@ -236,11 +300,21 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block) {
 		if t := htmlRunsOrText(bl); t != "" {
 			fmt.Fprintf(b, "<p>%s</p>\n", t)
 		}
-		writeHTMLBlocks(b, doc, bl.Children)
+		writeHTMLBlocks(b, doc, bl.Children, m)
 	}
 }
 
-func writeHTMLSheetSnapshot(b *strings.Builder, snap *SheetSnapshot) {
+// Snapshot grid limits. A snapshot is a sparse, offline subset of a sheet, but
+// the writer emits a dense grid out to the largest populated cell, so a single
+// cell at {R: 1<<30} would make it loop (and allocate) without bound. The
+// JSON a caller renders may not be its own, so cells beyond these limits are
+// not rendered. The limits are far above any embed a person would author.
+const (
+	maxSnapshotRows = 1000
+	maxSnapshotCols = 100
+)
+
+func writeHTMLSheetSnapshot(b *strings.Builder, snap *SheetSnapshot, m htmlMode) {
 	if snap == nil || len(snap.Cells) == 0 {
 		b.WriteString("<p>Empty sheet snapshot</p>\n")
 		return
@@ -248,6 +322,9 @@ func writeHTMLSheetSnapshot(b *strings.Builder, snap *SheetSnapshot) {
 	maxR, maxC := 0, 0
 	grid := map[[2]int]string{}
 	for _, c := range snap.Cells {
+		if c.R < 0 || c.C < 0 || c.R >= maxSnapshotRows || c.C >= maxSnapshotCols {
+			continue
+		}
 		if c.R > maxR {
 			maxR = c.R
 		}
@@ -255,7 +332,7 @@ func writeHTMLSheetSnapshot(b *strings.Builder, snap *SheetSnapshot) {
 			maxC = c.C
 		}
 		v := c.V
-		if c.F != "" {
+		if c.F != "" && (!m.embedded || v == "") {
 			v = "=" + c.F
 		}
 		grid[[2]int{c.R, c.C}] = v
@@ -308,9 +385,3 @@ func orDefault(v, d string) string {
 	}
 	return v
 }
-
-// BlockHTML is a RED-phase stub; the real writer lands in the GREEN commit.
-func BlockHTML(doc *Document, bl Block) string { return "" }
-
-// BlockHTMLEmbedded is a RED-phase stub; the real writer lands in the GREEN commit.
-func BlockHTMLEmbedded(doc *Document, bl Block) string { return "" }
