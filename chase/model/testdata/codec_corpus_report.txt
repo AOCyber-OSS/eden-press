@@ -1,0 +1,24 @@
+# Strict and lenient reads of the conformance corpus (go test ./chase/model -run TestCodecCorpus -update).
+# case<TAB>strict<TAB>lenient; strict is OK or construct@byte-offset.
+marp-basic	OK	OK
+marp-bg-color	OK	OK
+marp-bg-image	OK	OK
+marp-bg-split	OK	OK
+marp-class-spot	OK	OK
+marp-code-highlight	OK	OK
+marp-emoji	OK	OK
+marp-fit-heading	raw-html@2	OK
+marp-gfm-table	OK	OK
+marp-header-footer	OK	OK
+marp-heading-divider	OK	OK
+marp-math	OK	OK
+marp-paginate	OK	OK
+marp-size-4-3	OK	OK
+marp-slide-split	OK	OK
+marp-strikethrough	OK	OK
+marp-theme-gaia	OK	OK
+marp-theme-uncover	OK	OK
+testdata/superset_fixture	OK	OK
+#
+# total 19, accepted by strict mode 18, refused 1
+# refused by raw-html: 1
