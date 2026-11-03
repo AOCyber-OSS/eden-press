@@ -235,10 +235,10 @@ type SheetRowIDSnap struct {
 
 // SheetCellSnap mirrors workbook sparse cell JSON (v/f + optional rels).
 type SheetCellSnap struct {
-	R    int              `json:"r"`
-	C    int              `json:"c"`
-	V    string           `json:"v,omitempty"`
-	F    string           `json:"f,omitempty"`
+	R    int                 `json:"r"`
+	C    int                 `json:"c"`
+	V    string              `json:"v,omitempty"`
+	F    string              `json:"f,omitempty"`
 	Rels []map[string]string `json:"rels,omitempty"`
 }
 
@@ -277,12 +277,12 @@ type PropertyDef struct {
 // Comment is a review annotation anchored to a block (schema v7). UI/fanout
 // belong to the host; Press stores the data model only.
 type Comment struct {
-	ID         string            `json:"id"`
-	BlockID    string            `json:"blockId"`
-	Start      *int              `json:"start,omitempty"`
-	Stop       *int              `json:"stop,omitempty"`
-	Body       string            `json:"body"`
-	Resolved   bool              `json:"resolved,omitempty"`
+	ID         string             `json:"id"`
+	BlockID    string             `json:"blockId"`
+	Start      *int               `json:"start,omitempty"`
+	Stop       *int               `json:"stop,omitempty"`
+	Body       string             `json:"body"`
+	Resolved   bool               `json:"resolved,omitempty"`
 	Suggestion *CommentSuggestion `json:"suggestion,omitempty"`
 }
 
