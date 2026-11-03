@@ -474,3 +474,221 @@ func codecEscapeCases() []codecEscapeCase {
 		{"unicode_untouched", "café ☕ 日本語", "café ☕ 日本語"},
 	}
 }
+
+// ---- v7-only kinds (objective 1026, TRD 02) ----
+//
+// The seven kinds with no GFM spelling are written as container directives
+// (`:::kind {json}` ... `:::`), and todo as a GFM task item. As above, every
+// Document and every Markdown string is a hand-written literal; the JSON header
+// lines are what encoding/json produces for the header struct (fixed field
+// order, `<` `>` `&` escaped), written out by hand.
+
+// fxIDs gives d the ids ApplyOps would: b_N depth-first, li_N in document
+// order. It uses the package's own EnsureBlockIDs / EnsureListItemIDs, never the
+// importer under test.
+func fxIDs(d *Document) *Document {
+	EnsureBlockIDs(d)
+	EnsureListItemIDs(d)
+	return d
+}
+
+func fxToggle(title string, collapsed bool, children ...Block) Block {
+	return Block{Kind: BlockToggle, Text: title, Collapsed: collapsed, Children: children}
+}
+
+func codecV7Fixtures() []codecFixture {
+	return []codecFixture{
+		{
+			name: "toggle_collapsed_with_nested_toggle",
+			doc: func() *Document {
+				return fxDoc([]Block{fxToggle("Details", true,
+					fxPara("first"),
+					fxToggle("Inner", false, fxPara("deep")),
+				)})
+			},
+			md: "::::toggle {\"collapsed\":true}\nDetails\n\nfirst\n\n:::toggle\nInner\n\ndeep\n:::\n::::\n",
+		},
+		{
+			name: "toggle_title_with_marks",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockToggle, Text: "Read me", Runs: []TextRun{fxRun("Read", "bold"), fxRun(" me")}, Children: []Block{fxPara("x")}}})
+			},
+			md: ":::toggle\n**Read** me\n\nx\n:::\n",
+		},
+		{
+			// With no title, a first child paragraph would read as the title, so
+			// the header says so.
+			name: "toggle_without_title_whose_first_child_is_a_paragraph",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockToggle, Children: []Block{fxPara("child")}}})
+			},
+			md: ":::toggle {\"noText\":true}\nchild\n:::\n",
+		},
+		{
+			name: "toggle_without_title_whose_first_child_is_a_list",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockToggle, Children: []Block{{Kind: BlockList, Items: fxItems("a", "b")}}}})
+			},
+			md: ":::toggle\n- a\n- b\n:::\n",
+		},
+		{
+			name: "toggle_and_callout_with_nothing_inside",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockToggle}, {Kind: BlockCallout}})
+			},
+			md: ":::toggle\n:::\n\n:::callout\n:::\n",
+		},
+		{
+			name: "synced_same_document_and_other_page",
+			doc: func() *Document {
+				return fxDoc([]Block{
+					fxPara("source"),
+					{Kind: BlockSynced, SyncRef: &SyncRef{BlockID: "b_1"}},
+					{Kind: BlockSynced, SyncRef: &SyncRef{BlockID: "b_9", PageID: "pg_2"}},
+				})
+			},
+			md: "source\n\n:::synced {\"syncRef\":{\"blockId\":\"b_1\"}}\n:::\n\n:::synced {\"syncRef\":{\"blockId\":\"b_9\",\"pageId\":\"pg_2\"}}\n:::\n",
+		},
+		{
+			name: "todo_checked_unchecked_marks_and_children",
+			doc: func() *Document {
+				return fxDoc([]Block{
+					{Kind: BlockTodo, Text: "buy milk"},
+					{Kind: BlockTodo, Checked: true, Text: "ship it", Runs: []TextRun{fxRun("ship "), fxRun("it", "bold")}},
+					{Kind: BlockTodo, Text: "plan", Children: []Block{fxPara("details"), {Kind: BlockTodo, Checked: true, Text: "sub"}}},
+					fxPara("after"),
+				})
+			},
+			md: "- [ ] buy milk\n- [x] ship **it**\n- [ ] plan\n\n  details\n\n  - [x] sub\n\nafter\n",
+		},
+		{
+			name: "todo_with_empty_text_and_a_hard_break",
+			doc: func() *Document {
+				return fxDoc([]Block{
+					{Kind: BlockTodo},
+					{Kind: BlockTodo, Checked: true, Text: "a\nb"},
+					{Kind: BlockTodo, Text: "", Children: []Block{fxPara("c")}},
+				})
+			},
+			md: "- [ ]\n- [x] a\\\n  b\n- [ ]\n\n  c\n",
+		},
+		{
+			// A todo list and a plain list in the same marker would be one
+			// (mixed) list, so the marker alternates between them.
+			name: "todo_next_to_plain_lists_alternates_the_marker",
+			doc: func() *Document {
+				return fxDoc([]Block{
+					{Kind: BlockList, Items: fxItems("a", "b")},
+					{Kind: BlockTodo, Text: "t1"},
+					{Kind: BlockTodo, Checked: true, Text: "t2"},
+					{Kind: BlockList, Items: fxItems("c")},
+					{Kind: BlockTodo, Text: "t3"},
+				})
+			},
+			md: "- a\n- b\n\n* [ ] t1\n* [x] t2\n\n- c\n\n* [ ] t3\n",
+		},
+		{
+			name: "callout_with_icon_tone_runs_and_a_child_list",
+			doc: func() *Document {
+				return fxDoc([]Block{{
+					Kind: BlockCallout, Icon: "💡", Tone: "info",
+					Text: "Remember hydration", Runs: []TextRun{fxRun("Remember "), fxRun("hydration", "bold")},
+					Children: []Block{{Kind: BlockList, Items: fxItems("one", "two")}},
+				}})
+			},
+			md: ":::callout {\"icon\":\"💡\",\"tone\":\"info\"}\nRemember **hydration**\n\n- one\n- two\n:::\n",
+		},
+		{
+			// The first paragraph of a directive body is its text, even when that
+			// is only math (a bare paragraph of only math is a math block).
+			name: "callout_whose_text_is_only_math",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockCallout, Text: "x^2", Runs: []TextRun{fxRun("x^2", "math")}}})
+			},
+			md: ":::callout\n$x^2$\n:::\n",
+		},
+		{
+			name: "callout_inside_a_quote",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockQuote, Text: "Quoted", Children: []Block{{Kind: BlockCallout, Tone: "warn", Text: "inside"}}}})
+			},
+			md: "> Quoted\n>\n> :::callout {\"tone\":\"warn\"}\n> inside\n> :::\n",
+		},
+		{
+			name: "file_with_every_field",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockFile, Name: "report.pdf", Mime: "application/pdf", Size: 2048, Src: "files/report.pdf"}})
+			},
+			md: ":::file {\"name\":\"report.pdf\",\"mime\":\"application/pdf\",\"size\":2048,\"src\":\"files/report.pdf\"}\n:::\n",
+		},
+		{
+			name: "sheet_embed_with_snapshot_formula_and_rels",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockSheet, SheetEmbed: &SheetEmbed{
+					PageID: "pg_1", WorkbookHint: "Q3 budget", Sheet: "Budget",
+					Range: &SheetRange{R0: 0, R1: 2, C0: 0, C1: 1},
+					Snapshot: &SheetSnapshot{
+						Columns: []SheetColumnSnap{{ID: "c1", Name: "Item", Type: "text"}, {ID: "c2", Name: "Qty", Type: "number"}},
+						RowIDs:  []SheetRowIDSnap{{R: 0, ID: "row0"}, {R: 1, ID: "row1"}},
+						Cells: []SheetCellSnap{
+							{R: 0, C: 0, V: "Item"}, {R: 0, C: 1, V: "Qty"},
+							{R: 1, C: 0, V: "widgets"},
+							{R: 1, C: 1, V: "4", F: "=A2*2", Rels: []map[string]string{{"row": "row1", "table": "t1"}}},
+						},
+					},
+				}}})
+			},
+			md: ":::sheet {\"sheetEmbed\":{\"pageId\":\"pg_1\",\"workbookHint\":\"Q3 budget\",\"sheet\":\"Budget\",\"range\":{\"r1\":2,\"c1\":1}," +
+				"\"snapshot\":{\"columns\":[{\"id\":\"c1\",\"name\":\"Item\",\"type\":\"text\"},{\"id\":\"c2\",\"name\":\"Qty\",\"type\":\"number\"}]," +
+				"\"rowIds\":[{\"r\":0,\"id\":\"row0\"},{\"r\":1,\"id\":\"row1\"}]," +
+				"\"cells\":[{\"r\":0,\"c\":0,\"v\":\"Item\"},{\"r\":0,\"c\":1,\"v\":\"Qty\"},{\"r\":1,\"c\":0,\"v\":\"widgets\"}," +
+				"{\"r\":1,\"c\":1,\"v\":\"4\",\"f\":\"=A2*2\",\"rels\":[{\"row\":\"row1\",\"table\":\"t1\"}]}]}}}\n:::\n",
+		},
+		{
+			name: "figure_with_src_title_alt_and_inline_svg",
+			doc: func() *Document {
+				return fxDoc([]Block{{
+					Kind: BlockFigure, Src: "a.png", Title: "Chart", Text: "alt text",
+					SVG: "<svg width=\"10\" height=\"10\">\n  <path d=\"M0 0L1 1\"/>\n  <text>a < b</text>\n</svg>",
+				}})
+			},
+			md: ":::figure {\"src\":\"a.png\",\"title\":\"Chart\",\"alt\":\"alt text\"}\n<svg width=\"10\" height=\"10\">\n  <path d=\"M0 0L1 1\"/>\n  <text>a < b</text>\n</svg>\n:::\n",
+		},
+		{
+			// The SVG body is verbatim: a blank line, a trailing newline and lines
+			// that look like fences inside it all survive, and the fence grows.
+			name: "figure_svg_with_blank_lines_and_fence_lookalikes",
+			doc: func() *Document {
+				return fxDoc([]Block{{Kind: BlockFigure, SVG: "<svg>\n:::\n\n::::: x\n</svg>\n"}})
+			},
+			md: "::::::figure\n<svg>\n:::\n\n::::: x\n</svg>\n\n::::::\n",
+		},
+		{
+			name: "three_levels_of_nesting_around_a_code_block_with_a_fence_line",
+			doc: func() *Document {
+				code := Block{Kind: BlockCode, Text: "a\n:::\nb"}
+				return fxDoc([]Block{fxToggle("A", false, fxToggle("B", false, fxToggle("C", false, code)))})
+			},
+			md: "::::::toggle\nA\n\n:::::toggle\nB\n\n::::toggle\nC\n\n```\na\n:::\nb\n```\n::::\n:::::\n::::::\n",
+		},
+		{
+			name: "all_seven_kinds_after_a_heading",
+			doc: func() *Document {
+				d := fxDoc([]Block{
+					{Kind: BlockHeading, Level: 1, Text: "Kinds"},
+					fxToggle("t", true),
+					{Kind: BlockSynced, SyncRef: &SyncRef{BlockID: "b_1"}},
+					{Kind: BlockTodo, Text: "do"},
+					{Kind: BlockCallout, Text: "note"},
+					{Kind: BlockFile, Src: "f.bin"},
+					{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: "S"}},
+					{Kind: BlockFigure, SVG: "<svg/>"},
+				})
+				d.Outline = []OutlineEntry{{SectionID: 1, Level: 1, Text: "Kinds", Slug: "kinds"}}
+				return d
+			},
+			md: "# Kinds\n\n:::toggle {\"collapsed\":true}\nt\n:::\n\n:::synced {\"syncRef\":{\"blockId\":\"b_1\"}}\n:::\n\n- [ ] do\n\n" +
+				":::callout\nnote\n:::\n\n:::file {\"src\":\"f.bin\"}\n:::\n\n:::sheet {\"sheetEmbed\":{\"sheet\":\"S\"}}\n:::\n\n:::figure\n<svg/>\n:::\n",
+		},
+	}
+}

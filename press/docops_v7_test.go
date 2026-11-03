@@ -62,7 +62,7 @@ func TestApplyOpsJSONOptsDryRunAndExportMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(md)
-	if !strings.Contains(s, "Hello") || !strings.Contains(s, "- [x] X") || !strings.Contains(s, "| A |") {
+	if !strings.Contains(s, "Hello") || !strings.Contains(s, "- [x] X") || !strings.Contains(s, ":::sheet {\"sheetEmbed\":{\"sheet\":\"S\",\"snapshot\":{\"cells\":[{\"r\":0,\"c\":0,\"v\":\"A\"}]}}}") {
 		t.Fatalf("md=%s", s)
 	}
 	if _, err := ApplyOpsJSONOpts(out, []byte(`[{"op":"replace_text","old":"missing","new":"x"}]`), true); err == nil {

@@ -263,8 +263,6 @@ func refusalCases() []refusalCase {
 		{"nested_ordered_list_start", "1. a\n\n   3. b\n", "list-start", `3.`},
 		{"nested_bullet_under_ordered", "1. a\n   - b\n", "list-mixed-type", `- b`},
 		{"nested_ordered_under_bullet", "- a\n  1. b\n", "list-mixed-type", `1. b`},
-		{"task_item", "- [ ] t\n", "todo", `[ ]`},
-		{"checked_task_item", "- a\n- [x] done\n", "todo", `[x]`},
 		{"link_title", "see [a](https://x.io \"t\") now\n", "link-title", `[a]`},
 		{"empty_link", "go [](https://x.io) now\n", "empty-link", `[](`},
 		{"inline_image", "see ![i](u) here\n", "inline-image", `![i]`},
@@ -358,11 +356,6 @@ func TestFromMarkdownLenientMappings(t *testing.T) {
 			name: "outer_list_type_wins",
 			src:  "1. a\n   - b\n",
 			want: fxDoc([]Block{{Kind: BlockList, Ordered: true, Items: []ListItem{{Text: "a"}, {Text: "b", Level: 1}}}}),
-		},
-		{
-			name: "task_item_keeps_its_checkbox_as_text",
-			src:  "- [ ] t\n- [x] u\n",
-			want: fxDoc([]Block{{Kind: BlockList, Items: fxItems("[ ] t", "[x] u")}}),
 		},
 		{
 			name: "link_title_is_dropped",
