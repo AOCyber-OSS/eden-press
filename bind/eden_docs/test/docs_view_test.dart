@@ -21,7 +21,7 @@
 // SPDX-License-Identifier: MIT
 
 import 'package:eden_docs/eden_docs.dart';
-import 'package:eden_press/eden_press.dart';
+import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

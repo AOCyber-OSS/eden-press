@@ -37,8 +37,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  eden_press:
-    path: ../dart
+  # The pure-Dart document model. NOT eden_press (../dart): that is an FFI
+  # plugin whose native artifacts are gitignored build products, so a host app
+  # depending on eden_docs could not build. test/pubspec_contract_test.dart
+  # enforces this.
+  eden_press_model:
+    path: ../eden_press_model
   flutter_math_fork: 0.7.4
   flutter_highlighting: 0.9.0+11.8.0
   highlighting: 0.9.0+11.8.0
