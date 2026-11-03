@@ -52,12 +52,12 @@ var v7Fragments = []struct {
 		[]string{`class="sheet-embed"`, `<header>Tasks</header>`, `<td>6</td>`}},
 	{"divider", `<hr/>`, []string{`<hr`}},
 	{"figure svg", `<figure class="figure"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50" width="100" height="50">` +
-		`<defs><linearGradient id="g1"><stop offset="0" stop-color="#d4a853"/></linearGradient></defs>` +
+		`<defs><linearGradient id="g1" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#d4a853"/></linearGradient></defs>` +
 		`<g transform="translate(2 2)"><rect x="1" y="2" width="30" height="20" rx="3" fill="url(#g1)" stroke="#000" stroke-width="2"/>` +
 		`<circle cx="50" cy="25" r="10" fill="rgb(10,20,30)"/><path d="M0 0L10 10Z" fill="none" stroke="currentColor"/>` +
 		`<polyline points="0,0 5,5 10,0" fill="none"/><text x="5" y="40" font-size="12" text-anchor="middle">Hi</text></g></svg>` +
 		`<figcaption>logo</figcaption></figure>`,
-		[]string{`<figure class="figure">`, `viewBox="0 0 100 50"`, `width="100"`, `<rect `, `fill="url(#g1)"`, `<circle `,
+		[]string{`<figure class="figure">`, `viewBox="0 0 100 50"`, `<linearGradient id="g1" gradientUnits="userSpaceOnUse">`, `</linearGradient>`, `width="100"`, `<rect `, `fill="url(#g1)"`, `<circle `,
 			`<path `, `d="M0 0L10 10Z"`, `<polyline `, `<text `, `text-anchor="middle"`, `Hi`, `<figcaption>logo</figcaption>`}},
 }
 
