@@ -76,10 +76,12 @@ const (
 	// block. Lenient: the outer list's type wins.
 	ConstructListMixedType = "list-mixed-type"
 
-	// ConstructTodo is a GFM task item (- [ ] / - [x]). Task items become todo
-	// blocks in TRD 02. Lenient: the item keeps its checkbox as literal text
-	// ("[ ] t", "[x] t").
-	ConstructTodo = "todo"
+	// ConstructListMixedTodo is a GFM task item (- [ ] / - [x]) anywhere a todo
+	// block cannot stand for it: in a list that also holds plain items, nested
+	// in a plain list, or in an ordered list. A bullet list made only of task
+	// items is read as todo blocks (one per item). Lenient: the item stays a
+	// list item and keeps its checkbox as literal text ("[ ] t", "[x] t").
+	ConstructListMixedTodo = "list-mixed-todo"
 
 	// ConstructLinkTitle is a link with a title attribute; TextRun.Link is an
 	// href only. Lenient: the title is dropped.
@@ -117,6 +119,21 @@ const (
 	// key: value lines (including a duplicate key or a bad quoted value).
 	// Lenient: unparseable lines are skipped and a later duplicate key wins.
 	ConstructFrontMatter = "front-matter"
+
+	// ConstructUnknownDirective is a container directive (":::name") whose name
+	// is not one of toggle, synced, callout, file, sheet or figure. Lenient: the
+	// whole directive, fences included, stays as literal paragraph text.
+	ConstructUnknownDirective = "unknown-directive"
+
+	// ConstructDirectiveJSON is a directive whose header is not one JSON object
+	// of the known fields (bad JSON, trailing text, an unknown key, a wrong type),
+	// or an eden:attrs / eden:note / eden:model comment whose payload is not valid.
+	// Lenient: a directive stays as literal paragraph text; a comment is a note.
+	ConstructDirectiveJSON = "directive-json"
+
+	// ConstructDirectiveUnclosed is a directive with no closing fence before the
+	// end of its container. Lenient: it runs to the end of the container.
+	ConstructDirectiveUnclosed = "directive-unclosed"
 
 	// ConstructUnsupported is a Markdown node this codec version does not
 	// read at all. Lenient: it is skipped.

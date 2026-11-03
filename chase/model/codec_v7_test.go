@@ -97,7 +97,7 @@ func TestCodecV7ProseThatLooksLikeADirectiveIsEscaped(t *testing.T) {
 // json.Marshal on a single line, which escapes `<`, `>` and `&`, so a value
 // holding `-->`, markup or a newline cannot end the line or look like markup.
 func TestCodecV7DirectiveHeaderIsOneJSONLine(t *testing.T) {
-	nasty := "a --> b <x> & y\nz   \"q\""
+	nasty := "a --> b <x> & y\nz \u2028 \"q\""
 	want := fxDoc([]Block{
 		{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: nasty, WorkbookHint: "<script>"}},
 		{Kind: BlockFile, Src: "f?a=1&b=2", Name: nasty},
@@ -107,13 +107,13 @@ func TestCodecV7DirectiveHeaderIsOneJSONLine(t *testing.T) {
 		if !strings.HasPrefix(ln, ":::") || ln == ":::" {
 			continue
 		}
-		for _, banned := range []string{"-->", "<", ">", "&", " "} {
+		for _, banned := range []string{"-->", "<", ">", "&", "\u2028"} {
 			if strings.Contains(ln, banned) {
 				t.Fatalf("header line holds %q: %q", banned, ln)
 			}
 		}
 	}
-	if !strings.Contains(md, `>`) || !strings.Contains(md, `<`) || !strings.Contains(md, `&`) {
+	if !strings.Contains(md, `\u003e`) || !strings.Contains(md, `\u003c`) || !strings.Contains(md, `\u0026`) {
 		t.Fatalf("expected JSON escapes for < > & in:\n%s", md)
 	}
 	assertDocEqual(t, stripIDsAndSpans(mustFromMarkdown(t, md, FromMarkdownOptions{})), want)
@@ -275,5 +275,122 @@ func TestCodecV7IsStableOnGarbage(t *testing.T) {
 			t.Errorf("not stable (lenient=%v)\n source: %q\n canonical: %q\n error: %v\n first: %s\n second: %s", lenient, src, md, err, docJSON(t, d), second)
 			break
 		}
+	}
+}
+
+// TestCodecV7BlockSweep builds random trees of the v7 kinds (and the containers
+// that hold them) from text heavy on Markdown and fence punctuation, and checks
+// that each comes back from ToMarkdown then FromMarkdown unchanged.
+func TestCodecV7BlockSweep(t *testing.T) {
+	rng := rand.New(rand.NewSource(1026))
+	alphabet := []string{"a", "B", "1", ".", " ", "*", "_", "`", "~", "#", ">", "-", "+", "|", "$", "<", "[", "]", "!", "&", "\\", ":", "::", ":::", "{", "}", "\"", "é", "x"}
+	line := func() string { return sweepText(rng, alphabet, rng.Intn(7)) }
+	text := func() string {
+		s := line()
+		for rng.Intn(5) == 0 {
+			s += "\n" + line()
+		}
+		if strings.HasPrefix(s, "\n") || strings.HasSuffix(s, "\n") || strings.Contains(s, "\n\n") {
+			return "t"
+		}
+		return s
+	}
+	var gen func(depth int) Block
+	kids := func(depth int) []Block {
+		if depth >= 3 {
+			return nil
+		}
+		var out []Block
+		for n := rng.Intn(4); n > 0; n-- {
+			out = append(out, gen(depth+1))
+		}
+		return out
+	}
+	gen = func(depth int) Block {
+		switch rng.Intn(12) {
+		case 0:
+			return Block{Kind: BlockToggle, Text: text(), Collapsed: rng.Intn(2) == 0, Children: kids(depth)}
+		case 1:
+			return Block{Kind: BlockToggle, Children: kids(depth)} // no title: the first child must not become one
+		case 2:
+			return Block{Kind: BlockCallout, Text: text(), Tone: []string{"", "info", "warn"}[rng.Intn(3)], Icon: []string{"", "!", "💡"}[rng.Intn(3)], Children: kids(depth)}
+		case 3:
+			return Block{Kind: BlockTodo, Text: text(), Checked: rng.Intn(2) == 0, Children: kids(depth)}
+		case 4:
+			return Block{Kind: BlockParagraph, Text: "p" + text()}
+		case 5:
+			return Block{Kind: BlockFile, Src: "s" + line(), Name: line(), Mime: []string{"", "text/plain"}[rng.Intn(2)], Size: int64(rng.Intn(3))}
+		case 6:
+			svg := sweepText(rng, []string{"<svg>", "</svg>", "\n", "\n\n", ":::", "::::", " ", "a", "<", "&", "\\"}, rng.Intn(8))
+			return Block{Kind: BlockFigure, Src: line(), SVG: svg, Text: line()}
+		case 7:
+			// A quote's leading paragraphs are its Text, so a child paragraph straight
+			// after the Text is not canonical.
+			var rest []Block
+			for _, k := range kids(depth) {
+				if k.Kind != BlockParagraph {
+					rest = append(rest, k)
+				}
+			}
+			return Block{Kind: BlockQuote, Text: "q" + text(), Children: rest}
+		case 8:
+			return Block{Kind: BlockSynced, SyncRef: &SyncRef{BlockID: "b_" + line(), PageID: line()}}
+		case 9:
+			return Block{Kind: BlockCode, Text: sweepText(rng, []string{"a", "\n", ":::", "::::", "`", "```", " "}, rng.Intn(6))}
+		case 10:
+			return Block{Kind: BlockList, Ordered: rng.Intn(2) == 0, Items: []ListItem{{Text: "i" + line()}, {Text: "j" + line(), Level: 1}}}
+		default:
+			return Block{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: "S" + line(), WorkbookHint: line()}}
+		}
+	}
+	// Two limits of the canonical form, which the generator stays inside:
+	//   - a whitespace-only line inside a list item is a blank line to the item, so
+	//     code nested in a todo cannot keep one;
+	//   - goldmark ends a todo (a list item) at the first block after a nested list
+	//     whose last item is empty and is followed by a blank line, so a child list
+	//     never ends in an empty item here.
+	var clean func(bs []Block)
+	clean = func(bs []Block) {
+		fix := func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, ln := range lines {
+				if strings.TrimSpace(ln) == "" {
+					lines[i] = ""
+				}
+			}
+			return strings.Join(lines, "\n")
+		}
+		for i := range bs {
+			bs[i].SVG = fix(bs[i].SVG)
+			if bs[i].Kind == BlockCode {
+				bs[i].Text = fix(bs[i].Text)
+			}
+			clean(bs[i].Children)
+		}
+	}
+	fails := 0
+	for i := 0; i < 3000; i++ {
+		var blocks []Block
+		for n := 1 + rng.Intn(4); n > 0; n-- {
+			blocks = append(blocks, gen(0))
+		}
+		clean(blocks)
+		d := fxDoc(blocks)
+		md := ToMarkdown(d)
+		got, err := FromMarkdown(md, FromMarkdownOptions{})
+		if err == nil && reflect.DeepEqual(got, d) {
+			continue
+		}
+		fails++
+		if fails <= 2 {
+			gotJSON := "nil"
+			if got != nil {
+				gotJSON = docJSON(t, got)
+			}
+			t.Errorf("tree does not round-trip\n markdown: %q\n error: %v\n want: %s\n got: %s", md, err, docJSON(t, d), gotJSON)
+		}
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
 	}
 }

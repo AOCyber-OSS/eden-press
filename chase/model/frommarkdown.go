@@ -84,6 +84,12 @@ type FromMarkdownOptions struct {
 //     one $...$ is a non-display math block;
 //   - a blockquote's leading paragraphs are the quote's Text/Runs (joined by a
 //     blank line) and its other blocks are Children;
+//   - a bullet list made only of GFM task items is one todo block per item, the
+//     item's other blocks being its Children; a task item anywhere else is
+//     ConstructListMixedTodo;
+//   - a `:::kind {json}` ... `:::` container is a toggle, synced, callout, file,
+//     sheet or figure block (see frommarkdown_directives.go): the first paragraph
+//     of the body is the block's Text/Runs and the rest are its Children;
 //   - Outline is derived from the headings by rebuildOutline, the function
 //     ApplyOps uses, so a document is the same whether it came from Markdown or
 //     from ops.
@@ -121,7 +127,10 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 var mdEngine = goldmark.New(
 	goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
 	goldmark.WithParserOptions(
-		parser.WithBlockParsers(util.Prioritized(&mathBlockParser{}, 650)),
+		parser.WithBlockParsers(
+			util.Prioritized(&mathBlockParser{}, 650),
+			util.Prioritized(&directiveParser{}, 660),
+		),
 		parser.WithInlineParsers(util.Prioritized(&mathInlineParser{}, 450)),
 	),
 )
@@ -259,7 +268,9 @@ func (r *mdReader) block(n ast.Node) []Block {
 	case *ast.Paragraph, *ast.TextBlock:
 		return r.paragraph(v)
 	case *ast.List:
-		return []Block{r.list(v)}
+		return r.list(v)
+	case *directiveNode:
+		return r.directive(v)
 	case *ast.FencedCodeBlock:
 		return []Block{r.fencedCode(v)}
 	case *ast.CodeBlock:
@@ -606,10 +617,55 @@ func (r *mdReader) quote(q *ast.Blockquote) Block {
 	return bl
 }
 
-func (r *mdReader) list(l *ast.List) Block {
+// list reads a list. A bullet list made only of GFM task items is one todo block
+// per item (the item's other blocks are the todo's Children); any other list is
+// one list block, and a task item in it is ConstructListMixedTodo.
+func (r *mdReader) list(l *ast.List) []Block {
+	if !l.IsOrdered() && allTaskItems(l) {
+		return r.todos(l)
+	}
 	bl := Block{Kind: BlockList, Ordered: l.IsOrdered()}
 	r.listItems(l, 0, &bl)
-	return bl
+	return []Block{bl}
+}
+
+// taskBox returns the checkbox that makes a list item a GFM task item, or nil.
+// goldmark puts it first in the item's first text block.
+func taskBox(item ast.Node) *east.TaskCheckBox {
+	switch first := item.FirstChild().(type) {
+	case *ast.TextBlock, *ast.Paragraph:
+		box, _ := first.FirstChild().(*east.TaskCheckBox)
+		return box
+	}
+	return nil
+}
+
+func allTaskItems(l *ast.List) bool {
+	n := 0
+	for li := l.FirstChild(); li != nil; li = li.NextSibling() {
+		if taskBox(li) == nil {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
+// todos reads a task list as todo blocks.
+func (r *mdReader) todos(l *ast.List) []Block {
+	var out []Block
+	for li := l.FirstChild(); li != nil; li = li.NextSibling() {
+		first := li.FirstChild()
+		bl := Block{Kind: BlockTodo, Checked: taskBox(li).IsChecked}
+		w := &inlineWalker{r: r, taskBox: true}
+		w.children(first)
+		bl.Text, bl.Runs = richFields(w.runs)
+		for c := first.NextSibling(); c != nil; c = c.NextSibling() {
+			bl.Children = append(bl.Children, r.block(c)...)
+		}
+		out = append(out, bl)
+	}
+	return out
 }
 
 // listItems flattens l (and the lists nested in its items) into bl.Items, each
@@ -734,6 +790,10 @@ type inlineWalker struct {
 	runs  []TextRun
 	marks []string
 	link  string
+
+	// taskBox is set while reading the text of a todo block, whose checkbox is
+	// the block's Checked and is not text.
+	taskBox bool
 }
 
 func (w *inlineWalker) emit(s string) {
@@ -861,7 +921,10 @@ func (w *inlineWalker) walk(n ast.Node) {
 		}
 		w.withMark("math", func() { w.emit(v.tex) })
 	case *east.TaskCheckBox:
-		w.r.refuse(v.Pos(), ConstructTodo, "")
+		if w.taskBox {
+			return
+		}
+		w.r.refuse(v.Pos(), ConstructListMixedTodo, "")
 		if v.IsChecked {
 			w.emit("[x] ")
 		} else {

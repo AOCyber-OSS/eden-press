@@ -23,6 +23,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -73,8 +74,14 @@ import (
 // Section. ToMarkdown still writes something sensible for anything else, but the
 // reader may not give the same Document back.
 //
-// Kinds with no GFM spelling (todo, callout, toggle, synced, file, sheet,
-// figure) keep their pre-codec spelling here; they are not yet read back.
+// Kinds with no GFM spelling:
+//   - todo is a GFM task item (`- [ ] text` / `- [x] text`), its children indented
+//     under it; consecutive childless todos form one tight list;
+//   - toggle, synced, callout, file, sheet and figure are container directives,
+//     `:::kind {json}` ... `:::`, the JSON holding the scalar fields, the body the
+//     text paragraph and then the children (a figure's body is its SVG,
+//     verbatim). A body holding `:::` is wrapped in a longer fence, and prose that
+//     starts a line with `:::` is escaped (see renderDirective).
 func ToMarkdown(doc *Document) string {
 	if doc == nil {
 		return ""
@@ -114,27 +121,49 @@ func sortedMapKeys(m map[string]string) []string {
 	return keys
 }
 
-// renderBlocks joins the blocks with exactly one blank line between them.
-// Blocks that render to nothing (an empty paragraph) are skipped, so they never
-// leave a stray blank line behind.
+// renderBlocks joins the blocks with exactly one blank line between them, except
+// that consecutive todo blocks without children form one tight list. Blocks that
+// render to nothing (an empty paragraph) are skipped, so they never leave a
+// stray blank line behind.
+//
+// Two lists written one after the other with a blank line between them are ONE
+// list to a Markdown parser unless their markers differ, so the marker
+// alternates (`-`/`*`, or `.`/`)` for ordered lists) between adjacent lists. A
+// todo is a bullet list item, so the same holds between a todo and a bullet
+// list; consecutive todos share a marker, because they are meant to be one list.
 func renderBlocks(doc *Document, blocks []Block) string {
-	var parts []string
-	flip := false
-	for i, bl := range blocks {
-		if bl.Kind == BlockList {
-			// Two lists of the same kind separated only by a blank line are ONE
-			// list to a Markdown parser. Alternating the marker keeps them apart.
-			if i > 0 && blocks[i-1].Kind == BlockList && blocks[i-1].Ordered == bl.Ordered {
-				flip = !flip
+	var b strings.Builder
+	var prev *Block // the last block that rendered to something
+	prevAlt := false
+	for i := range blocks {
+		bl := &blocks[i]
+		bullet := func(k *Block) bool { return k != nil && (k.Kind == BlockTodo || (k.Kind == BlockList && !k.Ordered)) }
+		alt := false
+		switch {
+		case bl.Kind == BlockList && bl.Ordered:
+			alt = prev != nil && prev.Kind == BlockList && prev.Ordered && !prevAlt
+		case bullet(bl) && bullet(prev):
+			if bl.Kind == BlockTodo && prev.Kind == BlockTodo {
+				alt = prevAlt
 			} else {
-				flip = false
+				alt = !prevAlt
 			}
 		}
-		if s := renderBlock(doc, bl, flip); s != "" {
-			parts = append(parts, s)
+		s := renderBlock(doc, *bl, alt)
+		if s == "" {
+			continue
 		}
+		if prev != nil {
+			if bl.Kind == BlockTodo && prev.Kind == BlockTodo && len(prev.Children) == 0 {
+				b.WriteString("\n")
+			} else {
+				b.WriteString("\n\n")
+			}
+		}
+		b.WriteString(s)
+		prev, prevAlt = bl, alt
 	}
-	return strings.Join(parts, "\n\n")
+	return b.String()
 }
 
 // renderBlock renders one block without a trailing newline.
@@ -177,65 +206,19 @@ func renderBlock(doc *Document, bl Block, flip bool) string {
 	case BlockDivider:
 		return "***"
 	case BlockToggle:
-		head := "<details"
-		if !bl.Collapsed {
-			head += " open"
-		}
-		head += ">\n<summary>" + bl.Text + "</summary>"
-		return joinNonEmpty([]string{head}, renderBlocks(doc, bl.Children), "</details>")
+		return renderDirective(doc, bl, "toggle")
 	case BlockSynced:
-		if bl.SyncRef == nil {
-			return ""
-		}
-		comment := fmt.Sprintf("<!-- synced: blockId=%s pageId=%s -->", bl.SyncRef.BlockID, bl.SyncRef.PageID)
-		if bl.SyncRef.PageID == "" {
-			if src := findBlockPtr(doc, bl.SyncRef.BlockID); src != nil && src.Kind != BlockSynced {
-				return comment + "\n" + renderBlock(doc, *src, false)
-			}
-		}
-		return comment
+		return renderDirective(doc, bl, "synced")
 	case BlockTodo:
-		mark := "- [ ] "
-		if bl.Checked {
-			mark = "- [x] "
-		}
-		return joinNonEmpty([]string{mark + renderRuns(runsOfBlock(bl), inlineFlat)}, renderBlocks(doc, bl.Children))
+		return renderTodo(doc, bl, flip)
 	case BlockCallout:
-		text := renderRuns(runsOfBlock(bl), inlineBlock)
-		if bl.Icon != "" {
-			text = bl.Icon + " " + text
-		}
-		return joinNonEmpty([]string{prefixLines(text, "> ")}, renderBlocks(doc, bl.Children))
+		return renderDirective(doc, bl, "callout")
 	case BlockFile:
-		name := bl.Name
-		if name == "" {
-			name = bl.Text
-		}
-		if name == "" {
-			name = bl.Src
-		}
-		return "[" + escapeInline(name, false, inlineFlat) + "](" + linkDest(bl.Src) + ")"
+		return renderDirective(doc, bl, "file")
 	case BlockSheet:
-		if bl.SheetEmbed != nil && bl.SheetEmbed.Snapshot != nil {
-			return renderSheetSnapshotTable(bl.SheetEmbed.Snapshot)
-		}
-		sheet := ""
-		if bl.SheetEmbed != nil {
-			sheet = bl.SheetEmbed.Sheet
-		}
-		return fmt.Sprintf("<!-- eden-sheet: %s -->", sheet)
+		return renderDirective(doc, bl, "sheet")
 	case BlockFigure:
-		if bl.SVG != "" {
-			return strings.TrimSuffix(bl.SVG, "\n")
-		}
-		if bl.Src != "" {
-			alt := bl.Text
-			if alt == "" {
-				alt = bl.Title
-			}
-			return renderImage(alt, bl.Src, bl.Title)
-		}
-		return ""
+		return renderDirective(doc, bl, "figure")
 	default:
 		return joinNonEmpty([]string{renderRuns(runsOfBlock(bl), inlineBlock)}, renderBlocks(doc, bl.Children))
 	}
@@ -270,6 +253,125 @@ func prefixLines(s, prefix string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ---- todo and container directives ----
+
+// renderTodo writes a todo as a GFM task item. Its children are indented to the
+// item's content column, after a blank line.
+func renderTodo(doc *Document, bl Block, alt bool) string {
+	marker := "- "
+	if alt {
+		marker = "* "
+	}
+	box := "[ ]"
+	if bl.Checked {
+		box = "[x]"
+	}
+	lines := strings.Split(renderRuns(runsOfBlock(bl), inlineBlock), "\n")
+	head := marker + box
+	if lines[0] != "" {
+		head += " " + lines[0]
+	}
+	out := []string{head}
+	for _, ln := range lines[1:] {
+		out = append(out, strings.Repeat(" ", len(marker))+ln)
+	}
+	return joinNonEmpty([]string{strings.Join(out, "\n")}, indentLines(renderBlocks(doc, bl.Children), strings.Repeat(" ", len(marker))))
+}
+
+// indentLines prefixes every non-empty line with prefix.
+func indentLines(s, prefix string) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if ln != "" {
+			lines[i] = prefix + ln
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderDirective writes toggle, synced, callout, file, sheet and figure as a
+// container directive (see frommarkdown_directives.go). The scalar fields go in
+// a one-line JSON header (json.Marshal escapes `<`, `>` and `&`, so a value can
+// hold `-->` or markup and the header is still one line). The body is the
+// block's text paragraph and then its children; a figure's body is its SVG,
+// verbatim. The fence is one colon longer than the longest run of colons at the
+// start of any body line, so nothing inside can close it.
+func renderDirective(doc *Document, bl Block, name string) string {
+	h := dirHeader{
+		Icon: bl.Icon, Tone: bl.Tone, Collapsed: bl.Collapsed, Name: bl.Name, Mime: bl.Mime, Size: bl.Size,
+		Src: bl.Src, Title: bl.Title, SheetEmbed: bl.SheetEmbed, SyncRef: bl.SyncRef,
+	}
+	var body string
+	if bl.Kind == BlockFigure {
+		h.Alt = bl.Text
+		if bl.SVG != "" {
+			body = bl.SVG + "\n"
+		}
+	} else {
+		text := renderRuns(runsOfBlock(bl), inlineBlock)
+		kids := renderBlocks(doc, bl.Children)
+		if text == "" && kids != "" && startsAsParagraph(firstRendered(doc, bl.Children)) {
+			h.NoText = true
+		}
+		body = joinNonEmpty([]string{text}, kids)
+		if body != "" {
+			body += "\n"
+		}
+	}
+	fence := strings.Repeat(":", colonFenceLen(body))
+	open := fence + name
+	if hb, err := json.Marshal(h); err == nil && string(hb) != "{}" {
+		open += " " + string(hb)
+	}
+	return open + "\n" + body + fence
+}
+
+// colonFenceLen is the length of a fence that no line of body can close: three,
+// or one more than the longest run of colons at the start of a body line.
+func colonFenceLen(body string) int {
+	n := 3
+	for _, ln := range strings.Split(body, "\n") {
+		t := strings.TrimLeft(ln, " \t")
+		run := 0
+		for run < len(t) && t[run] == ':' {
+			run++
+		}
+		if run >= n {
+			n = run + 1
+		}
+	}
+	return n
+}
+
+// firstRendered is the first block that renders to something.
+func firstRendered(doc *Document, blocks []Block) *Block {
+	for i := range blocks {
+		if renderBlocks(doc, blocks[i:i+1]) != "" {
+			return &blocks[i]
+		}
+	}
+	return nil
+}
+
+// startsAsParagraph reports whether the Markdown of bl begins as a paragraph, so
+// that, first in a directive body, it would be read as the directive's text.
+func startsAsParagraph(bl *Block) bool {
+	if bl == nil {
+		return false
+	}
+	switch bl.Kind {
+	case BlockHeading, BlockList, BlockCode, BlockTable, BlockQuote, BlockDivider, BlockToggle, BlockSynced,
+		BlockTodo, BlockCallout, BlockFile, BlockSheet, BlockFigure:
+		return false
+	case BlockMath:
+		return !bl.Display
+	}
+	return true
 }
 
 // ---- code ----
@@ -444,43 +546,6 @@ func tableRow(cells []string) string {
 
 func cellText(s string) string {
 	return padEdges(escapeInline(s, false, inlineFlat))
-}
-
-// renderSheetSnapshotTable renders a sheet snapshot as a table whose first row
-// is the header row.
-func renderSheetSnapshotTable(snap *SheetSnapshot) string {
-	if snap == nil || len(snap.Cells) == 0 {
-		return "<!-- eden-sheet empty -->"
-	}
-	maxR, maxC := 0, 0
-	grid := map[[2]int]string{}
-	for _, c := range snap.Cells {
-		if c.R > maxR {
-			maxR = c.R
-		}
-		if c.C > maxC {
-			maxC = c.C
-		}
-		v := c.V
-		if c.F != "" {
-			v = "=" + c.F
-		}
-		grid[[2]int{c.R, c.C}] = v
-	}
-	var headers []string
-	var rows [][]string
-	for r := 0; r <= maxR; r++ {
-		cells := make([]string, maxC+1)
-		for c := 0; c <= maxC; c++ {
-			cells[c] = grid[[2]int{r, c}]
-		}
-		if r == 0 {
-			headers = cells
-		} else {
-			rows = append(rows, cells)
-		}
-	}
-	return renderTable(headers, nil, rows)
 }
 
 // ---- images and links ----
@@ -900,7 +965,7 @@ func escapeInline(s string, lineStart bool, mode inlineMode) string {
 			}
 			b.WriteByte(c)
 		case ':':
-			if atLine && delimiterRowAhead(s[i:]) {
+			if atLine && (delimiterRowAhead(s[i:]) || strings.HasPrefix(s[i:], ":::")) {
 				b.WriteByte('\\')
 			}
 			b.WriteByte(c)
