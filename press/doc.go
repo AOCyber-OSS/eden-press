@@ -35,6 +35,12 @@
 // introduces (TRD 03-01). It never touches chase.Render or chase/chase.go;
 // every existing chase caller stays byte-for-byte unaffected.
 //
+// press.RenderModel (and its byte form RenderModelJSON) is the same pipeline
+// entered from a v7 docmodel instead of Markdown: it returns the same Output
+// -- same theme/profile CSS, one unit element per Section, sanitized HTML --
+// so PDF, PNG and themed HTML can be produced from a document that is stored
+// as a model. See render_model.go.
+//
 // This file (doc.go) carries only the package documentation. The public
 // surface itself lives in options.go: the Options input struct and the
 // Output result struct -- the frozen API-03 contract every wave-2 battery
