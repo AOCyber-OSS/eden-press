@@ -243,8 +243,8 @@ func clearSpans(d *model.Document) {
 }
 
 // jsonTree is d as the generic tree encoding/json decodes, with every empty array
-// and object (and null) dropped: an empty collection and an absent one are the same
-// JSON document for this comparison.
+// and object (and null) dropped, and a table's all-empty "aligns": an empty
+// collection and an absent one are the same JSON document for this comparison.
 func jsonTree(d *model.Document) (any, error) {
 	raw, err := json.Marshal(d)
 	if err != nil {
@@ -261,7 +261,7 @@ func dropEmpty(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
-			if e = dropEmpty(e); e == nil {
+			if e = dropEmpty(e); e == nil || (k == "aligns" && allEmptyStrings(e)) {
 				delete(x, k)
 			} else {
 				x[k] = e
@@ -281,6 +281,22 @@ func dropEmpty(v any) any {
 		return x
 	}
 	return v
+}
+
+// allEmptyStrings reports whether v is an array of only empty strings. A table with
+// no "aligns" and one with an empty alignment per column are the same table: the
+// reader writes the second form, an ops batch often leaves the first.
+func allEmptyStrings(v any) bool {
+	list, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, e := range list {
+		if s, ok := e.(string); !ok || s != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // dropEmptyKeep is dropEmpty for an array element, which must stay in place: an

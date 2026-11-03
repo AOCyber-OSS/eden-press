@@ -337,3 +337,30 @@ func TestMarkdownSourceViewJSONRejectsMalformedJSON(t *testing.T) {
 		t.Fatal("a non-document must be an error")
 	}
 }
+
+// A table an agent inserted with no "aligns" is read back with one empty alignment
+// per column. That is the same table (nothing is aligned), so the guard must not
+// blame it. Ragged rows, which Markdown cannot spell, are blamed.
+func TestVerifyMarkdownRoundTripJSONTreatsMissingAlignsAsUnaligned(t *testing.T) {
+	doc, err := NewDocJSON("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []byte(`[{"op":"insert_block","sectionId":1,"block":{"kind":"table","headers":["a","b"],"rows":[["1","2"]]}}]`)
+	if doc, err = ApplyOpsJSON(doc, ops); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyMarkdownRoundTripJSON(doc); err != nil {
+		t.Fatalf("a table without aligns should pass: %v", err)
+	}
+
+	ragged := []byte(`[{"op":"insert_block","sectionId":1,"block":{"kind":"table","headers":["a","b"],"rows":[["1","2","3"]]}}]`)
+	doc, _ = NewDocJSON("")
+	if doc, err = ApplyOpsJSON(doc, ragged); err != nil {
+		t.Fatal(err)
+	}
+	err = VerifyMarkdownRoundTripJSON(doc)
+	if err == nil || !strings.Contains(err.Error(), "sections[0].blocks[0].rows[0]") {
+		t.Fatalf("a ragged row cannot round-trip, want an error naming rows[0], got %v", err)
+	}
+}
