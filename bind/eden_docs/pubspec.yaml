@@ -48,5 +48,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # Test-only: test/pubspec_contract_test.dart parses THIS file to lock the
+  # no-FFI-plugin contract. Pin confirmed by `flutter pub add --dev yaml`.
+  yaml: 3.1.4
 
 flutter: {}
