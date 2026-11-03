@@ -118,6 +118,12 @@ const (
 	// math runs to the end of the enclosing block.
 	ConstructMathUnclosed = "math-unclosed"
 
+	// ConstructMathTrailingText is text after the closing $$ of a display math
+	// block on the same line ("$$ tail"). Display math is a block, so the text
+	// cannot share it. Lenient: the text becomes the paragraph that follows the
+	// math block.
+	ConstructMathTrailingText = "math-trailing-text"
+
 	// ConstructFrontMatter is a leading --- block that does not parse as
 	// key: value lines (including a duplicate key or a bad quoted value).
 	// Lenient: unparseable lines are skipped and a later duplicate key wins.

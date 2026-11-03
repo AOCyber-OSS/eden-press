@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -481,7 +482,16 @@ func decodeJSONStrict(s string, v any, noUnknown bool) error {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("text after the JSON payload")
 	}
-	return nil
+	// Canonical form is what one more trip through JSON leaves: an empty array or
+	// object under an omitempty field (`"rowIds":[]`) is nil, exactly as when the
+	// writer omits it and the field is read back. Without this a Document read from
+	// such a header is not a fixed point of write-then-read.
+	canon, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	reflect.ValueOf(v).Elem().SetZero()
+	return json.Unmarshal(canon, v)
 }
 
 // isSectionRule reports whether a top-level thematic break is spelled with
@@ -535,7 +545,16 @@ func (r *mdReader) convert(n ast.Node) []Block {
 		if !v.closed {
 			r.refuse(v.Pos(), ConstructMathUnclosed, "")
 		}
-		return []Block{{Kind: BlockMath, Display: true, Text: strings.Join(v.lines, "\n")}}
+		out := []Block{{Kind: BlockMath, Display: true, Text: strings.Join(v.lines, "\n")}}
+		if v.trail != "" {
+			r.refuse(v.trailAt, ConstructMathTrailingText, "")
+			out = append(out, Block{Kind: BlockParagraph, Text: v.trail})
+			if r.spans {
+				out[0].Span = r.span(v)
+				out[1].Span = &Span{Start: r.orig(v.trailAt), Stop: r.orig(v.trailEnd)}
+			}
+		}
+		return out
 	default:
 		r.refuse(n.Pos(), ConstructUnsupported, n.Kind().String())
 		return nil
@@ -690,6 +709,11 @@ type mathBlockNode struct {
 	lines  []string
 	closed bool
 	stop   int // offset one past the last byte of the block seen so far
+
+	// trail is the text that follows the closing $$ on its line, and trailAt and
+	// trailEnd are its byte offsets (ConstructMathTrailingText).
+	trail             string
+	trailAt, trailEnd int
 }
 
 var kindMathBlock = ast.NewNodeKind("EdenMathBlock")
@@ -741,6 +765,13 @@ func (*mathBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Co
 	if idx := indexDoubleDollar([]byte(content)); idx >= 0 {
 		if before := content[:idx]; strings.TrimSpace(before) != "" {
 			n.lines = append(n.lines, before)
+		}
+		if after := content[idx+2:]; strings.TrimSpace(after) != "" {
+			lead := len(after) - len(strings.TrimLeft(after, " \t"))
+			n.trail = strings.TrimSpace(after)
+			n.trailAt = segment.Start + idx + 2 + lead
+			n.trailEnd = n.trailAt + len(n.trail)
+			n.stop = segment.Start + idx + 2 // the block ends at its closing $$
 		}
 		n.closed = true
 		reader.AdvanceToEOL()

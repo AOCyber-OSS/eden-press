@@ -69,9 +69,12 @@ import (
 // link; a list starts at level 0 and never skips a level; Section IDs are 1..n;
 // text never starts or ends with a newline or contains a blank line; a paragraph
 // is never only one image or only inline math (those are image and math blocks);
-// a math run is not followed by a digit; and a Document has at least one
-// Section. ToMarkdown still writes something sensible for anything else, but the
-// reader may not give the same Document back.
+// a math run is not followed by a digit; display math TeX holds no unescaped "$$"
+// and inline math TeX no unescaped "$" (TeX reserves it; write \$); a todo's child
+// list does not end in an empty item while more children follow it (goldmark closes
+// the todo there); and a Document has at least one Section. ToMarkdown still writes
+// something sensible for anything else, but the reader may not give the same
+// Document back.
 //
 // Kinds with no GFM spelling:
 //   - todo is a GFM task item (`- [ ] text` / `- [x] text`), its children indented
@@ -109,7 +112,10 @@ func ToMarkdown(doc *Document) string {
 		}
 		body.WriteString(content)
 	}
-	parts = append(parts, strings.TrimSpace(body.String()), renderTrailer(doc))
+	// Trim newlines only. strings.TrimSpace would also eat a Unicode space that is
+	// the first or last character of the document ("\u00a0x", "x\f"), which is
+	// content: CommonMark keeps every space that is not ASCII space or tab.
+	parts = append(parts, strings.Trim(body.String(), "\n"), renderTrailer(doc))
 	var out []string
 	for _, p := range parts {
 		if p != "" {
@@ -640,14 +646,28 @@ func escapeDest(u string, angle bool) string {
 	return b.String()
 }
 
+// escapeTitle spells a link or image title. CommonMark lets a title span lines, so
+// a newline is kept as long as it does not leave a blank line inside the title (a
+// blank line ends the paragraph); a newline that would, and any "\r", becomes a
+// space.
 func escapeTitle(t string) string {
 	var b strings.Builder
+	lineStart := 0 // where the current line of t starts
 	for i := 0; i < len(t); i++ {
 		c := t[i]
 		switch {
 		case c == '\\' || c == '"':
 			b.WriteByte('\\')
 			b.WriteByte(c)
+		case c == '\n' && (lineStart == 0 || strings.TrimSpace(t[lineStart:i]) != ""):
+			b.WriteByte('\n')
+			lineStart = i + 1
+			// The reader drops the spaces that start a continuation line, so the first
+			// one is spelled as a character reference.
+			if lineStart < len(t) && (t[lineStart] == ' ' || t[lineStart] == '\t') {
+				b.WriteString(spaceEntity(t[lineStart]))
+				i++
+			}
 		case c == '\n' || c == '\r':
 			b.WriteByte(' ')
 		case c == '&' && entityAhead(t[i:]):
