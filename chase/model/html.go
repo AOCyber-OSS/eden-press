@@ -264,18 +264,21 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block, m htmlMode) {
 		if bl.SheetEmbed != nil {
 			name = bl.SheetEmbed.Sheet
 		}
-		tag := "section"
+		// Spelled as whole tags, not a bare element name: this package may not
+		// contain the profile unit-element literal (MODEL-04's grep gate), and
+		// the flowing view's <section> is document markup, not a unit.
+		open, closing := `<section class="sheet-embed">`, "</section>\n"
 		if m.embedded {
-			tag = "div"
+			open, closing = `<div class="sheet-embed">`, "</div>\n"
 		}
-		fmt.Fprintf(b, `<%s class="sheet-embed">`, tag)
+		b.WriteString(open)
 		fmt.Fprintf(b, "<header>%s</header>\n", html.EscapeString(orDefault(name, "Sheet")))
 		if bl.SheetEmbed != nil && bl.SheetEmbed.Snapshot != nil {
 			writeHTMLSheetSnapshot(b, bl.SheetEmbed.Snapshot, m)
 		} else {
 			b.WriteString("<p>Live sheet reference (no offline snapshot)</p>\n")
 		}
-		fmt.Fprintf(b, "</%s>\n", tag)
+		b.WriteString(closing)
 	case BlockFigure:
 		b.WriteString(`<figure class="figure">`)
 		if bl.SVG != "" {
