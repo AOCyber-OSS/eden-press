@@ -43,7 +43,7 @@ func codecFixtureDoc(t *testing.T) []byte {
 	}
 	ops := []byte(`[
 		{"op":"insert_block","sectionId":1,"block":{"kind":"heading","level":1,"text":"Plan"}},
-		{"op":"insert_block","sectionId":1,"block":{"kind":"paragraph","text":"see docs now","runs":[{"text":"see "},{"text":"docs","link":"https://x.io"},{"text":" now","marks":["bold"]}]}},
+		{"op":"insert_block","sectionId":1,"block":{"kind":"paragraph","text":"see docs now","runs":[{"text":"see "},{"text":"docs","link":"https://x.io"},{"text":" "},{"text":"now","marks":["bold"]}]}},
 		{"op":"insert_block","sectionId":1,"block":{"kind":"list","items":[{"text":"a"},{"text":"b","level":1}]}},
 		{"op":"insert_block","sectionId":1,"block":{"kind":"table","headers":["k","v"],"aligns":["","right"],"rows":[["a","1"]]}},
 		{"op":"insert_block","sectionId":1,"block":{"kind":"toggle","text":"More","collapsed":true,"children":[{"kind":"todo","text":"do it","checked":true}]}},
@@ -142,9 +142,10 @@ func TestMarkdownToDocJSONPrevKeepsIDsAcrossAnEdit(t *testing.T) {
 	if err != nil || len(outline) == 0 {
 		t.Fatalf("source view: %v %v", outline, err)
 	}
-	// Edit the Markdown by hand: reword the paragraph, add a new paragraph first.
+	// Edit the Markdown by hand: reword the paragraph, add a new paragraph before
+	// the first heading (after the front matter).
 	edited := strings.Replace(md, "docs", "manuals", 1)
-	edited = "A brand new first paragraph.\n\n" + edited
+	edited = strings.Replace(edited, "# Plan", "A brand new first paragraph.\n\n# Plan", 1)
 	out, err := MarkdownToDocJSON(edited, prev, MarkdownImport{})
 	if err != nil {
 		t.Fatal(err)
