@@ -24,6 +24,10 @@ package model
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,6 +41,8 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
+
+	"go.aocyber.ai/eden-press/chase/directive"
 )
 
 // FromMarkdownOptions configures FromMarkdown.
@@ -87,6 +93,10 @@ type FromMarkdownOptions struct {
 //   - a bullet list made only of GFM task items is one todo block per item, the
 //     item's other blocks being its Children; a task item anywhere else is
 //     ConstructListMixedTodo;
+//   - a whole top-level `<!-- ... -->` comment is not a block: `eden:attrs` and
+//     `eden:note` (the canonical spellings) and Marp's plain comments become the
+//     section's Attrs and Notes (see sectionComment), and `eden:model` is the
+//     trailer holding Properties, PropertyValues and Comments (see codec_ids.go);
 //   - a `:::kind {json}` ... `:::` container is a toggle, synced, callout, file,
 //     sheet or figure block (see frommarkdown_directives.go): the first paragraph
 //     of the body is the block's Text/Runs and the rest are its Children;
@@ -116,6 +126,9 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
+	if tr := r.trailer; tr != nil {
+		doc.Properties, doc.PropertyValues, doc.Comments = tr.Properties, tr.PropertyValues, tr.Comments
+	}
 	rebuildOutline(doc)
 	return doc, nil
 }
@@ -141,6 +154,8 @@ type mdReader struct {
 	base    int // offset of src[0] in the (normalized) input
 	lenient bool
 	err     *UnrepresentableError
+
+	trailer *modelTrailer // the eden:model comment, once seen
 }
 
 // refuse records the first strict-mode refusal. Callers go on to apply the
@@ -244,9 +259,134 @@ func (r *mdReader) sections(root ast.Node) []Section {
 			continue
 		}
 		cur := &secs[len(secs)-1]
+		if hb, ok := c.(*ast.HTMLBlock); ok && r.sectionComment(hb, cur) {
+			continue
+		}
 		cur.Blocks = append(cur.Blocks, r.block(c)...)
 	}
 	return secs
+}
+
+// ---- comments: section attrs, notes and the trailer ----
+
+// sectionComment reads a top-level HTML comment that is nothing but a comment
+// and reports whether it did. In order:
+//   - `eden:attrs {json}` is the section's Attrs, `eden:note "text"` is one of its
+//     Notes, and `eden:model {json}` is the trailer (see codec_ids.go), which
+//     belongs to no section;
+//   - any other comment is Marp's: when it parses as YAML whose keys are all
+//     known directives it is Attrs, otherwise (including a mix of known and
+//     unknown keys, so free text is never taken for a directive) it is a Note.
+//
+// A canonical comment whose payload cannot be read is ConstructDirectiveJSON;
+// lenient mode keeps its text as a Note. A comment with anything after it, or in
+// a container, is raw HTML (htmlBlock).
+func (r *mdReader) sectionComment(v *ast.HTMLBlock, cur *Section) bool {
+	body, ok := commentBody(r.htmlSource(v))
+	if !ok {
+		return false
+	}
+	bad := func(err error) {
+		r.refuse(v.Pos(), ConstructDirectiveJSON, err.Error())
+		cur.Notes = append(cur.Notes, body)
+	}
+	switch {
+	case edenWord(body, "eden:attrs"):
+		var attrs map[string]string
+		if err := decodeJSONStrict(body[len("eden:attrs"):], &attrs, false); err != nil {
+			bad(fmt.Errorf("eden:attrs: %w", err))
+			break
+		}
+		cur.addAttrs(attrs)
+	case edenWord(body, "eden:note"):
+		var note string
+		if err := decodeJSONStrict(body[len("eden:note"):], &note, false); err != nil {
+			bad(fmt.Errorf("eden:note: %w", err))
+			break
+		}
+		cur.Notes = append(cur.Notes, note)
+	case edenWord(body, "eden:model"):
+		var tr modelTrailer
+		err := decodeJSONStrict(body[len("eden:model"):], &tr, true)
+		switch {
+		case err == nil && tr.Version != trailerVersion:
+			err = fmt.Errorf("unsupported version %d", tr.Version)
+		case err == nil && r.trailer != nil:
+			err = errors.New("a second eden:model comment")
+		}
+		if err != nil {
+			bad(fmt.Errorf("eden:model: %w", err))
+			break
+		}
+		r.trailer = &tr
+	case isNote(body):
+		cur.Notes = append(cur.Notes, body)
+	default:
+		attrs := map[string]string{}
+		for _, kv := range directive.ParseComment(body) {
+			attrs[kv.Key] = stringifyRawValue(kv.Val)
+		}
+		cur.addAttrs(attrs)
+	}
+	return true
+}
+
+// addAttrs merges attrs into the section's Attrs, a later value winning.
+func (s *Section) addAttrs(attrs map[string]string) {
+	if len(attrs) == 0 {
+		return
+	}
+	if s.Attrs == nil {
+		s.Attrs = map[string]string{}
+	}
+	for k, v := range attrs {
+		s.Attrs[k] = v
+	}
+}
+
+// commentBody returns the trimmed text of src when src is exactly one HTML
+// comment (nothing after its `-->`).
+func commentBody(src string) (string, bool) {
+	t := strings.TrimSpace(src)
+	if len(t) < 7 || !strings.HasPrefix(t, "<!--") || !strings.HasSuffix(t, "-->") {
+		return "", false
+	}
+	inner := t[4 : len(t)-3]
+	if strings.Contains(inner, "-->") {
+		return "", false
+	}
+	return strings.TrimSpace(inner), true
+}
+
+// edenWord reports whether body starts with the whole word w (`eden:note` but not
+// `eden:notes`).
+func edenWord(body, w string) bool {
+	if !strings.HasPrefix(body, w) {
+		return false
+	}
+	rest := body[len(w):]
+	return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n'
+}
+
+// decodeJSONStrict reads s as exactly one JSON value (never null) into v. With
+// noUnknown, an object key v has no field for is an error.
+func decodeJSONStrict(s string, v any, noUnknown bool) error {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "null" {
+		return errors.New("no JSON payload")
+	}
+	dec := json.NewDecoder(strings.NewReader(s))
+	if noUnknown {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("text after the JSON payload")
+	}
+	return nil
 }
 
 // isSectionRule reports whether a top-level thematic break is spelled with
@@ -420,8 +560,9 @@ func codeText(lines *text.Segments, src []byte) string {
 	return strings.TrimSuffix(string(b), "\n")
 }
 
-func (r *mdReader) htmlBlock(v *ast.HTMLBlock) Block {
-	r.refuse(v.Pos(), ConstructRawHTML, "")
+// htmlSource is the source text of an HTML block: its lines and, for a block
+// that ended on a closing line, that line.
+func (r *mdReader) htmlSource(v *ast.HTMLBlock) string {
 	var b []byte
 	for i := 0; i < v.Lines().Len(); i++ {
 		seg := v.Lines().At(i)
@@ -430,7 +571,12 @@ func (r *mdReader) htmlBlock(v *ast.HTMLBlock) Block {
 	if v.HasClosure() {
 		b = append(b, v.ClosureLine.Value(r.src)...)
 	}
-	return Block{Kind: BlockParagraph, Text: strings.TrimRight(string(b), "\n")}
+	return string(b)
+}
+
+func (r *mdReader) htmlBlock(v *ast.HTMLBlock) Block {
+	r.refuse(v.Pos(), ConstructRawHTML, "")
+	return Block{Kind: BlockParagraph, Text: strings.TrimRight(r.htmlSource(v), "\n")}
 }
 
 // mathBlockNode is a $$ ... $$ display math block. Its TeX is kept verbatim as

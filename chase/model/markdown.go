@@ -24,7 +24,6 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -86,30 +85,66 @@ func ToMarkdown(doc *Document) string {
 	if doc == nil {
 		return ""
 	}
-	var b strings.Builder
+	var parts []string
 	if len(doc.Meta.Directives) > 0 {
-		b.WriteString("---\n")
+		var fm strings.Builder
+		fm.WriteString("---\n")
 		for _, k := range sortedMapKeys(doc.Meta.Directives) {
-			b.WriteString(k)
-			b.WriteString(": ")
-			b.WriteString(yamlScalar(doc.Meta.Directives[k]))
-			b.WriteByte('\n')
+			fm.WriteString(k)
+			fm.WriteString(": ")
+			fm.WriteString(yamlScalar(doc.Meta.Directives[k]))
+			fm.WriteByte('\n')
 		}
-		b.WriteString("---\n\n")
+		fm.WriteString("---")
+		parts = append(parts, fm.String())
 	}
+	var body strings.Builder
 	for i, sec := range doc.Sections {
+		content := renderSection(doc, sec)
 		if i > 0 {
-			b.WriteString("\n\n---\n\n")
+			body.WriteString("\n\n---")
+			if content != "" {
+				body.WriteString("\n\n")
+			}
 		}
-		for _, k := range sortedMapKeys(sec.Attrs) {
-			b.WriteString(fmt.Sprintf("<!-- %s: %s -->\n", k, sec.Attrs[k]))
-		}
-		for _, note := range sec.Notes {
-			b.WriteString(fmt.Sprintf("<!-- %s -->\n", note))
-		}
-		b.WriteString(renderBlocks(doc, sec.Blocks))
+		body.WriteString(content)
 	}
-	return strings.TrimSpace(b.String()) + "\n"
+	parts = append(parts, strings.TrimSpace(body.String()), renderTrailer(doc))
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "\n\n") + "\n"
+}
+
+// renderSection writes one section: its attrs (one comment, first), its blocks,
+// then its notes (one comment each, in order, last). Notes have no position in
+// the model, so they are written in this one place.
+//
+// Attrs and notes use the same `<!-- ... -->` syntax in Marp, which makes them
+// ambiguous, so each has a canonical spelling that names itself and carries its
+// payload as JSON: `<!-- eden:attrs {"k":"v"} -->` and `<!-- eden:note "text" -->`.
+// json.Marshal escapes `>`, so no payload can hold `-->`, and newlines are
+// escaped, so each comment is one line. FromMarkdown reads both and also the
+// plain Marp spellings.
+func renderSection(doc *Document, sec Section) string {
+	var parts []string
+	if len(sec.Attrs) > 0 {
+		parts = append(parts, "<!-- eden:attrs "+jsonLine(sec.Attrs)+" -->")
+	}
+	if body := renderBlocks(doc, sec.Blocks); body != "" {
+		parts = append(parts, body)
+	}
+	if len(sec.Notes) > 0 {
+		lines := make([]string, len(sec.Notes))
+		for i, note := range sec.Notes {
+			lines[i] = "<!-- eden:note " + jsonLine(note) + " -->"
+		}
+		parts = append(parts, strings.Join(lines, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func sortedMapKeys(m map[string]string) []string {

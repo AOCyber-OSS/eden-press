@@ -24,9 +24,6 @@ package model
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
@@ -88,16 +85,7 @@ var directiveKinds = map[string]BlockKind{
 
 // decodeDirHeader reads s as exactly one JSON object holding only known fields.
 func decodeDirHeader(s string, h *dirHeader) error {
-	dec := json.NewDecoder(strings.NewReader(s))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(h); err != nil {
-		return err
-	}
-	var extra json.RawMessage
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("text after the JSON header")
-	}
-	return nil
+	return decodeJSONStrict(s, h, true)
 }
 
 // ---- the goldmark node and parser ----

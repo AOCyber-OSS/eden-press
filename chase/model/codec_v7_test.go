@@ -26,6 +26,7 @@ import (
 	"errors"
 	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -612,5 +613,109 @@ func TestCodecMalformedCommentsAreNotesWhenLenient(t *testing.T) {
 				t.Fatalf("a kept note is not stable:\n%s", md)
 			}
 		})
+	}
+}
+
+// TestCodecSectionLayerSweep builds random documents whose sections, attrs,
+// notes, properties, property values and comments hold awkward strings (quotes,
+// `-->`, `<`, newlines, unicode, empty), and checks each survives the trip.
+func TestCodecSectionLayerSweep(t *testing.T) {
+	rng := rand.New(rand.NewSource(2611))
+	alphabet := []string{"a", "B", " ", "-", "--", "-->", "<!--", "<", ">", "&", "\"", "\\", "\n", ":", "eden:", "é", "☕", "{", "}", "#", "_", "x"}
+	str := func() string { return sweepText(rng, alphabet, rng.Intn(6)) }
+	fails := 0
+	for i := 0; i < 4000; i++ {
+		var secs [][]Block
+		for n := 1 + rng.Intn(4); n > 0; n-- {
+			if rng.Intn(3) == 0 {
+				secs = append(secs, nil)
+			} else {
+				secs = append(secs, []Block{fxPara("p" + strconv.Itoa(rng.Intn(100)))})
+			}
+		}
+		d := fxDoc(secs...)
+		for k := range d.Sections {
+			if rng.Intn(2) == 0 {
+				d.Sections[k].Attrs = map[string]string{}
+				for n := 1 + rng.Intn(3); n > 0; n-- {
+					d.Sections[k].Attrs[str()] = str()
+				}
+			}
+			for n := rng.Intn(4); n > 0; n-- {
+				d.Sections[k].Notes = append(d.Sections[k].Notes, str())
+			}
+		}
+		if rng.Intn(2) == 0 {
+			d.PropertyValues = map[string]string{str(): str(), str(): str()}
+			d.Properties = []PropertyDef{{ID: str(), Name: str(), Type: PropText}}
+			if rng.Intn(2) == 0 {
+				d.Properties[0].Options = []string{str(), str()}
+			}
+		}
+		for n := rng.Intn(3); n > 0; n-- {
+			c := Comment{ID: str(), BlockID: str(), Body: str(), Resolved: rng.Intn(2) == 0}
+			if rng.Intn(2) == 0 {
+				c.Start, c.Stop = intp(rng.Intn(5)), intp(5+rng.Intn(5))
+			}
+			if rng.Intn(2) == 0 {
+				c.Suggestion = &CommentSuggestion{Text: str(), Runs: []TextRun{{Text: str(), Marks: []string{"bold"}}}}
+			}
+			d.Comments = append(d.Comments, c)
+		}
+		md := ToMarkdown(d)
+		got, err := FromMarkdown(md, FromMarkdownOptions{})
+		if err == nil && reflect.DeepEqual(got, d) {
+			continue
+		}
+		fails++
+		if fails <= 2 {
+			gotJSON := "nil"
+			if got != nil {
+				gotJSON = docJSON(t, got)
+			}
+			t.Errorf("does not round-trip\n markdown: %q\n error: %v\n want: %s\n got: %s", md, err, docJSON(t, d), gotJSON)
+		}
+	}
+	if fails > 0 {
+		t.Fatalf("%d round-trip failures", fails)
+	}
+}
+
+// TestCodecSectionLayerIsStableOnGarbage reads random soup heavy on comments and
+// section rules: whatever it parses to, writing and reading again must give the
+// same document.
+func TestCodecSectionLayerIsStableOnGarbage(t *testing.T) {
+	alphabet := []string{
+		"a", "\n", "\n\n", " ", "---", "<!--", "-->", "<!-- x -->", "<!-- _class: lead -->", "<!-- TODO: fix -->",
+		"<!-- eden:attrs {\"a\":\"b\"} -->", "<!-- eden:attrs {x} -->", "<!-- eden:note \"n\" -->", "<!-- eden:note x -->",
+		"<!-- eden:model {\"v\":1} -->", "<!-- eden:model {\"v\":1,\"propertyValues\":{\"k\":\"v\"}} -->",
+		"<!-- eden:model {\"v\":9} -->", "<!--", "eden:note", "> ", "- ", ":::toggle\n", ":::\n", "# h",
+	}
+	rng := rand.New(rand.NewSource(31))
+	bad := 0
+	for i := 0; i < 20000 && bad < 5; i++ {
+		src := sweepText(rng, alphabet, 1+rng.Intn(14))
+		for _, lenient := range []bool{false, true} {
+			d, err := FromMarkdown(src, FromMarkdownOptions{Lenient: lenient})
+			if err != nil {
+				var ue *UnrepresentableError
+				if lenient || !errors.As(err, &ue) {
+					t.Fatalf("lenient=%v: unexpected error %T %v for %q", lenient, err, err, src)
+				}
+				continue
+			}
+			md := ToMarkdown(d)
+			d2, err := FromMarkdown(md, FromMarkdownOptions{})
+			if err == nil && reflect.DeepEqual(d, d2) {
+				continue
+			}
+			bad++
+			second := "nil"
+			if d2 != nil {
+				second = docJSON(t, d2)
+			}
+			t.Errorf("not stable (lenient=%v)\n source: %q\n canonical: %q\n error: %v\n first: %s\n second: %s", lenient, src, md, err, docJSON(t, d), second)
+			break
+		}
 	}
 }

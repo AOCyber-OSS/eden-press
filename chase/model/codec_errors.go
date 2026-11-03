@@ -57,9 +57,12 @@ func (e *UnrepresentableError) Error() string {
 // callers (the AODex migration guard, the editor's Markdown view) switch on
 // them.
 const (
-	// ConstructRawHTML is an HTML block, an HTML comment or inline HTML.
-	// Lenient: a block becomes a paragraph whose Text is the literal source
-	// lines; inline HTML becomes literal text.
+	// ConstructRawHTML is an HTML block, an inline HTML tag or an HTML comment
+	// that is not a whole top-level comment (one with text after its closing
+	// `-->`, or inside a quote, list or directive). A top-level comment is a
+	// section note or attrs and is not refused. Lenient: a block becomes a
+	// paragraph whose Text is the literal source lines; inline HTML becomes
+	// literal text.
 	ConstructRawHTML = "raw-html"
 
 	// ConstructTableCellFormatting is a table cell holding anything but plain
@@ -127,8 +130,10 @@ const (
 
 	// ConstructDirectiveJSON is a directive whose header is not one JSON object
 	// of the known fields (bad JSON, trailing text, an unknown key, a wrong type),
-	// or an eden:attrs / eden:note / eden:model comment whose payload is not valid.
-	// Lenient: a directive stays as literal paragraph text; a comment is a note.
+	// or an eden:attrs / eden:note / eden:model comment whose payload is not valid
+	// (including an eden:model version this package does not read and a second
+	// eden:model comment). Lenient: a directive stays as literal paragraph text; a
+	// comment stays as a section note, text unchanged.
 	ConstructDirectiveJSON = "directive-json"
 
 	// ConstructDirectiveUnclosed is a directive with no closing fence before the
