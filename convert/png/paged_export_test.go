@@ -357,6 +357,16 @@ const longSectionJS = `(() => {
 // under the given media ("screen" for PNG, "print" for PDF).
 func measureLongSection(t *testing.T, sess *chrome.Session, out press.Output, media string) longSectionMetrics {
 	t.Helper()
+	var m longSectionMetrics
+	evalPaged(t, sess, out, media, longSectionJS, &m)
+	return m
+}
+
+// evalPaged loads out the way ToImages does (A4 viewport, the determinism
+// recipe, ComposeCSS), emulates media, runs js (which returns a JSON string)
+// and decodes the result into v.
+func evalPaged(t *testing.T, sess *chrome.Session, out press.Output, media, js string, v any) {
+	t.Helper()
 	tab, cancel := sess.NewTab()
 	defer cancel()
 	ctx, cancelT := context.WithTimeout(tab, exportTimeout)
@@ -375,15 +385,13 @@ func measureLongSection(t *testing.T, sess *chrome.Session, out press.Output, me
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			return emulation.SetEmulatedMedia().WithMedia(media).Do(ctx)
 		}),
-		chromedp.Evaluate(longSectionJS, &raw),
+		chromedp.Evaluate(js, &raw),
 	); err != nil {
 		t.Fatalf("measuring (%s): %v", media, err)
 	}
-	var m longSectionMetrics
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+	if err := json.Unmarshal([]byte(raw), v); err != nil {
 		t.Fatalf("decoding metrics %q: %v", raw, err)
 	}
-	return m
 }
 
 // --- PDF link annotations, read from the raw bytes ------------------------------
@@ -507,7 +515,7 @@ func TestPagedPDFLinkAnnotationControl(t *testing.T) {
 // under Chrome's 16384 px screenshot limit at 29px.
 const longSectionParagraphs = 48
 
-func renderLongSection(t *testing.T, md string, opts press.Options) press.Output {
+func renderPaged(t *testing.T, md string, opts press.Options) press.Output {
 	t.Helper()
 	opts.Profile = "paged"
 	out, err := press.Render(md, opts)
@@ -533,7 +541,7 @@ func TestPagedLongSectionFlows(t *testing.T) {
 
 	for _, theme := range []string{"", "default"} {
 		t.Run("theme="+theme, func(t *testing.T) {
-			out := renderLongSection(t, longSectionMD(longSectionParagraphs), press.Options{Theme: theme})
+			out := renderPaged(t, longSectionMD(longSectionParagraphs), press.Options{Theme: theme})
 			if len(out.Model.Sections) != 1 {
 				t.Fatalf("sections = %d, want 1", len(out.Model.Sections))
 			}
@@ -592,24 +600,83 @@ func TestPagedMixedDocumentPaginates(t *testing.T) {
 
 	const tail = "https://tail.edenpress.test/"
 	long := longSectionMD(longSectionParagraphs)
-	alone, err := pdf.ToPDF(sess, renderLongSection(t, long, press.Options{}), pdf.Options{})
-	if err != nil {
-		t.Fatalf("ToPDF(long alone): %v", err)
-	}
-	alonePages, _, _ := pdfGeometry(t, alone)
+	for _, theme := range []string{"", "default"} {
+		t.Run("theme="+theme, func(t *testing.T) {
+			opts := press.Options{Theme: theme}
+			alone, err := pdf.ToPDF(sess, renderPaged(t, long, opts), pdf.Options{})
+			if err != nil {
+				t.Fatalf("ToPDF(long alone): %v", err)
+			}
+			alonePages, _, _ := pdfGeometry(t, alone)
 
-	mixed := renderLongSection(t, long+"\n---\n\n# Short\n\n[TAIL]("+tail+") the short last section.\n", press.Options{})
-	if len(mixed.Model.Sections) != 2 {
-		t.Fatalf("sections = %d, want 2", len(mixed.Model.Sections))
+			mixed := renderPaged(t, long+"\n---\n\n# Short\n\n[TAIL]("+tail+") the short last section.\n", opts)
+			if len(mixed.Model.Sections) != 2 {
+				t.Fatalf("sections = %d, want 2", len(mixed.Model.Sections))
+			}
+			data, err := pdf.ToPDF(sess, mixed, pdf.Options{})
+			if err != nil {
+				t.Fatalf("ToPDF(mixed): %v", err)
+			}
+			pages, _, _ := pdfGeometry(t, data)
+			want := append(longSectionURIs(longSectionParagraphs), tail)
+			found := assertLinksOnMargins(t, data, want)
+			t.Logf("MIXED theme=%q: long alone %d pages; long + short %d pages; links found %d of %d", theme, alonePages, pages, found, len(want))
+			if pages != alonePages+1 {
+				t.Errorf("PDF pages = %d, want %d (the long section's %d, plus one for the short section)", pages, alonePages+1, alonePages)
+			}
+		})
 	}
-	data, err := pdf.ToPDF(sess, mixed, pdf.Options{})
-	if err != nil {
-		t.Fatalf("ToPDF(mixed): %v", err)
+}
+
+// typeMetrics are the computed type and spacing a paged page shows on screen.
+type typeMetrics struct {
+	Font       float64 `json:"font"`       // section font-size, px
+	LineHeight float64 `json:"lineHeight"` // section line-height, px
+	PaddingTop float64 `json:"paddingTop"` // section padding-top, px
+	H1, H2, H3 float64 // heading font sizes, px
+	Body       float64 `json:"body"` // paragraph font size, px
+}
+
+const typeProbeJS = `(() => {
+  const s = document.querySelector('div.edenpress-paged > section');
+  const px = (el, p) => parseFloat(getComputedStyle(el)[p]);
+  const q = sel => s.querySelector(sel);
+  return JSON.stringify({font: px(s, 'fontSize'), lineHeight: px(s, 'lineHeight'), paddingTop: px(s, 'paddingTop'),
+    h1: px(q('h1'), 'fontSize'), h2: px(q('h2'), 'fontSize'), h3: px(q('h3'), 'fontSize'), body: px(q('p'), 'fontSize')});
+})()`
+
+// TestPagedDocumentThemeComputedStyle (D17, TRD 30 Test list 9): with no theme,
+// a paged page reads as a document in Chrome: an 11pt body with comfortable
+// leading, the scaffold's 20 mm (75.6 px) margin, and a heading scale that is
+// clearly larger than the body without being slide-sized. An explicit Theme:
+// default still gives the Marp slides type (29px).
+func TestPagedDocumentThemeComputedStyle(t *testing.T) {
+	sess := newTestSession(t)
+	defer sess.Close()
+
+	const md = "# Heading one\n\n## Heading two\n\n### Heading three\n\nBody paragraph.\n"
+	var doc, explicit typeMetrics
+	evalPaged(t, sess, renderPaged(t, md, press.Options{}), "screen", typeProbeJS, &doc)
+	evalPaged(t, sess, renderPaged(t, md, press.Options{Theme: "default"}), "screen", typeProbeJS, &explicit)
+	t.Logf("no theme: %+v", doc)
+	t.Logf("Theme: default: %+v", explicit)
+
+	if doc.Font < 14.6 || doc.Font > 16.1 {
+		t.Errorf("section font-size = %.2f px, want 14.6..16.1 (11-12pt)", doc.Font)
 	}
-	pages, _, _ := pdfGeometry(t, data)
-	found := assertLinksOnMargins(t, data, append(longSectionURIs(longSectionParagraphs), tail))
-	t.Logf("MIXED: long alone %d pages; long + short %d pages; links found %d", alonePages, pages, found)
-	if pages != alonePages+1 {
-		t.Errorf("PDF pages = %d, want %d (the long section's %d, plus one for the short section)", pages, alonePages+1, alonePages)
+	if doc.LineHeight < 1.3*doc.Font {
+		t.Errorf("section line-height = %.2f px, want at least 1.3 x %.2f", doc.LineHeight, doc.Font)
+	}
+	if abs(doc.PaddingTop-75.6) > 1 {
+		t.Errorf("section padding-top = %.2f px, want 75.6 +- 1 (20 mm)", doc.PaddingTop)
+	}
+	if !(doc.H1 > doc.H2 && doc.H2 > doc.H3 && doc.H3 > doc.Body) {
+		t.Errorf("heading scale h1 %.2f > h2 %.2f > h3 %.2f > body %.2f does not hold", doc.H1, doc.H2, doc.H3, doc.Body)
+	}
+	if doc.H1 > 2.2*doc.Body {
+		t.Errorf("h1 = %.2f px is over 2.2 x the %.2f px body", doc.H1, doc.Body)
+	}
+	if explicit.Font != 29 {
+		t.Errorf("Theme: default section font-size = %.2f px, want 29", explicit.Font)
 	}
 }
