@@ -144,13 +144,8 @@ func resolveSize(out press.Output) (theme.Size, error) {
 			"convert/pdf: resolveSize: unknown profile %q (import the profiles/%s package for its init side-effect)",
 			out.Profile, out.Profile)
 	}
-	table := p.Sizes()
-	if name := out.Meta.Directives["size"]; name != "" {
-		if s, ok := table.ByName[name]; ok {
-			return s, nil
-		}
-	}
-	return table.Default, nil
+	// The ONE size resolver, shared with the CSS packer and convert/png.
+	return profile.ResolveSize(p, out.Meta.Directives), nil
 }
 
 // printLayoutCSS makes every inline-SVG slide occupy exactly one PDF page: the

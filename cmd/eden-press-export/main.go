@@ -231,12 +231,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 	case "png":
 		// LOAD-BEARING: png.ToImages must use the container mode press.Render
 		// ACTUALLY rendered, read from out.HTML, not the --inline-svg flag.
-		// press.Render always emits the inline-<svg><foreignObject> wrapper
-		// (press.go: ParseWithEngine enables it unconditionally), so passing
-		// the flag's default false made ToImages' `div.marpit > section`
+		// press.Render emits the inline-<svg><foreignObject> wrapper for a
+		// profile that has an SVG layer (slides), whatever the flag says, so
+		// passing the flag's default false made ToImages' `div.marpit > section`
 		// selector match nothing and chromedp.Screenshot wait forever; a
 		// mismatched mode the other way makes the nth-of-type selector
-		// resolve position 1 N times.
+		// resolve position 1 N times. (A profile without an SVG layer, paged,
+		// is addressed as plain children whatever is passed: png.unitSelector.)
 		imgs, err := png.ToImages(sess, out, png.Options{InlineSVG: renderedInlineSVG(out)})
 		if err != nil {
 			return fail(exitRender, err)

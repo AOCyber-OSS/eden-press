@@ -408,6 +408,27 @@ func TestPagedLongSectionCharacterization(t *testing.T) {
 		screen.PageHeight, screen.ClientHeight, screen.SentinelTop, screen.SentinelBottom)
 	t.Logf("  print:  page box %.0f px, clip edge %.0f px, sentinel paragraph spans %.0f..%.0f px from the page top",
 		printed.PageHeight, printed.ClientHeight, printed.SentinelTop, printed.SentinelBottom)
+
+	// What the measurement shows, pinned so the behaviour is visible and a
+	// change to it is deliberate. The scaffold gives every section a fixed page
+	// box (height: A4, overflow: hidden) and one section is one page, so content
+	// past the first page is CLIPPED, not flowed onto more pages: a long
+	// single-section document exports as ONE page showing its first A4 worth.
+	// If a product decision makes long sections flow, this is the test to change.
+	if screen.ScrollHeight < 2.5*1123 {
+		t.Fatalf("content is only %.0f px tall (%.2f pages); the sample is not a multi-page section", screen.ScrollHeight, screen.ScrollHeight/1123)
+	}
+	if pngH != 1123 {
+		t.Errorf("PNG height = %d, want 1123 (the page box, not the content)", pngH)
+	}
+	if pages != 1 {
+		t.Errorf("PDF pages = %d, want 1 (a fixed page box does not paginate its overflow)", pages)
+	}
+	for name, m := range map[string]longSectionMetrics{"screen": screen, "print": printed} {
+		if m.SentinelTop < m.ClientHeight {
+			t.Errorf("%s: the last paragraph starts at %.0f px, inside the %.0f px page box; content is no longer clipped", name, m.SentinelTop, m.ClientHeight)
+		}
+	}
 }
 
 // longSectionParagraphs is sized so the section holds roughly three A4 pages of

@@ -79,15 +79,10 @@ func TestRenderModelExport(t *testing.T) {
 	sess := newTestSession(t)
 	defer sess.Close()
 
-	// KNOWN LIMITATION, not caused by RenderModel (press.Render on Markdown
-	// shows it identically): the paged profile's CSS is scoped to
-	// "div.edenpress-paged > section", but the Render seam always wraps each
-	// section in <svg><foreignObject>, so none of the paged page-box rules
-	// match. A paged page is therefore as tall as its content rather than A4,
-	// and an EMPTY paged section is 0px tall -- chromedp refuses to screenshot
-	// it. So the paged case below uses non-empty sections and asserts the page
-	// COUNT (what RenderModel controls), not the A4 geometry; the slides case
-	// keeps the empty section and the exact size.
+	// Both profiles keep the EMPTY third section and are held to their exact
+	// page size. (Until D15 / TRD 1026-27 the paged profile could not be: its
+	// CSS did not match the markup, so a paged page was as tall as its content
+	// and an empty one was 0px tall, which chromedp refuses to screenshot.)
 	for _, tc := range []struct {
 		profile    string
 		w, h       int // asserted only when exactSize
@@ -95,7 +90,7 @@ func TestRenderModelExport(t *testing.T) {
 		emptyThird bool
 	}{
 		{"slides", 1280, 720, true, true},
-		{"paged", 794, 1123, false, false},
+		{"paged", 794, 1123, true, true},
 	} {
 		t.Run(tc.profile, func(t *testing.T) {
 			doc := renderModelExportDoc(tc.emptyThird)
