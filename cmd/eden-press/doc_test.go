@@ -190,7 +190,9 @@ func TestDocV7TextOpsDryRunAndSheetEmbed(t *testing.T) {
 		t.Fatal(err)
 	}
 	md, _ := os.ReadFile(outMD)
-	if !strings.Contains(string(md), "| A | B |") {
+	// A sheet embed is exported as a directive that carries the whole embed, not as
+	// a table of its cells (which could not be read back as a sheet).
+	if !strings.Contains(string(md), `:::sheet {"sheetEmbed":{"sheet":"Tasks","snapshot":{"cells":[{"r":0,"c":0,"v":"A"},{"r":0,"c":1,"v":"B"}]}}}`) {
 		t.Fatalf("sheet embed export: %s", md)
 	}
 }
@@ -248,7 +250,7 @@ func TestDocImportApplyExportRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(md)
-	if !strings.Contains(got, "# Title") || !strings.Contains(got, "<details") || !strings.Contains(got, "```go") {
+	if !strings.Contains(got, "# Title") || !strings.Contains(got, ":::toggle\nMore\n\nNested\n:::") || !strings.Contains(got, "```go") {
 		t.Fatalf("export md = %s", got)
 	}
 }

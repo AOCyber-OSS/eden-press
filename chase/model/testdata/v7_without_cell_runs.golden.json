@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "eden-press.model/v7",
+  "meta": {
+    "directives": {
+      "title": "All kinds"
+    }
+  },
+  "sections": [
+    {
+      "id": 1,
+      "attrs": {
+        "class": "lead"
+      },
+      "notes": [
+        "remember"
+      ],
+      "blocks": [
+        {
+          "id": "b_1",
+          "kind": "heading",
+          "text": "All kinds",
+          "level": 1,
+          "span": {
+            "start": 0,
+            "stop": 11
+          }
+        },
+        {
+          "id": "b_2",
+          "kind": "paragraph",
+          "text": "plain and bold",
+          "runs": [
+            {
+              "text": "plain and "
+            },
+            {
+              "text": "bold",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b_3",
+          "kind": "list",
+          "ordered": true,
+          "items": [
+            {
+              "id": "li_1",
+              "text": "one"
+            },
+            {
+              "id": "li_2",
+              "text": "two",
+              "runs": [
+                {
+                  "text": "two",
+                  "marks": [
+                    "italic"
+                  ]
+                }
+              ],
+              "level": 1
+            }
+          ]
+        },
+        {
+          "id": "b_4",
+          "kind": "code",
+          "text": "fmt.Println(1)",
+          "language": "go"
+        },
+        {
+          "id": "b_5",
+          "kind": "math",
+          "text": "x^2",
+          "display": true
+        },
+        {
+          "id": "b_6",
+          "kind": "table",
+          "headers": [
+            "Name",
+            "Qty",
+            "Note"
+          ],
+          "rows": [
+            [
+              "a",
+              "1",
+              "x"
+            ],
+            [
+              "b",
+              "2"
+            ],
+            [
+              "c",
+              "3",
+              "y",
+              "extra"
+            ]
+          ],
+          "aligns": [
+            "left",
+            "right",
+            ""
+          ]
+        },
+        {
+          "id": "b_7",
+          "kind": "image",
+          "text": "a cat",
+          "src": "cat.png",
+          "title": "Cat"
+        },
+        {
+          "id": "b_8",
+          "kind": "quote",
+          "text": "quoted",
+          "children": [
+            {
+              "id": "b_9",
+              "kind": "paragraph",
+              "text": "inside"
+            }
+          ]
+        },
+        {
+          "id": "b_10",
+          "kind": "toggle",
+          "text": "More",
+          "children": [
+            {
+              "id": "b_11",
+              "kind": "todo",
+              "text": "do it",
+              "checked": true
+            }
+          ],
+          "collapsed": true
+        },
+        {
+          "id": "b_12",
+          "kind": "synced",
+          "syncRef": {
+            "blockId": "b_2"
+          }
+        },
+        {
+          "id": "b_13",
+          "kind": "callout",
+          "text": "note",
+          "icon": "!",
+          "tone": "info"
+        },
+        {
+          "id": "b_14",
+          "kind": "divider"
+        },
+        {
+          "id": "b_15",
+          "kind": "file",
+          "name": "r.pdf",
+          "mime": "application/pdf",
+          "size": 1024,
+          "src": "files/r.pdf"
+        },
+        {
+          "id": "b_16",
+          "kind": "sheet",
+          "sheetEmbed": {
+            "sheet": "S",
+            "range": {
+              "r1": 2,
+              "c1": 1
+            },
+            "snapshot": {
+              "cells": [
+                {
+                  "r": 0,
+                  "c": 0,
+                  "v": "A"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "b_17",
+          "kind": "figure",
+          "svg": "\u003csvg/\u003e",
+          "src": "fig.png"
+        },
+        {
+          "id": "b_18",
+          "kind": "table",
+          "rows": [
+            [
+              "only",
+              "row"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "outline": [
+    {
+      "sectionId": 1,
+      "level": 1,
+      "text": "All kinds",
+      "slug": "all-kinds"
+    }
+  ],
+  "properties": [
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        "todo",
+        "done"
+      ]
+    }
+  ],
+  "propertyValues": {
+    "status": "todo"
+  },
+  "comments": [
+    {
+      "id": "c_1",
+      "blockId": "b_2",
+      "start": 0,
+      "stop": 5,
+      "body": "check",
+      "suggestion": {
+        "text": "Plain",
+        "runs": [
+          {
+            "text": "Plain"
+          }
+        ]
+      }
+    }
+  ]
+}

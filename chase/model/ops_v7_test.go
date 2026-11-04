@@ -111,8 +111,8 @@ func TestV7NewKindsSheetEmbedAndProps(t *testing.T) {
 	if !strings.Contains(md, "- [x]") && !strings.Contains(md, "- [ ]") {
 		// checked was replaced by suggestion text on todo — still should have table from sheet
 	}
-	if !strings.Contains(md, "| A | B |") {
-		t.Fatalf("sheet snapshot md missing: %s", md)
+	if !strings.Contains(md, ":::sheet {\"sheetEmbed\":{\"sheet\":\"Tasks\",\"snapshot\":{\"cells\":[{\"r\":0,\"c\":0,\"v\":\"A\"},{\"r\":0,\"c\":1,\"v\":\"B\"}]}}}") {
+		t.Fatalf("sheet snapshot directive missing: %s", md)
 	}
 }
 

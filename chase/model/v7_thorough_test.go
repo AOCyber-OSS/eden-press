@@ -216,22 +216,25 @@ func TestV7MarkdownExportAllNewKinds(t *testing.T) {
 		{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockSheet, SheetEmbed: &SheetEmbed{Sheet: "EmptyOnly"}}},
 	})
 	md := ToMarkdown(doc)
+	// Each v7-only kind has an explicit, parseable spelling (TRD 02): a todo is
+	// a GFM task item and the others are container directives whose JSON header
+	// carries the scalar fields. Nothing is flattened to a table, a link or a
+	// quote any more.
 	checks := []string{
 		"theme: default",
 		"**Title**",
 		"- [ ] Open",
 		"- [x] Done",
-		"⚠️ Heads up",
+		":::callout {\"icon\":\"⚠️\",\"tone\":\"warn\"}\nHeads up\n:::",
 		"---",
-		"[Spec](doc.pdf)",
-		"![Logo](logo.png",
-		"<svg id=\"x\"/>",
+		":::file {\"name\":\"Spec\",\"src\":\"doc.pdf\"}",
+		":::figure {\"src\":\"logo.png\",\"title\":\"Brand\",\"alt\":\"Logo\"}",
+		":::figure\n<svg id=\"x\"/>\n:::",
 		"**bold**",
 		"`code`",
 		"[link](https://example.com)",
-		"| H1 | H2 |",
-		"| v | =A1 |",
-		"<!-- eden-sheet: EmptyOnly -->",
+		"\"cells\":[{\"r\":0,\"c\":0,\"v\":\"H1\"},{\"r\":0,\"c\":1,\"v\":\"H2\"},{\"r\":1,\"c\":0,\"v\":\"v\"},{\"r\":1,\"c\":1,\"f\":\"A1\"}]",
+		":::sheet {\"sheetEmbed\":{\"sheet\":\"EmptyOnly\"}}",
 	}
 	for _, want := range checks {
 		if !strings.Contains(md, want) {

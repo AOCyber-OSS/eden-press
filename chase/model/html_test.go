@@ -38,7 +38,7 @@ func TestToHTMLRendersV7Blocks(t *testing.T) {
 				{Kind: BlockTodo, Text: "Ship", Checked: true},
 				{Kind: BlockCallout, Text: "Watch", Tone: "warn", Icon: "!"},
 				{Kind: BlockSheet, SheetEmbed: &SheetEmbed{
-					Sheet: "Tasks",
+					Sheet:    "Tasks",
 					Snapshot: &SheetSnapshot{Cells: []SheetCellSnap{{R: 0, C: 0, V: "A"}}},
 				}},
 				{Kind: BlockFigure, Text: "logo", SVG: "<svg/>"},
