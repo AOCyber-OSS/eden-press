@@ -647,6 +647,8 @@ class Block {
     this.headers = const <String>[],
     this.rows = const <List<String>>[],
     this.aligns = const <String>[],
+    this.headerRuns = const <List<TextRun>?>[],
+    this.rowRuns = const <List<List<TextRun>?>?>[],
     this.src = '',
     this.title = '',
     this.children = const <Block>[],
@@ -693,6 +695,22 @@ class Block {
   /// Per-column alignment of a `table` block: `left` / `right` / `center`, or
   /// an empty entry where the column declared none.
   final List<String> aligns;
+
+  /// Formatted header cells of a `table` block (docmodel v7), parallel to
+  /// [headers]: `headerRuns[i]` holds the runs of `headers[i]`. [headers] stays
+  /// the authoritative plain text. A null entry is a plain cell; the wire
+  /// writes it as `null`, so [fromJson] keeps it null and [toJson] writes
+  /// `null` back rather than `[]`. Empty (and then not written) for a table
+  /// with no styled header cell.
+  final List<List<TextRun>?> headerRuns;
+
+  /// Formatted body cells of a `table` block (docmodel v7), parallel to
+  /// [rows]: `rowRuns[r][c]` holds the runs of `rows[r][c]`. A null row is a
+  /// row of plain cells and a null cell is a plain cell, both written as
+  /// `null`. A ragged row has as many entries as it has cells, so index per
+  /// row and never by header width. Empty (and then not written) for a table
+  /// with no styled body cell.
+  final List<List<List<TextRun>?>?> rowRuns;
 
   /// Destination URL of an `image` block. The alt text is in [text].
   final String src;
@@ -773,6 +791,8 @@ class Block {
                 .toList()
           : const <List<String>>[],
       aligns: _stringList(json['aligns']),
+      headerRuns: _headerRunsFrom(json['headerRuns']),
+      rowRuns: _rowRunsFrom(json['rowRuns']),
       src: json['src'] as String? ?? '',
       title: json['title'] as String? ?? '',
       children: childrenJson is List
@@ -829,6 +849,13 @@ class Block {
         for (final r in rows) [...r],
       ],
     if (aligns.isNotEmpty) 'aligns': [...aligns],
+    if (headerRuns.isNotEmpty)
+      'headerRuns': [for (final cell in headerRuns) _cellRunsJson(cell)],
+    if (rowRuns.isNotEmpty)
+      'rowRuns': [
+        for (final row in rowRuns)
+          row == null ? null : [for (final cell in row) _cellRunsJson(cell)],
+      ],
     if (src.isNotEmpty) 'src': src,
     if (title.isNotEmpty) 'title': title,
     if (children.isNotEmpty) 'children': [for (final c in children) c.toJson()],
@@ -921,6 +948,26 @@ List<String> _stringList(Object? value) {
   }
   return value.map((e) => e?.toString() ?? '').toList();
 }
+
+/// One cell's runs, or null for a plain cell (Go writes a nil `[]TextRun` as
+/// `null`). An empty array is kept as an empty list so it encodes back to `[]`.
+List<TextRun>? _cellRuns(Object? value) => value is List
+    ? value.map((e) => TextRun.fromJson(_jsonMap(e))).toList()
+    : null;
+
+List<Map<String, dynamic>>? _cellRunsJson(List<TextRun>? runs) =>
+    runs == null ? null : [for (final r in runs) r.toJson()];
+
+/// Decodes `headerRuns`; a null or absent field is the empty (plain) list.
+List<List<TextRun>?> _headerRunsFrom(Object? value) =>
+    value is List ? value.map(_cellRuns).toList() : const <List<TextRun>?>[];
+
+/// Decodes `rowRuns`; a null row stays null, as does a null cell within a row.
+List<List<List<TextRun>?>?> _rowRunsFrom(Object? value) => value is List
+    ? value
+          .map((row) => row is List ? row.map(_cellRuns).toList() : null)
+          .toList()
+    : const <List<List<TextRun>?>?>[];
 
 /// Decodes a wire object of strings (Go `map[string]string`), or an empty map.
 Map<String, String> _stringMap(Object? value) {

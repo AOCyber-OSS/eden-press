@@ -274,9 +274,9 @@ void main() {
   // 1026-29 Test list 3: formatted table cells (docmodel v7 headerRuns and
   // rowRuns, added by 1026-25). The golden table b_table is written by Go.
   group('formatted table cells', () {
-    Block golden(String id) => ModelDocument.fromJson(
-      _golden(),
-    ).sections.first.blocks.firstWhere((b) => b.id == id);
+    Block golden(String id) =>
+        ModelDocument.fromJson(_golden()).sections.first.blocks
+            .firstWhere((b) => b.id == id);
 
     test('the golden table parses into typed headerRuns and rowRuns', () {
       final table = golden('b_table');
@@ -380,7 +380,10 @@ void main() {
         'rowRuns',
         'src',
       ]);
-      expect(jsonEncode(json['rowRuns']), '[[null,[{"text":"d","link":"https://x.test"}]]]');
+      expect(
+        jsonEncode(json['rowRuns']),
+        '[[null,[{"text":"d","link":"https://x.test"}]]]',
+      );
     });
 
     test('fromJson tolerates absent and null cell-run keys', () {
