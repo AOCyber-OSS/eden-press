@@ -152,7 +152,7 @@ import `chase/model` use `model.FromMarkdown(md, model.FromMarkdownOptions{Prev,
 | `list` | `-` bullets or `1.` numbers, children indented by the parent's marker width; adjacent lists alternate `-`/`*` (or `.`/`)`) so they never merge; numbering must start at 1 |
 | `code` | a fence one backtick longer than any backtick run inside; the language is the one info word; `Text` is exactly what is between the fences (a trailing newline shows as a blank line before the closing fence) |
 | `math` | display: `$$`, the TeX, `$$` on their own lines; a paragraph of only `$tex$` is a non-display math block |
-| `table` | GFM pipe table; delimiter row `---`, `:---`, `:---:`, `---:`; cells are plain text, `\|` escaped |
+| `table` | GFM pipe table; delimiter row `---`, `:---`, `:---:`, `---:`. A cell holds inline runs as a paragraph does: `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `$tex$`, `[text](href)`, `<https://url>` (read into `headerRuns` / `rowRuns`; the flattened text is `headers` / `rows`). Every `\|` is a pipe: in text, in a link destination, in a code span and in math TeX (`` `a\|b` `` is code `a|b`, `$a\|b$` is TeX `a|b`, and TeX `a\|b` is `$a\\|b$`). A cell cannot hold a newline, raw HTML (other than `<strong> <em> <del>`), an image or a link title |
 | `image` | `![alt](src "title")`, `<src>` when it has spaces; a title may span lines |
 | `quote` | `> ` lines: its leading paragraphs are `Text`, the rest are `Children` |
 | `divider` | `***` (a `---` rule is a section break, never a divider) |
@@ -208,15 +208,14 @@ the mapping in the last column.
 
 | Construct | Strict refuses | Lenient mapping |
 |---|---|---|
-| `raw-html` | an HTML block, inline HTML other than `<strong> <em> <del>`, or a comment that is not a whole top-level comment | a block becomes a paragraph of the literal source; inline HTML becomes literal text |
-| `table-cell-formatting` | a cell holding emphasis, code, a link, an image or math | the cell is flattened to plain text |
+| `raw-html` | an HTML block, inline HTML other than `<strong> <em> <del>` (also in a table cell: `<br>` stays a refusal), or a comment that is not a whole top-level comment | a block becomes a paragraph of the literal source; inline HTML becomes literal text |
 | `list-start` | an ordered list that does not start at 1 | the start is reset to 1 |
 | `list-mixed-type` | a nested list of the other type | the outer list's type wins |
 | `list-mixed-todo` | a task item in a list with plain items, nested in a plain list, or in an ordered list | the item stays a list item with `[ ] ` / `[x] ` as text |
 | `list-item-blocks` | a list item with a second paragraph, code, a quote or a table | the extra blocks' text is appended after a line break |
-| `link-title` | `[a](u "t")` | the title is dropped |
+| `link-title` | `[a](u "t")`, also in a table cell | the title is dropped |
 | `empty-link` | `[](u)` or `[a]()` | an empty-text link is dropped; no destination is plain text |
-| `inline-image` | an image sharing a paragraph with other content | the image becomes its alt text |
+| `inline-image` | an image sharing a paragraph with other content, or in a table cell | the image becomes its alt text |
 | `code-info-string` | a fence info string of more than one word | the first word is the language |
 | `inline-display-math` | `$$x$$` sharing a paragraph with other content | inline math |
 | `math-unclosed` | a `$$` block with no closing `$$` | the math runs to the end of its container |
@@ -226,6 +225,15 @@ the mapping in the last column.
 | `directive-json` | a bad directive header (bad JSON, an unknown key, a wrong type, trailing text), a bad `eden:attrs`/`eden:note`/`eden:model` payload, an unsupported trailer version, a second trailer | a directive stays literal text; a comment stays a note |
 | `directive-unclosed` | a directive with no closing fence before the end of its container | it runs to the end of its container |
 | `unsupported` | a Markdown node this codec does not read | skipped |
+
+**Table cells (AODex D14).** `table-cell-formatting`, the most common strict refusal of
+LLM-written Markdown, is no longer emitted: a table cell is read the way a paragraph is,
+so bold, italic, strike, code, inline math, links and autolinks in a cell are kept in
+`headerRuns` / `rowRuns` by strict and lenient mode alike (lenient flattens nothing). The
+name stays exported (`model.ConstructTableCellFormatting`) so callers that switch on
+Construct names still compile. A cell refuses what a paragraph refuses, under the same
+names (`raw-html`, `inline-image`, `link-title`, `empty-link`, `inline-display-math`), and
+strict mode still reports only the first.
 
 Read without a refusal and without a trace (they carry no content): the bullet
 character, the ordered delimiter, list tightness and numbering, `*` versus `_`
@@ -254,7 +262,10 @@ document by path.
 - display math TeX holding an unescaped `$$`, and inline math TeX holding an unescaped
   `$`, edge whitespace or a newline (TeX reserves `$`; write `\$`);
 - a list that skips a level or starts above level 0;
-- a table row with more or fewer cells than the header;
+- a table row with more or fewer cells than the header (a row wider than the header
+  loses its extra cells when read: GFM ignores them);
+- a table cell whose runs are not canonical (see `headerRuns` / `rowRuns` above: a plain
+  cell is `null`, no run holds a newline), and cell text that differs from its runs;
 - children on a block other than `quote`, `toggle`, `todo` and `callout` (dropped);
   a quote whose first child is a paragraph (it merges into the quote's text);
 - a whitespace-only line in code, math or an SVG nested in a todo, and a todo whose
