@@ -41,8 +41,11 @@ import (
 // Sanitize is nil-defaulted (zero => the built-in always-on policy applies).
 type Options struct {
 	// Theme selects the named theme. "" resolves the deck's own front-matter
-	// `theme:` directive, and absent that, Marp Core's built-in "default"
-	// theme. A non-empty value overrides the front matter.
+	// `theme:` directive; absent that, the profile's own default theme when it
+	// supplies one (paged: the "document" theme, an 11pt print type scale), and
+	// otherwise Marp Core's built-in "default" theme (slides). A non-empty value
+	// overrides the front matter. "default" therefore means the Marp slides
+	// theme on every profile; leave Theme empty to mean "no theme chosen".
 	Theme string
 
 	// Profile selects the chase/profile.Profile that supplies the unit element

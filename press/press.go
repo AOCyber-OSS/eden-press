@@ -47,10 +47,11 @@ import (
 )
 
 // defaultThemeName is the terminal fallback in press.Render's theme-resolution
-// chain (opts.Theme -> front-matter theme: -> "default"). press deliberately
-// deviates from chase/chase.go's scaffold-only default to match Marp Core,
-// whose own default deck theme is the bundled "default" theme -- not a bare
-// scaffold (03-RESEARCH Open Question #2, RESOLVED).
+// chain (opts.Theme -> front-matter theme: -> the profile's default theme ->
+// "default"), which is what slides, supplying no default theme, gets. press
+// deliberately deviates from chase/chase.go's scaffold-only default to match
+// Marp Core, whose own default deck theme is the bundled "default" theme -- not
+// a bare scaffold (03-RESEARCH Open Question #2, RESOLVED).
 const defaultThemeName = "default"
 
 // parseWithEngine is the seam's one-parse entrypoint, held in a package-level
@@ -136,7 +137,8 @@ func Render(md string, opts Options) (Output, error) {
 	}
 
 	// 7. Pack CSS from the embedded ThemeSet, theme resolved
-	//    opts.Theme -> front-matter theme: -> "default".
+	//    opts.Theme -> front-matter theme: -> the profile's default theme
+	//    (paged: "document") -> "default".
 	css, err := packThemeCSS(p, pc, m.Meta, opts)
 	if err != nil {
 		return Output{}, err
@@ -242,7 +244,9 @@ func pressExtraOpts(opts Options, p profile.Profile) []goldmark.Option {
 // user/front-matter/default NAMED theme rather than the bare scaffold identity.
 //
 // The theme name resolves in the fixed order opts.Theme -> Meta.Directives
-// ["theme"] (the deck's own front-matter theme: directive) -> defaultThemeName.
+// ["theme"] (the deck's own front-matter theme: directive) -> the profile's own
+// default theme (profile.DefaultThemer; registered before opts.ThemeCSS, so a
+// caller theme of the same name replaces it) -> defaultThemeName.
 // The ThemeSet is built once from the active profile's unit element + scaffold /
 // advanced-background CSS + bare-@size fallback table (press/themes.ThemeSet).
 //
@@ -278,6 +282,15 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 		return "", fmt.Errorf("press: Render: build theme set: %w", err)
 	}
 
+	// The profile's own default theme, when it supplies one (D17: paged's
+	// `document` theme). Registered BEFORE the caller's themes, so a caller
+	// theme of the same name (AODex names a synthesized theme after its row,
+	// so a row called "Document" is `document`) replaces it.
+	profileTheme, err := registerProfileTheme(ts, p)
+	if err != nil {
+		return "", err
+	}
+
 	// Register any caller-supplied custom themes (opts.ThemeCSS, TRD 04-01)
 	// through the EXACT SAME intake path the 3 embedded themes just used
 	// above: theme.Load (requires + records the block's own leading
@@ -294,7 +307,7 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 		ts.Add(th) // registered under th.Name (= the block's own @theme name)
 	}
 
-	name := resolveThemeName(opts.Theme, meta)
+	name := resolveThemeName(opts.Theme, meta, profileTheme)
 	hasSVGLayer := profile.UsesInlineSVG(p)
 	inlineSVG := hasSVGLayer && (svgEnabled(pc) || opts.InlineSVG)
 	css, err := ts.Pack(name, theme.PackOptions{InlineSVG: inlineSVG})
@@ -331,11 +344,34 @@ func pageFlowRules(p profile.Profile, size theme.Size) string {
 		fmt.Sprintf("@media print { %s { padding-top: 0; padding-bottom: 0; } }", unit)
 }
 
+// registerProfileTheme loads p's default theme into ts when p supplies one
+// (the optional profile.DefaultThemer), through the same theme.Load + Add path
+// every other theme takes, and returns its name; it returns "" for a profile
+// without one (slides).
+func registerProfileTheme(ts *theme.ThemeSet, p profile.Profile) (string, error) {
+	dt, ok := p.(profile.DefaultThemer)
+	if !ok {
+		return "", nil
+	}
+	name, css := dt.DefaultTheme()
+	th, err := theme.Load(css, p.UnitElement(), p.Sizes().ByName)
+	if err != nil {
+		return "", fmt.Errorf("press: Render: load profile %q default theme: %w", p.ID(), err)
+	}
+	if th.Name != name {
+		return "", fmt.Errorf("press: Render: profile %q default theme %q names itself %q", p.ID(), name, th.Name)
+	}
+	ts.Add(th)
+	return name, nil
+}
+
 // resolveThemeName applies the fixed fallback chain opts.Theme -> front-matter
-// theme: (Meta.Directives["theme"]) -> defaultThemeName. A non-empty opts.Theme
-// overrides the front matter; absent both, the bundled "default" theme is used
-// (NOT the bare scaffold -- press matches Marp Core's default-deck behavior).
-func resolveThemeName(optTheme string, meta model.Meta) string {
+// theme: (Meta.Directives["theme"]) -> the profile's own default theme ->
+// defaultThemeName. A non-empty opts.Theme overrides the front matter; absent
+// both, a profile that supplies a default theme (paged: `document`) gets it,
+// and any other profile gets the bundled "default" theme (NOT the bare
+// scaffold -- press matches Marp Core's default-deck behavior for slides).
+func resolveThemeName(optTheme string, meta model.Meta, profileTheme string) string {
 	if optTheme != "" {
 		return optTheme
 	}
@@ -343,6 +379,9 @@ func resolveThemeName(optTheme string, meta model.Meta) string {
 		if fm := meta.Directives["theme"]; fm != "" {
 			return fm
 		}
+	}
+	if profileTheme != "" {
+		return profileTheme
 	}
 	return defaultThemeName
 }

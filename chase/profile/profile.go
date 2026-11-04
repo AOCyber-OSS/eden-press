@@ -100,6 +100,27 @@ type Profile interface {
 	Scaffold(inlineSVG bool) string
 }
 
+// DefaultThemer is an OPTIONAL interface a Profile may also implement, to name
+// the theme a document gets when it names none itself. It is not part of
+// Profile, so existing profiles keep compiling; a renderer checks for it by
+// type assertion (press does, in its theme packing):
+//
+//	if dt, ok := p.(profile.DefaultThemer); ok { name, css := dt.DefaultTheme() }
+//
+// DefaultTheme returns the theme's name and its CSS text. The CSS must name
+// itself with a leading `@theme <name>` comment, as every theme does
+// (chase/theme.Load enforces it), and that name must equal the name returned.
+// The renderer registers it BEFORE any caller-supplied theme, so a caller theme
+// of the same name replaces it, and an explicit theme choice (an option or the
+// document's `theme` directive) always wins over it.
+//
+// profiles/paged implements it with a document theme (an 11pt body), because
+// the bundled Marp themes are slide themes; profiles/slides does not, and keeps
+// the Marp `default` theme.
+type DefaultThemer interface {
+	DefaultTheme() (name, css string)
+}
+
 // SizeTable is a profile's named-size table plus its default size —
 // e.g. slides' {"4:3": ..., "16:9": ...} with Default set to the
 // "16:9" entry. It reuses chase/theme.Size (the existing

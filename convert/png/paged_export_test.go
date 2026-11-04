@@ -511,9 +511,11 @@ func TestPagedPDFLinkAnnotationControl(t *testing.T) {
 }
 
 // longSectionParagraphs sizes the long section at several A4 pages under the
-// paged default theme AND under the 29px Marp `default` theme, while staying
-// under Chrome's 16384 px screenshot limit at 29px.
-const longSectionParagraphs = 48
+// paged `document` theme AND under the 29px Marp `default` theme, while staying
+// under Chrome's 16384 px screenshot limit at 29px. Measured with Chrome 156:
+// 48 paragraphs were 2760 px (2.46 pages) under `document`, short of the 2.5
+// page guard, and 9408 px under `default`; 60 is about 3 pages and 11800 px.
+const longSectionParagraphs = 60
 
 func renderPaged(t *testing.T, md string, opts press.Options) press.Output {
 	t.Helper()

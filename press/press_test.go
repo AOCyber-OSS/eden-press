@@ -195,8 +195,13 @@ func TestThemeResolution(t *testing.T) {
 
 	// (d) default fallback is the bundled "default" theme, NOT the bare
 	//     scaffold: resolveThemeName returns "default" and Options{} packs it.
-	if got := resolveThemeName("", def.Meta); got != "default" {
-		t.Errorf("resolveThemeName(\"\", no-theme-meta) = %q, want \"default\"", got)
+	//     Slides supplies no profile default theme (""); a profile that does
+	//     (paged: "document", D17) gets it before the "default" fallback.
+	if got := resolveThemeName("", def.Meta, ""); got != "default" {
+		t.Errorf("resolveThemeName(\"\", no-theme-meta, \"\") = %q, want \"default\"", got)
+	}
+	if got := resolveThemeName("", def.Meta, "document"); got != "document" {
+		t.Errorf("resolveThemeName(\"\", no-theme-meta, \"document\") = %q, want \"document\"", got)
 	}
 	explicitDefault, err := Render(deck, Options{Theme: "default"})
 	if err != nil {

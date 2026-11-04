@@ -169,7 +169,7 @@ exits 3 with a remedy message instead of attempting a launch.`,
 func registerExportFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 
-	f.String("theme", "", `theme name; "" resolves the deck's front-matter "theme:", then "default" (press.Render's own fallback)`)
+	f.String("theme", "", `theme name; "" resolves the deck's front-matter "theme:", then the profile's own default ("document" for paged), then "default" (press.Render's own fallback)`)
 	f.String("profile", "", `chase/profile id; "" resolves profile.Default() ("slides")`)
 	f.String("math", "", `math rendering mode: "mathml" (default) or "off"`)
 	f.Bool("no-highlight", false, "disable chroma syntax highlighting")
