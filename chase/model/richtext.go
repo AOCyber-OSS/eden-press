@@ -52,7 +52,9 @@ func SyncListItemTextFromRuns(it *ListItem) {
 	it.Text = FlattenRuns(it.Runs)
 }
 
-// EnsureTextRunsInvariant walks the document and flattens Runs into Text.
+// EnsureTextRunsInvariant walks the document and flattens Runs into Text. It
+// also mirrors a table's cell runs into its Headers and Rows and puts
+// HeaderRuns/RowRuns in canonical form (see syncTableCellRuns).
 func EnsureTextRunsInvariant(doc *Document) {
 	if doc == nil {
 		return
@@ -64,12 +66,84 @@ func EnsureTextRunsInvariant(doc *Document) {
 			for j := range blocks[i].Items {
 				SyncListItemTextFromRuns(&blocks[i].Items[j])
 			}
+			syncTableCellRuns(&blocks[i])
 			walk(blocks[i].Children)
 		}
 	}
 	for si := range doc.Sections {
 		walk(doc.Sections[si].Blocks)
 	}
+}
+
+// syncTableCellRuns mirrors b's cell runs into its cell text and puts
+// HeaderRuns and RowRuns in canonical form (schema v7; AODex 1026 D14):
+//   - a cell with runs takes FlattenRuns of them as its text;
+//   - a plain cell's entry is nil: no runs, or one run with no marks and no
+//     link. A nil entry leaves its cell text as it is;
+//   - a non-nil HeaderRuns has len(Headers) entries, a non-nil RowRuns has
+//     len(Rows), and a non-nil RowRuns[r] has len(Rows[r]). Headers and Rows
+//     are the authoritative cells: a missing entry is a plain cell, and an
+//     entry past the last cell describes nothing and is dropped;
+//   - HeaderRuns, RowRuns and each RowRuns[r] are nil unless they hold a
+//     non-nil entry.
+//
+// It applies to every kind, so a non-table block (which has no cells) is left
+// with neither field; ApplyOps refuses the fields there in the first place.
+func syncTableCellRuns(b *Block) {
+	if b == nil {
+		return
+	}
+	b.HeaderRuns = canonCellRuns(b.Headers, b.HeaderRuns)
+	if b.RowRuns == nil {
+		return
+	}
+	rows := make([][][]TextRun, len(b.Rows))
+	styled := false
+	for r := range b.Rows {
+		var runs [][]TextRun
+		if r < len(b.RowRuns) {
+			runs = b.RowRuns[r]
+		}
+		if rows[r] = canonCellRuns(b.Rows[r], runs); rows[r] != nil {
+			styled = true
+		}
+	}
+	if !styled {
+		rows = nil
+	}
+	b.RowRuns = rows
+}
+
+// canonCellRuns mirrors runs into cells (in place) and returns runs in the
+// canonical form syncTableCellRuns describes: len(cells) entries with nil for
+// every plain cell, or nil when no cell is styled.
+func canonCellRuns(cells []string, runs [][]TextRun) [][]TextRun {
+	if runs == nil {
+		return nil
+	}
+	out := make([][]TextRun, len(cells))
+	styled := false
+	for c := range cells {
+		if c >= len(runs) || len(runs[c]) == 0 {
+			continue
+		}
+		cells[c] = FlattenRuns(runs[c])
+		if isPlainRuns(runs[c]) {
+			continue
+		}
+		out[c] = runs[c]
+		styled = true
+	}
+	if !styled {
+		return nil
+	}
+	return out
+}
+
+// isPlainRuns reports whether runs is one run with no marks and no link: text
+// that needs no runs at all (the codec's rule for Block.Runs, applied to cells).
+func isPlainRuns(runs []TextRun) bool {
+	return len(runs) == 1 && len(runs[0].Marks) == 0 && runs[0].Link == ""
 }
 
 // SingleRun returns a one-element runs slice for plain text, or nil if empty.

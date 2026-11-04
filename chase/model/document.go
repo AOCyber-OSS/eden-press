@@ -104,6 +104,25 @@ package model
 // todo/callout/divider/file/sheet/figure kinds, SheetEmbed, page Properties,
 // Comments/suggestions. Build still emits plain Text without Runs. omitempty
 // keeps Build JSON a strict superset of v6 apart from this version string.
+//
+// v7 pre-release amendment (AODex 1026 D14): ADDITIVE formatted table cells.
+// Block gained HeaderRuns and RowRuns, rich text beside the plain Headers and
+// Rows, as Runs sits beside Text. The version stays v7, deliberately, and this
+// is the one amendment made without a bump. The convention above signals a
+// shape change between RELEASES, and v7 had not been released when it changed:
+//  1. v7 was never tagged. The newest tag, v0.4.0, ships eden-press.model/v4;
+//     v5-v7 existed only on untagged main, so v0.5.0 is v7's first release.
+//  2. No stored v7 document existed. AODex, the only planned storer, pinned
+//     v0.4.0 and stored Markdown until its migration 086.
+//  3. Both fields are omitempty, so every document with no styled cell is
+//     byte-identical (TestV7CellRunsAdditiveGolden compares one with all 16
+//     kinds to a golden captured before the change), and a reader that ignores
+//     the two keys still reads correct plain cell text.
+//  4. A bump would have cost churn and bought no consumer anything: AODex's
+//     guard and the Dart mirror both match the version exactly, and both were
+//     being moved to v7 for v0.5.0.
+//
+// Any later change to this shape bumps the constant as usual.
 const SchemaVersion = "eden-press.model/v7"
 
 // Span is a half-open byte range [Start, Stop) into the Markdown source that
@@ -382,6 +401,25 @@ type Block struct {
 	// Load-bearing for convert/pptx, convert/docx and a future convert/xlsx:
 	// a right-aligned numeric column must survive into the export.
 	Aligns []string `json:"aligns,omitempty"`
+
+	// HeaderRuns is optional rich text for header cells (schema v7, additive;
+	// AODex 1026 D14). HeaderRuns[i] are the runs of Headers[i]; Headers stays
+	// the authoritative plain text, as Text does for Runs.
+	// nil when no header cell is styled; a nil entry is a plain cell.
+	//
+	// Canonical form (EnsureTextRunsInvariant, so GetDocJSON and ApplyOps): a
+	// non-nil HeaderRuns has len(Headers) entries; an entry that is empty or one
+	// run with no marks and no link is nil; Headers[i] == FlattenRuns(HeaderRuns[i])
+	// for every non-nil entry. A cell run never holds "\n" (a GFM cell is one
+	// line), and ApplyOps refuses one.
+	HeaderRuns [][]TextRun `json:"headerRuns,omitempty"`
+
+	// RowRuns is the same for body cells: RowRuns[r][c] are the runs of
+	// Rows[r][c]. A non-nil RowRuns has len(Rows) entries and a non-nil
+	// RowRuns[r] has len(Rows[r]), so ragged rows stay in lockstep; a row with no
+	// styled cell is nil. Wire example:
+	//   "rowRuns":[null,[null,[{"text":"a|b","marks":["code"]}]]]
+	RowRuns [][][]TextRun `json:"rowRuns,omitempty"`
 
 	// Src is an image block's destination URL (image blocks only). The alt
 	// text lives in Text and the optional title in Title.
