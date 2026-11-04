@@ -182,16 +182,16 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block, m htmlMode) {
 		b.WriteString("<table>\n")
 		if len(bl.Headers) > 0 {
 			b.WriteString("<thead><tr>")
-			for _, h := range bl.Headers {
-				fmt.Fprintf(b, "<th>%s</th>", html.EscapeString(h))
+			for i, h := range bl.Headers {
+				fmt.Fprintf(b, "<th>%s</th>", tableCellHTML(h, headerCellRuns(bl, i)))
 			}
 			b.WriteString("</tr></thead>\n")
 		}
 		b.WriteString("<tbody>\n")
-		for _, row := range bl.Rows {
+		for r, row := range bl.Rows {
 			b.WriteString("<tr>")
-			for _, cell := range row {
-				fmt.Fprintf(b, "<td>%s</td>", html.EscapeString(cell))
+			for c, cell := range row {
+				fmt.Fprintf(b, "<td>%s</td>", tableCellHTML(cell, rowCellRuns(bl, r, c)))
 			}
 			b.WriteString("</tr>\n")
 		}
@@ -356,6 +356,44 @@ func htmlRunsOrText(bl Block) string {
 		return renderRunsHTML(bl.Runs)
 	}
 	return html.EscapeString(bl.Text)
+}
+
+// tableCellHTML renders one table cell's content. A cell with runs shows them
+// through renderRunsHTML, the function a paragraph uses, so a cell and a
+// paragraph nest marks and write links identically (the "math" mark has no tag
+// there, so a math run shows as its escaped TeX text in both). A cell without
+// runs shows its plain text, escaped, exactly as it did before cells could be
+// styled. An empty runs entry is a plain cell, as an empty Block.Runs is.
+func tableCellHTML(text string, runs []TextRun) string {
+	if len(runs) > 0 {
+		return renderRunsHTML(runs)
+	}
+	return html.EscapeString(text)
+}
+
+// headerCellRuns returns the runs of header cell i, or nil when the cell has
+// none. HeaderRuns[i] pairs with Headers[i]; an entry that does not line up
+// with a header (a document this package did not author can carry a shorter or
+// longer array) is a plain cell, never an index panic.
+func headerCellRuns(bl Block, i int) []TextRun {
+	if i < 0 || i >= len(bl.HeaderRuns) {
+		return nil
+	}
+	return bl.HeaderRuns[i]
+}
+
+// rowCellRuns returns the runs of body cell (r, c), or nil when the cell has
+// none. RowRuns[r][c] pairs with Rows[r][c]; a missing or nil row, or a row
+// entry shorter than its row, leaves the cell plain.
+func rowCellRuns(bl Block, r, c int) []TextRun {
+	if r < 0 || r >= len(bl.RowRuns) {
+		return nil
+	}
+	row := bl.RowRuns[r]
+	if c < 0 || c >= len(row) {
+		return nil
+	}
+	return row[c]
 }
 
 func renderRunsHTML(runs []TextRun) string {
