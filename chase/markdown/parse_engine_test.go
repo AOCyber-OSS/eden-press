@@ -24,6 +24,7 @@ package markdown
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -131,6 +132,57 @@ func TestParseWithEngineIsAdditiveNonBreaking(t *testing.T) {
 
 	if buf.String() != seamOut {
 		t.Fatalf("ParseWithEngine seam output != existing Render output (seam should be unaffected):\nnew:\n%s\nexisting:\n%s", buf.String(), seamOut)
+	}
+}
+
+// TestParseWithEngineSVGMode: the caller decides whether sections are wrapped in
+// inline SVG. inlineSVG=true is exactly ParseWithEngine (the wrapper, the
+// SvgOptionsKey pre-seed); inlineSVG=false leaves every section a direct child of
+// the container, which is the only shape a profile with a single container chain
+// (paged) has CSS for. Either way the front-matter headingDivider pre-seed holds.
+func TestParseWithEngineSVGMode(t *testing.T) {
+	md := "# One\n\n---\n\n---\n\n# Three\n"
+	render := func(inlineSVG bool) (string, bool) {
+		engine := NewEngine()
+		doc, pc := ParseWithEngineSVG(md, engine, inlineSVG)
+		var buf bytes.Buffer
+		if err := engine.Renderer().Render(&buf, []byte(md), doc); err != nil {
+			t.Fatalf("render (inlineSVG=%v): %v", inlineSVG, err)
+		}
+		v, ok := pc.Get(SvgOptionsKey).(*SvgOptions)
+		return buf.String(), ok && v != nil && v.Enabled
+	}
+
+	wrapped, enabled := render(true)
+	if !enabled || strings.Count(wrapped, "<svg") != 3 {
+		t.Errorf("inlineSVG=true: enabled=%v, <svg count=%d, want enabled and 3:\n%s", enabled, strings.Count(wrapped, "<svg"), wrapped)
+	}
+	engine := NewEngine()
+	doc, _ := ParseWithEngine(md, engine)
+	var buf bytes.Buffer
+	if err := engine.Renderer().Render(&buf, []byte(md), doc); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != wrapped {
+		t.Errorf("ParseWithEngineSVG(true) differs from ParseWithEngine:\n%s\nvs\n%s", wrapped, buf.String())
+	}
+
+	flat, enabled := render(false)
+	if enabled {
+		t.Error("inlineSVG=false: SvgOptionsKey still reports Enabled=true")
+	}
+	if strings.Contains(flat, "<svg") || strings.Contains(flat, "foreignObject") {
+		t.Errorf("inlineSVG=false: output still SVG-wrapped:\n%s", flat)
+	}
+	if got := strings.Count(flat, "<section"); got != 3 {
+		t.Errorf("inlineSVG=false: %d <section> elements, want 3 (the empty middle one included):\n%s", got, flat)
+	}
+
+	// The headingDivider pre-seed is independent of the SVG decision.
+	hd := "---\nheadingDivider: 2\n---\n\n# H1\n\n## H2\n"
+	_, pc := ParseWithEngineSVG(hd, NewEngine(), false)
+	if levels, ok := pc.Get(HeadingDividerKey).([]int); !ok || !intsEqual(levels, []int{1, 2}) {
+		t.Errorf("HeadingDividerKey with inlineSVG=false = %#v, want [1 2]", pc.Get(HeadingDividerKey))
 	}
 }
 

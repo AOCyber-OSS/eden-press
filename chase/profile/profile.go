@@ -127,3 +127,36 @@ type PaginationRule struct {
 	Selector    string
 	ContentExpr string
 }
+
+// ResolveSize returns the size a document renders at under p: the document's
+// `size` directive looked up in p's own size table, or the table's Default when
+// the directive is absent, empty, or names a size p does not define.
+//
+// It is the ONE resolver. The CSS packer (press), the PNG exporter and the PDF
+// exporter all call it, so the page box the stylesheet declares and the viewport
+// and @page size the exporters capture at come from the same table and cannot
+// disagree. directives is the document's resolved front-matter directive map
+// (model.Meta.Directives); nil is fine.
+func ResolveSize(p Profile, directives map[string]string) theme.Size {
+	table := p.Sizes()
+	if name := directives["size"]; name != "" {
+		if sz, ok := table.ByName[name]; ok {
+			return sz
+		}
+	}
+	return table.Default
+}
+
+// UsesInlineSVG reports whether p lays its units out inside an inline-SVG layer
+// (Marpit's <svg><foreignObject> wrapper, which scales a fixed-aspect slide to
+// any viewport). A profile does exactly when its two container chains differ:
+// Container(true) is the SVG chain, Container(false) the plain one. A profile
+// whose chains are equal (paged, whose pages are fixed physical boxes) has no
+// SVG layer, and a renderer must not wrap its units in one -- the packed CSS is
+// scoped to the one chain, so a wrapper would put every unit outside it.
+//
+// Decided by comparing the chains rather than by a new Profile method, so the
+// interface other profiles implement does not change.
+func UsesInlineSVG(p Profile) bool {
+	return p.Container(true) != p.Container(false)
+}

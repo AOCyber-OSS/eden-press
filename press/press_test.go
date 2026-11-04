@@ -133,9 +133,9 @@ func TestOneParseInvariant(t *testing.T) {
 	t.Cleanup(func() { parseWithEngine = orig })
 
 	var calls int
-	parseWithEngine = func(md string, engine goldmark.Markdown) (*ast.Document, parser.Context) {
+	parseWithEngine = func(md string, engine goldmark.Markdown, inlineSVG bool) (*ast.Document, parser.Context) {
 		calls++
-		return orig(md, engine)
+		return orig(md, engine, inlineSVG)
 	}
 
 	if _, err := Render(everyBatteryDeck, Options{}); err != nil {

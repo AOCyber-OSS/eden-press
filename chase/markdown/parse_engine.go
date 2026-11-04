@@ -58,9 +58,25 @@ import (
 // invariant. The returned engine is the caller's own, so ParseWithEngine
 // carries no hidden coupling to defaultEngine's renderer.
 func ParseWithEngine(md string, engine goldmark.Markdown) (*ast.Document, parser.Context) {
+	return ParseWithEngineSVG(md, engine, true)
+}
+
+// ParseWithEngineSVG is ParseWithEngine with the inline-SVG decision handed to
+// the caller instead of fixed at "on". inlineSVG=true is exactly
+// ParseWithEngine: every section is wrapped in <svg><foreignObject>. With
+// inlineSVG=false SvgOptionsKey is seeded Enabled=false, so svgTransformer
+// leaves every section a direct child of the container <div> -- the only shape
+// a profile with ONE container chain has CSS for (profiles/paged: its pages are
+// fixed physical boxes, and the stylesheet is scoped to "div.edenpress-paged >
+// section"). A caller that knows the profile (press.Render) makes the decision;
+// this seam does not.
+//
+// Everything else -- the headingDivider pre-seed, the one parse, the returned
+// parser.Context -- is identical to ParseWithEngine.
+func ParseWithEngineSVG(md string, engine goldmark.Markdown, inlineSVG bool) (*ast.Document, parser.Context) {
 	source := []byte(md)
 	pc := parser.NewContext()
-	pc.Set(SvgOptionsKey, &SvgOptions{Enabled: true})
+	pc.Set(SvgOptionsKey, &SvgOptions{Enabled: inlineSVG})
 	if levels, ok := frontMatterHeadingDividerLevels(md); ok {
 		pc.Set(HeadingDividerKey, levels)
 	}

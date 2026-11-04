@@ -53,6 +53,11 @@ type Options struct {
 	// InlineSVG selects the inline-<svg><foreignObject> container mode. The
 	// 03-09 baseline turns this on to match Marp Core; the flag's own zero
 	// value is false and is documented here without any speculative inversion.
+	//
+	// It only matters to a profile that HAS an inline-SVG layer (slides, whose
+	// markup is always SVG-wrapped). A profile with one container chain (paged:
+	// fixed physical pages) is never SVG-wrapped, whatever this says -- the
+	// profile decides, so its markup always matches its CSS.
 	InlineSVG bool
 
 	// MathMode selects the math rendering backend. "" resolves to "mathml"

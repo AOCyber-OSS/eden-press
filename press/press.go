@@ -58,10 +58,11 @@ const defaultThemeName = "default"
 // press_test.go's TestOneParseInvariant wraps this with a call counter to prove
 // Render invokes it EXACTLY once (03-09 must_haves: "calling
 // chase/markdown.ParseWithEngine EXACTLY ONCE"). Production behavior is
-// identical to calling markdown.ParseWithEngine directly -- the indirection is
-// the idiomatic Go way to make a package-function call countable without a
-// mock framework.
-var parseWithEngine = markdown.ParseWithEngine
+// identical to calling markdown.ParseWithEngineSVG directly -- the indirection
+// is the idiomatic Go way to make a package-function call countable without a
+// mock framework. The third argument is the inline-SVG decision, made per
+// profile (see Render step 3).
+var parseWithEngine = markdown.ParseWithEngineSVG
 
 // Render is the PUBLIC one-parse-two-sinks composition (API-01): it wires every
 // press battery (03-03 strikethrough, 03-04 emoji, 03-05 highlight, 03-06 math,
@@ -96,8 +97,15 @@ func Render(md string, opts Options) (Output, error) {
 	engine := markdown.NewEngine(pressExtraOpts(opts, p)...)
 
 	// 3. THE ONE PARSE -- via the seam, using the caller's battery engine.
+	//    Whether each section is wrapped in <svg><foreignObject> is the
+	//    PROFILE's call, not the seam's: slides (Container(true) differs from
+	//    Container(false)) is wrapped, so the viewer can scale a fixed-aspect
+	//    slide; paged (one container chain, fixed physical page boxes) is not,
+	//    because its stylesheet is scoped to "div.edenpress-paged > section" and
+	//    a wrapper would put every page outside that chain, so no page-box rule
+	//    would match (D15).
 	source := []byte(md)
-	doc, pc := parseWithEngine(md, engine)
+	doc, pc := parseWithEngine(md, engine, profile.UsesInlineSVG(p))
 
 	// 4. Sink 1: HTML, rendered from the SAME finalized doc by the SAME
 	//    engine's renderer (never a second parse / md.Convert), then the
@@ -238,13 +246,22 @@ func pressExtraOpts(opts Options, p profile.Profile) []goldmark.Option {
 // The ThemeSet is built once from the active profile's unit element + scaffold /
 // advanced-background CSS + bare-@size fallback table (press/themes.ThemeSet).
 //
-// inlineSVG is derived from pc (svgEnabled) OR'd with opts.InlineSVG: the seam's
-// ParseWithEngine unconditionally enables inline-SVG mode, so the rendered HTML
-// ALWAYS carries the <svg><foreignObject> wrapper -- the packed CSS must match
-// that container chain, so it is packed InlineSVG=true to stay consistent (a
-// non-SVG pack would scope theme rules onto div.marpit and mis-target the
-// SVG-wrapped sections). This mirrors chase/chase.go's packCSS, which likewise
-// reads inline-SVG mode from pc rather than trusting a caller flag.
+// inlineSVG is derived from pc (svgEnabled) OR'd with opts.InlineSVG, for a
+// profile that has an inline-SVG layer (slides): Render enables inline-SVG mode
+// for it, so the rendered HTML ALWAYS carries the <svg><foreignObject> wrapper
+// and the packed CSS must match that container chain, so it is packed
+// InlineSVG=true to stay consistent (a non-SVG pack would scope theme rules onto
+// div.marpit and mis-target the SVG-wrapped sections). This mirrors
+// chase/chase.go's packCSS, which likewise reads inline-SVG mode from pc rather
+// than trusting a caller flag.
+//
+// A profile with a single container chain (paged) never has an SVG layer:
+// opts.InlineSVG does not turn one on, and its page box is stated here. The
+// packed theme carries the theme's own section size (the bundled themes are
+// 1280x720 slide themes), so the profile's resolved page size is appended as the
+// LAST unit rule -- same selector, later in the cascade -- and wins. The size is
+// profile.ResolveSize(directive "size" -> the profile's table -> its default),
+// the same resolver convert/png and convert/pdf capture at.
 func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Options) (string, error) {
 	scaffoldCSS := p.Scaffold(false)
 	// Recover the advanced-background CSS suffix the same way chase/chase.go's
@@ -276,12 +293,23 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 	}
 
 	name := resolveThemeName(opts.Theme, meta)
-	inlineSVG := svgEnabled(pc) || opts.InlineSVG
+	hasSVGLayer := profile.UsesInlineSVG(p)
+	inlineSVG := hasSVGLayer && (svgEnabled(pc) || opts.InlineSVG)
 	css, err := ts.Pack(name, theme.PackOptions{InlineSVG: inlineSVG})
 	if err != nil {
 		return "", fmt.Errorf("press: Render: pack theme %q: %w", name, err)
 	}
+	if !hasSVGLayer {
+		css += "\n" + pageSizeRule(p, profile.ResolveSize(p, meta.Directives))
+	}
 	return css, nil
+}
+
+// pageSizeRule is the unit rule that gives every page the resolved physical
+// size, scoped exactly as the packer scopes the unit's own rules: the profile's
+// container chain, a child combinator, the unit element.
+func pageSizeRule(p profile.Profile, size theme.Size) string {
+	return fmt.Sprintf("%s > %s { width: %dpx; height: %dpx; }", p.Container(false), p.UnitElement(), size.WidthPx, size.HeightPx)
 }
 
 // resolveThemeName applies the fixed fallback chain opts.Theme -> front-matter
