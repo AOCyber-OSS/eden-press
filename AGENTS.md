@@ -235,6 +235,25 @@ Construct names still compile. A cell refuses what a paragraph refuses, under th
 names (`raw-html`, `inline-image`, `link-title`, `empty-link`, `inline-display-math`), and
 strict mode still reports only the first.
 
+**Wide table rows (AODex D18).** GFM ignores the cells of a body row that run past the header,
+and a reader that did the same would drop them without a word (strict mode too). `FromMarkdown`
+never drops a table cell: a table is as wide as its widest row, strict and lenient alike, and
+there is no refusal for it. The header gains empty cells (`headers` `""`, no `headerRuns`
+entry), `aligns` gains `""` (unaligned) entries, a narrower row gains empty cells, and every
+cell of every row is kept. For example
+
+```markdown
+| a |
+| - |
+| x | zqsentinel |
+```
+
+reads as `headers` `["a", ""]`, `aligns` `["", ""]`, `rows` `[["x", "zqsentinel"]]`, and
+`ToMarkdown` writes it back as `| a |  |` / `| --- | --- |` / `| x | zqsentinel |`, which
+reads as the same table. An excess cell is read like any other cell (bold, code, math, links,
+`\|`), so it can refuse what a cell refuses. A table whose rows are all as wide as or
+narrower than its header reads exactly as before.
+
 Read without a refusal and without a trace (they carry no content): the bullet
 character, the ordered delimiter, list tightness and numbering, `*` versus `_`
 emphasis, ATX versus setext headings, fence character and length, indented versus
@@ -262,8 +281,9 @@ document by path.
 - display math TeX holding an unescaped `$$`, and inline math TeX holding an unescaped
   `$`, edge whitespace or a newline (TeX reserves `$`; write `\$`);
 - a list that skips a level or starts above level 0;
-- a table row with more or fewer cells than the header (a row wider than the header
-  loses its extra cells when read: GFM ignores them);
+- a table row with more or fewer cells than the header (the reader pads the header to the
+  widest row and a narrower row with empty cells, so the document reads back as the padded
+  table; no cell is lost, see "Wide table rows" above);
 - a table cell whose runs are not canonical (see `headerRuns` / `rowRuns` above: a plain
   cell is `null`, no run holds a newline), and cell text that differs from its runs;
 - children on a block other than `quote`, `toggle`, `todo` and `callout` (dropped);

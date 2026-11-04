@@ -73,6 +73,14 @@ func FuzzFromMarkdown(f *testing.F) {
 		"| *i* | ~~s~~ | <https://a.b> |\n| --- | --- | --- |\n| <strong>d</strong> | `` ` `` | [l](<u v\\|w>) |\n",
 		"| a |\n| - |\n| x<br>y |\n", "| a |\n| - |\n| ![i](u) |\n", "| a |\n| - |\n| [l](u \"t\") |\n",
 		"| `a`**b**~~c~~ |\n| - |\n| $x\\\\|y$ |\n", "| a\\ |\n| - |\n| `\\|` |\n",
+		// Wide table rows (TRD 31): excess cells, styled and with pipes, a row wider than
+		// its neighbours, a table in a quote, no outer pipes, and the row-end shapes
+		// (an escaped outer pipe, a trailing empty cell) where the splitter and goldmark
+		// have to agree.
+		"| a |\n| - |\n| x | zqsentinel |\n", "| a | b |\n| :-- | --: |\n| 1 | 2 | 3 |\n| 4 |\n| 5 | 6 | 7 | 8 |\n",
+		"| a |\n| - |\n| x | **b** | `c\\|d` | $e\\|f$ | [g\\|h](u\\|v) |\n", "> | a |\n> | - |\n> | x | y |\n", "a | b\n--- | ---\n1 | 2 | 3\n",
+		"| a |\n| - |\n| x | |\n", "| a |\n| - |\n| x | y \\|\n", "| a |\n| - |\n| x | `y |\n", "| a |\n| - |\n| x | <strong>y |\n",
+		"| a |\n| - |\n| x | ![i](u) |\n", "intro\n| a |\n| - |\n| x | y |\n\nafter\n", ":::toggle\n| a |\n| - |\n| x | y |\n:::\n",
 	} {
 		f.Add(s)
 	}

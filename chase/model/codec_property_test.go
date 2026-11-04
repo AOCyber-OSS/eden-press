@@ -1539,6 +1539,14 @@ var nodropTemplates = []string{
 	"| a |\n| - |\n| [a](u \"%s\") |", "| a |\n| - |\n| **%s** and `c` and [d](e) |", "| a | b |\n| - | - |\n| *%s* |",
 	"| a |\n| - |\n| [a][r] |\n\n[r]: http://%s.io", "| `a` | **%s** |\n| :-: | --: |\n| _%s_ | __c__ |", "| a |\n| - |\n| <strong>%s</strong> |",
 	"| a |\n| - |\n| <em>%s |", "| a |\n| - |\n| $$%s$$ |", "| a |\n| - |\n| %s ~~x~~ |",
+
+	// Wide table rows (AODex D18): a hole in a cell beyond the header's width. The
+	// reader pads the header, so a cell there is kept, as every sentinel must be.
+	"| a |\n| - |\n| x | %s |", "| a | b |\n| - | - |\n| x | y | %s |", "| a |\n| - |\n| x | **%s** | `%s` |",
+	"| a |\n| - |\n| x | *%s* |\n| y | z | %s |", "| a |\n| - |\n| x | [%s](http://x.io) | $%s$ |", "| a |\n| - |\n| x | `p\\|%s` |",
+	"| a |\n| - |\n| x | $p\\|%s$ |", "| a |\n| - |\n| x | p\\|%s |", "| a |\n| - |\n| x | ![%s](p.png) |", "| a |\n| - |\n| x | y<br>%s |",
+	"a | b\n--- | ---\n1 | 2 | %s", "| a |\n| - |\n| x | |\n| %s | y | z |", "| a | b |\n| :-: | --: |\n| %s |\n| x | y | %s |",
+	"| a |\n| - |\n| x | <strong>%s</strong> |", "| a |\n| - |\n| x | <em>%s |", "| a |\n| - |\n| x | [a](u \"%s\") |", "| a |\n| - |\n| x | y | z | w | %s |",
 }
 
 var nodropContexts = []func(string) string{
@@ -1617,6 +1625,217 @@ func TestCodecStrictNeverDropsContent(t *testing.T) {
 	t.Logf("%d sources, %d accepted by strict mode, %d dropped content", read, accepted, bad)
 	if accepted < read/10 {
 		t.Fatalf("only %d of %d sources were accepted, so the test says little", accepted, read)
+	}
+}
+
+// ---- wide table rows (AODex D18) ----
+
+// wideCell is one kind of cell a generated wide-row table holds: the Markdown with
+// holes for sentinels, and what the cell's text reads as. Every kind is one the
+// codec accepts in strict mode, so a refusal is a failure of the property.
+type wideCell struct {
+	md   string
+	text func(w []string) string
+}
+
+var wideCells = []wideCell{
+	{"%s", func(w []string) string { return w[0] }},
+	{"**%s**", func(w []string) string { return w[0] }},
+	{"*%s*", func(w []string) string { return w[0] }},
+	{"~~%s~~", func(w []string) string { return w[0] }},
+	{"`%s`", func(w []string) string { return w[0] }},
+	{"[%s](http://x.io)", func(w []string) string { return w[0] }},
+	{"$%s$", func(w []string) string { return w[0] }},
+	{"<strong>%s</strong>", func(w []string) string { return w[0] }},
+	{"%s\\|%s", func(w []string) string { return w[0] + "|" + w[1] }},
+	{"`%s\\|%s`", func(w []string) string { return w[0] + "|" + w[1] }},
+	{"$%s\\|%s$", func(w []string) string { return w[0] + "|" + w[1] }},
+	{"[%s\\|%s](http://x.io)", func(w []string) string { return w[0] + "|" + w[1] }},
+	{"[a](http://x.io/%s\\|%s)", func(w []string) string { return "a" }},
+	{"**%s** and `%s`", func(w []string) string { return w[0] + " and " + w[1] }},
+	{"", func(w []string) string { return "" }},
+}
+
+// wideSource is a generated GFM table whose body rows may be wider than its header,
+// with what a reader must make of it.
+type wideSource struct {
+	src       string
+	width     int        // the table's width after padding: its widest row
+	text      [][]string // the text of every cell of every body row, "" where a row is narrower
+	sentinels []string   // every sentinel placed, in the header, the body and the excess cells
+	excess    int        // sentinels in cells beyond the header's width
+}
+
+// genWideSource builds a wide-row table from rng: a header of 1 to 4 columns with
+// random alignments, 1 to 4 body rows of 1 to header+4 cells, in one of four
+// layouts (outer pipes, bare, text before the table, and the spacing around cells
+// varied). Every cell holds a unique sentinel unless it is the empty cell.
+func genWideSource(rng *rand.Rand) wideSource {
+	letters := "abcdefghijklmnopqrstuvwxyz"
+	sentinel := func() string {
+		b := []byte("zq")
+		for i := 0; i < 8; i++ {
+			b = append(b, letters[rng.IntN(len(letters))])
+		}
+		return string(b)
+	}
+	var ws wideSource
+	h := 1 + rng.IntN(4)
+	bare := h > 1 && rng.IntN(5) == 0 // a table without outer pipes needs two columns to be a table
+	join := func(cells []string) string {
+		if bare {
+			return strings.Join(cells, " | ")
+		}
+		return "| " + strings.Join(cells, " | ") + " |"
+	}
+	headers := make([]string, h)
+	delims := make([]string, h)
+	aligns := []string{"---", ":--", "--:", ":-:"}
+	for i := range headers {
+		headers[i] = sentinel()
+		ws.sentinels = append(ws.sentinels, headers[i])
+		delims[i] = aligns[rng.IntN(len(aligns))]
+	}
+	var lines []string
+	if rng.IntN(4) == 0 {
+		lead := sentinel()
+		ws.sentinels = append(ws.sentinels, lead)
+		lines = append(lines, "lead "+lead)
+	}
+	lines = append(lines, join(headers), join(delims))
+	ws.width = h
+	rows := 1 + rng.IntN(4)
+	wide := false
+	for r := 0; r < rows; r++ {
+		n := 1 + rng.IntN(h+4)
+		if r == rows-1 && !wide {
+			n = h + 1 + rng.IntN(3) // at least one wide row in every table
+		}
+		wide = wide || n > h
+		cells := make([]string, n)
+		texts := make([]string, n)
+		for c := range cells {
+			kind := wideCells[rng.IntN(len(wideCells))]
+			if kind.md == "" && ((n > h && c == n-1) || (bare && (c == 0 || c == n-1))) {
+				// Keep a sentinel in the last excess cell. A bare row has no outer pipes to
+				// hold an empty first or last cell, and a bare empty row is a blank line.
+				kind = wideCells[0]
+			}
+			args := make([]any, strings.Count(kind.md, "%s"))
+			w := make([]string, len(args))
+			for k := range args {
+				w[k] = sentinel()
+				args[k] = w[k]
+				ws.sentinels = append(ws.sentinels, w[k])
+				if c >= h {
+					ws.excess++
+				}
+			}
+			cells[c] = fmt.Sprintf(kind.md, args...)
+			texts[c] = kind.text(w)
+		}
+		lines = append(lines, join(cells))
+		ws.text = append(ws.text, texts)
+		ws.width = max(ws.width, n)
+	}
+	for r := range ws.text {
+		for len(ws.text[r]) < ws.width {
+			ws.text[r] = append(ws.text[r], "")
+		}
+	}
+	ws.src = strings.Join(lines, "\n") + "\n"
+	return ws
+}
+
+// TestCodecPropertyWideRowSources is the wide-row half of P5 and of identity (AODex
+// D18). Random GFM tables whose body rows run past their header, with a sentinel in
+// every cell and in every kind of excess cell (plain, bold, code, math, a link, an
+// escaped pipe), in the places a table can be. For each, strict and lenient reads
+// accept it with no refusal; the table is as wide as its widest row; every
+// sentinel is in the cell it was written in and no other cell is changed; spans lie
+// inside the input; and the padded document is a fixed point of write-then-read.
+// 2,000 sources by default, EDEN_CODEC_PROP_SCALE times that.
+func TestCodecPropertyWideRowSources(t *testing.T) {
+	contexts := []struct {
+		name string
+		wrap func(string) string
+	}{
+		{"top", func(s string) string { return s }},
+		{"quote", func(s string) string { return prefixLinesTest(s, "> ") }},
+		{"toggle", func(s string) string { return ":::toggle\n" + s + ":::\n" }},
+		{"section", func(s string) string { return "# One\n\nx\n\n---\n\n# Two\n\n" + s }},
+		{"callout", func(s string) string { return ":::callout\nlead\n\n" + s + ":::\n" }},
+	}
+	total := 2000 * propScale()
+	failures, excess, dropped, tables := 0, 0, 0, 0
+	for i := uint64(0); i < total && failures < 5; i++ {
+		rng := propRand(31, i)
+		ws := genWideSource(rng)
+		ctx := contexts[rng.IntN(len(contexts))]
+		src := ctx.wrap(ws.src)
+		fail := func(format string, args ...any) {
+			failures++
+			t.Errorf("seed=31 index=%d (replay: genWideSource(propRand(31, %d))), context %s: %s\n source: %q", i, i, ctx.name, fmt.Sprintf(format, args...), src)
+		}
+
+		strict, err := FromMarkdown(src, FromMarkdownOptions{})
+		if err != nil {
+			fail("strict mode refused a wide row: %v", err)
+			continue
+		}
+		lenient, err := FromMarkdown(src, FromMarkdownOptions{Lenient: true})
+		if err != nil || !reflect.DeepEqual(strict, lenient) {
+			fail("lenient differs from strict (err %v) at %s", err, deepDiff(lenient, strict))
+			continue
+		}
+		raw, _ := json.Marshal(strict)
+		for _, w := range ws.sentinels {
+			if !strings.Contains(string(raw), w) {
+				dropped++
+				fail("dropped the sentinel %q", w)
+				break
+			}
+		}
+		excess += ws.excess
+		tbs := tablesOf(strict)
+		if len(tbs) != 1 {
+			fail("want one table, got %d", len(tbs))
+			continue
+		}
+		tables++
+		b := tbs[0]
+		if len(b.Headers) != ws.width || len(b.Aligns) != ws.width {
+			fail("the table is %d headers and %d aligns wide, want %d", len(b.Headers), len(b.Aligns), ws.width)
+			continue
+		}
+		if len(b.Rows) != len(ws.text) {
+			fail("%d rows, want %d", len(b.Rows), len(ws.text))
+			continue
+		}
+		for r, row := range b.Rows {
+			if !reflect.DeepEqual(row, ws.text[r]) {
+				fail("row %d is %q, want %q", r, row, ws.text[r])
+				break
+			}
+		}
+		if err := propValid(strict); err != nil {
+			fail("the padded document is not valid: %v", err)
+			continue
+		}
+		if err := propCheckN(strict, 1); err != nil {
+			fail("the padded document: %v", err)
+			continue
+		}
+		withSpans, err := FromMarkdown(src, FromMarkdownOptions{Spans: true})
+		if err != nil {
+			fail("read with Spans failed: %v", err)
+			continue
+		}
+		checkSpansInside(t, withSpans, len(src))
+	}
+	t.Logf("%d sources, %d tables, %d sentinels in excess cells, %d dropped, %d failures", total, tables, excess, dropped, failures)
+	if failures == 0 && (tables != int(total) || excess < int(total)) {
+		t.Fatalf("ran %d tables of %d sources with %d excess sentinels: the generator says little", tables, total, excess)
 	}
 }
 
