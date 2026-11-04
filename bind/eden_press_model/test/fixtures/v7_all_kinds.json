@@ -109,6 +109,89 @@
           ],
           "rows": [
             [
+              "a|b",
+              "550ms"
+            ],
+            [
+              "p95 latency",
+              "550ms"
+            ],
+            [
+              "see docs",
+              "x^2"
+            ],
+            [
+              "ragged"
+            ]
+          ],
+          "aligns": [
+            "left",
+            ""
+          ],
+          "headerRuns": [
+            [
+              {
+                "text": "Metric",
+                "marks": [
+                  "bold"
+                ]
+              }
+            ],
+            null
+          ],
+          "rowRuns": [
+            [
+              [
+                {
+                  "text": "a|b",
+                  "marks": [
+                    "code"
+                  ]
+                }
+              ],
+              null
+            ],
+            null,
+            [
+              [
+                {
+                  "text": "see "
+                },
+                {
+                  "text": "docs",
+                  "link": "https://aocyber.ai/docs"
+                }
+              ],
+              [
+                {
+                  "text": "x^2",
+                  "marks": [
+                    "math"
+                  ]
+                }
+              ]
+            ],
+            [
+              [
+                {
+                  "text": "ragged",
+                  "marks": [
+                    "italic"
+                  ]
+                }
+              ]
+            ]
+          ]
+        },
+        {
+          "id": "b_table_plain",
+          "kind": "table",
+          "headers": [
+            "Name",
+            "Value"
+          ],
+          "rows": [
+            [
               "p95 latency",
               "550ms"
             ],

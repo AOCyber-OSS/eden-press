@@ -271,6 +271,131 @@ void main() {
     );
   });
 
+  // 1026-29 Test list 3: formatted table cells (docmodel v7 headerRuns and
+  // rowRuns, added by 1026-25). The golden table b_table is written by Go.
+  group('formatted table cells', () {
+    Block golden(String id) => ModelDocument.fromJson(
+      _golden(),
+    ).sections.first.blocks.firstWhere((b) => b.id == id);
+
+    test('the golden table parses into typed headerRuns and rowRuns', () {
+      final table = golden('b_table');
+      expect(table.headerRuns, hasLength(2));
+      expect(table.headerRuns[0]!.single.text, 'Metric');
+      expect(table.headerRuns[0]!.single.marks, ['bold']);
+      expect(table.rowRuns, hasLength(4));
+      expect(table.rowRuns[0]![0]!.single.marks, ['code']);
+      expect(table.rowRuns[0]![0]!.single.text, 'a|b');
+      expect(table.rowRuns[2]![0]!, hasLength(2));
+      expect(table.rowRuns[2]![0]![1].link, 'https://aocyber.ai/docs');
+      expect(table.rowRuns[2]![1]!.single.marks, ['math']);
+      // The ragged row has one cell and so one entry, not one per header.
+      expect(table.rows[3], hasLength(1));
+      expect(table.rowRuns[3], hasLength(1));
+    });
+
+    test('null entries survive fromJson as plain cells', () {
+      final table = golden('b_table');
+      expect(table.headerRuns[1], isNull);
+      expect(table.rowRuns[0]![1], isNull);
+      expect(table.rowRuns[1], isNull);
+    });
+
+    test('toJson writes the nulls back where Go wrote them', () {
+      final json = golden('b_table').toJson();
+      final headerRuns = json['headerRuns'] as List;
+      expect(headerRuns, hasLength(2));
+      expect(headerRuns[1], isNull);
+      final rowRuns = json['rowRuns'] as List;
+      expect(rowRuns, hasLength(4));
+      expect((rowRuns[0] as List)[1], isNull);
+      expect(rowRuns[1], isNull);
+      expect(
+        jsonEncode(json),
+        jsonEncode(_goldenBlock(_golden(), 'b_table')),
+        reason: 'the table must encode to Go\'s exact bytes, nulls included',
+      );
+    });
+
+    test('a plain table writes neither key (golden and hand-built)', () {
+      final plain = golden('b_table_plain');
+      expect(plain.headerRuns, isEmpty);
+      expect(plain.rowRuns, isEmpty);
+      final json = plain.toJson();
+      expect(json.containsKey('headerRuns'), isFalse);
+      expect(json.containsKey('rowRuns'), isFalse);
+      expect(
+        jsonEncode(json),
+        jsonEncode(_goldenBlock(_golden(), 'b_table_plain')),
+      );
+      final bare = Block(
+        kind: BlockKind.table,
+        text: '',
+        level: 0,
+        language: '',
+        display: false,
+        ordered: false,
+        items: const [],
+        headers: const ['H'],
+        rows: const [
+          ['c'],
+        ],
+      ).toJson();
+      expect(bare.keys, ['kind', 'headers', 'rows']);
+    });
+
+    test('a hand-built block with cell runs encodes in Go key order', () {
+      final json = Block(
+        kind: BlockKind.table,
+        text: '',
+        level: 0,
+        language: '',
+        display: false,
+        ordered: false,
+        items: const [],
+        headers: const ['H'],
+        rows: const [
+          ['c', 'd'],
+        ],
+        aligns: const ['left'],
+        headerRuns: const [
+          [
+            TextRun(text: 'H', marks: ['bold']),
+          ],
+        ],
+        rowRuns: const [
+          [
+            null,
+            [TextRun(text: 'd', link: 'https://x.test')],
+          ],
+        ],
+        src: 'after-runs',
+      ).toJson();
+      expect(json.keys, [
+        'kind',
+        'headers',
+        'rows',
+        'aligns',
+        'headerRuns',
+        'rowRuns',
+        'src',
+      ]);
+      expect(jsonEncode(json['rowRuns']), '[[null,[{"text":"d","link":"https://x.test"}]]]');
+    });
+
+    test('fromJson tolerates absent and null cell-run keys', () {
+      for (final raw in [
+        <String, dynamic>{'kind': 'table'},
+        <String, dynamic>{'kind': 'table', 'headerRuns': null, 'rowRuns': null},
+      ]) {
+        final table = Block.fromJson(raw);
+        expect(table.headerRuns, isEmpty);
+        expect(table.rowRuns, isEmpty);
+        expect(table.toJson(), {'kind': 'table'});
+      }
+    });
+  });
+
   group('typed sheet embed', () {
     test('a formula cell parses into SheetCell and round-trips', () {
       final golden = _golden();

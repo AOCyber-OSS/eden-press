@@ -119,9 +119,40 @@ func dartGoldenDocument() Document {
 					{ID: "b_math", Kind: BlockMath, Text: `\frac{a}{b}`, Display: true},
 					{Kind: BlockMath, Text: "x^2"},
 					{
+						// Formatted cells (1026-25/29). Headers/Rows keep the plain
+						// text; HeaderRuns/RowRuns run in lockstep with them and a
+						// nil entry is a plain cell (marshals as null). Row 1 is a
+						// plain row (null), row 2 mixes a plain run, a link and a
+						// math run, and row 3 is ragged (one cell, so one entry).
 						ID:      "b_table",
 						Kind:    BlockTable,
 						Headers: []string{"Metric", "Q3"},
+						Rows: [][]string{
+							{"a|b", "550ms"},
+							{"p95 latency", "550ms"},
+							{"see docs", "x^2"},
+							{"ragged"},
+						},
+						Aligns: []string{"left", ""},
+						HeaderRuns: [][]TextRun{
+							{{Text: "Metric", Marks: []string{"bold"}}},
+							nil,
+						},
+						RowRuns: [][][]TextRun{
+							{{{Text: "a|b", Marks: []string{"code"}}}, nil},
+							nil,
+							{
+								{{Text: "see "}, {Text: "docs", Link: "https://aocyber.ai/docs"}},
+								{{Text: "x^2", Marks: []string{"math"}}},
+							},
+							{{{Text: "ragged", Marks: []string{"italic"}}}},
+						},
+					},
+					// A table with no styled cell carries neither key.
+					{
+						ID:      "b_table_plain",
+						Kind:    BlockTable,
+						Headers: []string{"Name", "Value"},
 						Rows:    [][]string{{"p95 latency", "550ms"}, {"ragged"}},
 						Aligns:  []string{"left", ""},
 					},
