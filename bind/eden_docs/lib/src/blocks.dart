@@ -285,15 +285,27 @@ Widget _table(Block block) {
       : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
   if (columns == 0) return const SizedBox.shrink();
 
-  TableRow row(List<String> cells, {required bool header}) => TableRow(
+  // [runs] is the row's slice of headerRuns / rowRuns, or null for a plain row.
+  // It is indexed by the row's own cells (a ragged row has fewer than
+  // [columns]), never by the header width.
+  TableRow row(
+    List<String> cells,
+    List<List<TextRun>?>? runs, {
+    required bool header,
+  }) => TableRow(
     children: List<Widget>.generate(columns, (i) {
       final text = i < cells.length ? cells[i] : '';
+      final style = header
+          ? const TextStyle(fontWeight: FontWeight.w600)
+          : null;
+      final cellRuns = runs != null && i < cells.length && i < runs.length
+          ? runs[i]
+          : null;
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Text(
-          text,
-          style: header ? const TextStyle(fontWeight: FontWeight.w600) : null,
-        ),
+        child: cellRuns == null || cellRuns.isEmpty
+            ? Text(text, style: style)
+            : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
       );
     }),
   );
@@ -303,8 +315,14 @@ Widget _table(Block block) {
     child: Table(
       border: TableBorder.all(color: const Color(0xFFDADCE0), width: 0.5),
       children: [
-        if (block.headers.isNotEmpty) row(block.headers, header: true),
-        for (final r in block.rows) row(r, header: false),
+        if (block.headers.isNotEmpty)
+          row(block.headers, block.headerRuns, header: true),
+        for (var r = 0; r < block.rows.length; r++)
+          row(
+            block.rows[r],
+            r < block.rowRuns.length ? block.rowRuns[r] : null,
+            header: false,
+          ),
       ],
     ),
   );
