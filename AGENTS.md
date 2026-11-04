@@ -55,7 +55,7 @@ prints a JSON error envelope on stderr on failure (even without `--format json`)
 |---|---|---|
 | `insert_block` | `sectionId` **or** `parentBlockId`, `block` | Optional `index` (0-based). Auto-assigns `block.id` when omitted |
 | `update_block` | `blockId`, `block` | Full replace (keeps id). Synced: mutate the **source**, not the instance |
-| `patch_block` | `blockId`, `block` | Merge fields/runs/checked/sheetEmbed; `clearChecked`/`clearCollapsed` clear bools |
+| `patch_block` | `blockId`, `block` | Merge fields/runs/checked/sheetEmbed; `clearChecked`/`clearCollapsed` clear bools. Table: `headerRuns`/`rowRuns` given win and re-derive the cell text; `headers`/`rows` given **without** their runs clear the old runs, so send the runs with the cells to keep formatting. A refused patch changes nothing |
 | `delete_block` | `blockId` | Removes the block (and its children) |
 | `move_block` | `blockId` | Optional `sectionId` / `parentBlockId` / `index`. Cycle into own descendant is rejected |
 | `replace_text` | `old`, `new` | Optional `blockId`, `all`. Operates on plain `text` (runs re-flattened; marks may drop) |
@@ -79,6 +79,7 @@ Editable block kinds: `paragraph`, `heading`, `list`, `code`, `math`, `table`,
 Schema v7 additions:
 
 - `runs[]` — rich text `{text, marks?, link?}`; plain `text` is the search/replace authority
+- `headerRuns` / `rowRuns` — formatted table cells, beside the plain `headers` / `rows`: `headerRuns[i]` are the runs of `headers[i]`, `rowRuns[r][c]` of `rows[r][c]`. `null` is a plain cell (or a row of plain cells); a key is absent when no cell is styled. Sizes match the cells (`rowRuns[r]` matches its own, possibly ragged, row); a cell run never holds a newline; tables only. `replace_text` does not edit cells — use `patch_block`
 - `todo` — `checked` bool + optional `children`
 - `callout` — `text`/`runs` + optional `icon`/`tone`
 - `divider` — thematic break
@@ -494,7 +495,10 @@ Field notes an agent must get right:
   `text`. `rows` is an array of row arrays of cell strings; `aligns` is one
   entry per column, each `"left"`/`"right"`/`"center"` or `""` when the column
   declared no alignment. Ragged rows are reported as authored — GFM pads at
-  render time, but the model reports what was written. An **image** block puts
+  render time, but the model reports what was written. Optional `headerRuns` /
+  `rowRuns` carry formatted cells (see "Schema v7 additions"); `headers` /
+  `rows` always hold the plain cell text, so a reader that ignores the runs
+  still reads every cell. An **image** block puts
   its destination in `src`, its alt text in `text`, and its optional
   `![alt](src "title")` third argument in `title`. A **quote** block carries its
   concatenated text in `text` (multi-paragraph quotes are joined by a blank

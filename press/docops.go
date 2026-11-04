@@ -243,8 +243,9 @@ func clearSpans(d *model.Document) {
 }
 
 // jsonTree is d as the generic tree encoding/json decodes, with every empty array
-// and object (and null) dropped, and a table's all-empty "aligns": an empty
-// collection and an absent one are the same JSON document for this comparison.
+// and object (and null) dropped, a table's all-empty "aligns", and a table's
+// "headerRuns"/"rowRuns" whose every entry is null: an empty collection and an
+// absent one are the same JSON document for this comparison.
 func jsonTree(d *model.Document) (any, error) {
 	raw, err := json.Marshal(d)
 	if err != nil {
@@ -261,7 +262,7 @@ func dropEmpty(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
-			if e = dropEmpty(e); e == nil || (k == "aligns" && allEmptyStrings(e)) {
+			if e = dropEmpty(e); e == nil || (k == "aligns" && allEmptyStrings(e)) || ((k == "headerRuns" || k == "rowRuns") && allNull(e)) {
 				delete(x, k)
 			} else {
 				x[k] = e
@@ -293,6 +294,25 @@ func allEmptyStrings(v any) bool {
 	}
 	for _, e := range list {
 		if s, ok := e.(string); !ok || s != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// allNull reports whether v is an array whose every entry is null or is itself
+// such an array, at every depth (an empty array counts). A table's "headerRuns"
+// or "rowRuns" in that form styles no cell, so it is the same table as one with
+// no such key: the reader writes no key for a plain table, while a stored
+// document may hold the nulls. The guard does not run EnsureTextRunsInvariant
+// (it would hide a fabricated mismatch), so the rule lives here.
+func allNull(v any) bool {
+	list, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, e := range list {
+		if e != nil && !allNull(e) {
 			return false
 		}
 	}
