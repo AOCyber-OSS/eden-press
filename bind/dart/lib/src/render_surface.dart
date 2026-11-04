@@ -44,6 +44,7 @@
 /// is imported or invoked anywhere in this file.
 library;
 
+import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlighting/flutter_highlighting.dart';
 import 'package:flutter_highlighting/themes/github.dart';

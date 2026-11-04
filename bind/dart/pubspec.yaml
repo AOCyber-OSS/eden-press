@@ -30,6 +30,10 @@ description: >-
   HTML/DOM parsing, anywhere in the render path.
 version: 0.1.0
 homepage: https://git.aocyber.ai/eden-press
+# Consumed as a git dependency (https://git.aocyber.ai/eden-press.git, path
+# bind/dart), like eden_docs and eden_ui; never published to pub.dev. Required
+# for the eden_press_model path dependency below.
+publish_to: none
 
 environment:
   sdk: ^3.13.4
@@ -38,6 +42,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # The document model (ModelDocument, Block, ...), re-exported from
+  # lib/eden_press.dart. Pure Dart, so eden_docs can use it without this
+  # plugin's native artifacts.
+  eden_press_model:
+    path: ../eden_press_model
   ffi: 2.1.4
   web: 1.1.1
   flutter_math_fork: 0.7.4

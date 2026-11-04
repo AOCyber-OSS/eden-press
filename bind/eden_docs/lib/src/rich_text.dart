@@ -20,7 +20,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import 'package:eden_press/eden_press.dart';
+import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
 
 /// Builds a [TextSpan] tree from schema-v7 [TextRun]s (or plain [Block.text]).
@@ -31,9 +31,30 @@ InlineSpan richSpanFor(Block block, {TextStyle? style}) {
   }
   return TextSpan(
     style: base,
-    children: [
-      for (final run in block.runs) _spanForRun(run, base),
-    ],
+    children: [for (final run in block.runs) _spanForRun(run, base)],
+  );
+}
+
+/// Builds a [TextSpan] tree for one table cell from its [runs], styled exactly
+/// as [richSpanFor] styles paragraph runs (they share [_spanForRun]). [text] is
+/// the plain fallback used when [runs] is empty. A `math` run has no special
+/// style here, as in paragraphs: it renders as its TeX text.
+///
+/// [style] is the cell's base style. It is deliberately not defaulted to the
+/// paragraph style (16 px, 1.45 line height): a table cell inherits the
+/// ambient text style, so a styled cell must not stand out from a plain one.
+InlineSpan richSpanForRuns(
+  List<TextRun> runs,
+  String text, {
+  TextStyle? style,
+}) {
+  final base = style ?? const TextStyle();
+  if (runs.isEmpty) {
+    return TextSpan(text: text, style: base);
+  }
+  return TextSpan(
+    style: base,
+    children: [for (final run in runs) _spanForRun(run, base)],
   );
 }
 

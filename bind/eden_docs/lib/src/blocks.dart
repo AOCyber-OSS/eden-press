@@ -20,7 +20,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import 'package:eden_press/eden_press.dart';
+import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlighting/flutter_highlighting.dart';
 import 'package:flutter_highlighting/themes/github.dart';
@@ -35,9 +35,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
     case BlockKind.heading:
       return Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 8),
-        child: Text.rich(
-          richSpanFor(block, style: _headingStyle(block.level)),
-        ),
+        child: Text.rich(richSpanFor(block, style: _headingStyle(block.level))),
       );
     case BlockKind.paragraph:
     case BlockKind.unknown:
@@ -51,9 +49,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
         margin: const EdgeInsets.symmetric(vertical: 8),
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
         decoration: const BoxDecoration(
-          border: Border(
-            left: BorderSide(color: Color(0xFFBDBDBD), width: 3),
-          ),
+          border: Border(left: BorderSide(color: Color(0xFFBDBDBD), width: 3)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,10 +198,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
           title: Text.rich(
             richSpanFor(
               block,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
           children: [for (final child in block.children) nest(child)],
@@ -292,28 +285,44 @@ Widget _table(Block block) {
       : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
   if (columns == 0) return const SizedBox.shrink();
 
-  TableRow row(List<String> cells, {required bool header}) => TableRow(
-        children: List<Widget>.generate(columns, (i) {
-          final text = i < cells.length ? cells[i] : '';
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Text(
-              text,
-              style: header
-                  ? const TextStyle(fontWeight: FontWeight.w600)
-                  : null,
-            ),
-          );
-        }),
+  // [runs] is the row's slice of headerRuns / rowRuns, or null for a plain row.
+  // It is indexed by the row's own cells (a ragged row has fewer than
+  // [columns]), never by the header width.
+  TableRow row(
+    List<String> cells,
+    List<List<TextRun>?>? runs, {
+    required bool header,
+  }) => TableRow(
+    children: List<Widget>.generate(columns, (i) {
+      final text = i < cells.length ? cells[i] : '';
+      final style = header
+          ? const TextStyle(fontWeight: FontWeight.w600)
+          : null;
+      final cellRuns = runs != null && i < cells.length && i < runs.length
+          ? runs[i]
+          : null;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: cellRuns == null || cellRuns.isEmpty
+            ? Text(text, style: style)
+            : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
       );
+    }),
+  );
 
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 8),
     child: Table(
       border: TableBorder.all(color: const Color(0xFFDADCE0), width: 0.5),
       children: [
-        if (block.headers.isNotEmpty) row(block.headers, header: true),
-        for (final r in block.rows) row(r, header: false),
+        if (block.headers.isNotEmpty)
+          row(block.headers, block.headerRuns, header: true),
+        for (var r = 0; r < block.rows.length; r++)
+          row(
+            block.rows[r],
+            r < block.rowRuns.length ? block.rowRuns[r] : null,
+            header: false,
+          ),
       ],
     ),
   );
@@ -466,7 +475,10 @@ Widget _imageCard({required String caption, required String subtitle}) {
               if (subtitle.isNotEmpty)
                 Text(
                   subtitle,
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF5F6368)),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF5F6368),
+                  ),
                 ),
             ],
           ),

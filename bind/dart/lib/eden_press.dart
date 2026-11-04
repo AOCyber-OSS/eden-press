@@ -42,6 +42,11 @@ import 'src/native_loader.dart'
     if (dart.library.js_interop) 'src/web_loader.dart'
     as backend;
 
+// The document model moved to the pure-Dart eden_press_model package (no
+// FFI, no plugin) so eden_docs can depend on it alone. Re-exported here so
+// every existing `package:eden_press/eden_press.dart` import still sees it.
+export 'package:eden_press_model/eden_press_model.dart';
+
 export 'src/fit_text.dart';
 export 'src/model.dart';
 export 'src/render_surface.dart';

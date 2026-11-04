@@ -13,7 +13,7 @@ figures, toggles, math, code, …). It does **not** dump JSON.
 
 ```dart
 import 'package:eden_docs/eden_docs.dart';
-import 'package:eden_press/eden_press.dart';
+import 'package:eden_press_model/eden_press_model.dart';
 
 // From a decoded model (JSON envelope's `.model`):
 EdenDocsView(document: model);
@@ -22,4 +22,18 @@ EdenDocsView(document: model);
 EdenDocsView.fromJson(jsonMap);
 ```
 
-Depends on `eden_press` only for the shared model types / JSON parse.
+Depends on the pure-Dart `eden_press_model` (`../eden_press_model`) for the
+model types and their JSON, **not** on the `eden_press` FFI plugin. A host app
+can therefore depend on `eden_docs` with no native artifacts (no
+`EdenPress.xcframework`, no prebuilt `jniLibs`). As a git dependency the path
+dependency resolves inside the same checkout:
+
+```yaml
+eden_docs:
+  git:
+    url: https://git.aocyber.ai/eden-press.git
+    path: bind/eden_docs
+    ref: vX.Y.Z
+```
+
+`test/pubspec_contract_test.dart` fails if `eden_press` ever comes back.
