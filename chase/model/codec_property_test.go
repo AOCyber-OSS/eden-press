@@ -50,6 +50,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -299,6 +300,76 @@ func (g *docGen) titleFields() (string, []TextRun) {
 	return text, runs
 }
 
+// propCellTeX is the TeX of a math run in a table cell: the ordinary ones, and
+// the ones with a pipe, which a cell must spell \| (see cellTeX).
+var propCellTeX = []string{"a|b", "|x|", "a\\|b", "\\|", "x^{|y|}", "a||b"}
+
+// propCellCode is the text of a code run in a table cell, every one with a pipe
+// (GFM un-escapes \| in a code span) and some with a backslash or a backtick next
+// to it.
+var propCellCode = []string{"a|b", "|", "x\\|y", "`|", "||", "| |", "a\\", "|`"}
+
+// cell returns one table cell in canonical form: its text, and its runs when it
+// is styled or linked (nil for a plain cell). A styled cell never holds a newline.
+func (g *docGen) cell() (string, []TextRun) {
+	if !g.chance(40) {
+		return strings.TrimSpace(g.tokens(propCellAlpha, g.r.IntN(6))), nil
+	}
+	runs := g.runs(false)
+	for i, r := range runs {
+		switch {
+		case isMathRun(r) && g.chance(40):
+			runs[i].Text = g.pick(propCellTeX)
+		case hasMark(r, "code") && g.chance(40):
+			runs[i].Text = g.pick(propCellCode)
+		}
+	}
+	runs = mergeRuns(runs)
+	if len(runs) == 1 && len(runs[0].Marks) == 0 && runs[0].Link == "" {
+		return runs[0].Text, nil
+	}
+	return FlattenRuns(runs), runs
+}
+
+// table returns a table with plain and styled cells in canonical form: HeaderRuns,
+// RowRuns and each RowRuns[r] are nil unless they hold a styled cell, and a plain
+// cell's entry is nil.
+func (g *docGen) table() Block {
+	n := 1 + g.r.IntN(4)
+	b := Block{Kind: BlockTable, Headers: make([]string, n), Aligns: make([]string, n)}
+	header := make([][]TextRun, n)
+	styled := false
+	for k := 0; k < n; k++ {
+		b.Headers[k], header[k] = g.cell()
+		styled = styled || header[k] != nil
+		b.Aligns[k] = g.pick([]string{"", "left", "right", "center"})
+	}
+	if styled {
+		b.HeaderRuns = header
+	}
+	var rowRuns [][][]TextRun
+	anyStyled := false
+	for r := g.r.IntN(4); r > 0; r-- {
+		row := make([]string, n)
+		runs := make([][]TextRun, n)
+		styled := false
+		for k := range row {
+			row[k], runs[k] = g.cell()
+			styled = styled || runs[k] != nil
+		}
+		b.Rows = append(b.Rows, row)
+		if !styled {
+			runs = nil
+		}
+		rowRuns = append(rowRuns, runs)
+		anyStyled = anyStyled || styled
+	}
+	if anyStyled {
+		b.RowRuns = rowRuns
+	}
+	return b
+}
+
 func (g *docGen) blockOf(kind BlockKind, ctx genCtx) Block {
 	inner := genCtx{level: ctx.level + 1, inTodo: ctx.inTodo}
 	switch kind {
@@ -337,21 +408,7 @@ func (g *docGen) blockOf(kind BlockKind, ctx genCtx) Block {
 		return Block{Kind: BlockMath, Display: true, Text: text}
 
 	case BlockTable:
-		cell := func() string { return strings.TrimSpace(g.tokens(propCellAlpha, g.r.IntN(6))) }
-		n := 1 + g.r.IntN(4)
-		b := Block{Kind: BlockTable, Headers: make([]string, n), Aligns: make([]string, n)}
-		for k := 0; k < n; k++ {
-			b.Headers[k] = cell()
-			b.Aligns[k] = g.pick([]string{"", "left", "right", "center"})
-		}
-		for r := g.r.IntN(4); r > 0; r-- {
-			row := make([]string, n)
-			for k := range row {
-				row[k] = cell()
-			}
-			b.Rows = append(b.Rows, row)
-		}
-		return b
+		return g.table()
 
 	case BlockImage:
 		return Block{
@@ -715,6 +772,9 @@ func propValid(d *Document) error {
 		if len(b.Items) > 0 && b.Kind != BlockList {
 			fail("%s block has list items", b.Kind)
 		}
+		if b.Kind == BlockTable && b.Rows != nil && len(b.Rows) == 0 {
+			fail("table has an empty non-nil rows (the reader gives nil)")
+		}
 		if len(b.Children) > 0 {
 			switch b.Kind {
 			case BlockQuote, BlockToggle, BlockTodo, BlockCallout:
@@ -949,6 +1009,75 @@ func shrink(d *Document, check func(*Document) error) *Document {
 		{blockCount, func(c *Document, n int) bool { // make the nth block's text plain
 			return mutateNth(c, n, func(list *[]Block, i int) { (*list)[i].Runs = nil })
 		}},
+		{func(c *Document) int { return len(styledCells(c)) }, func(c *Document, n int) bool { // make the nth styled cell plain
+			cells := styledCells(c)
+			if n >= len(cells) {
+				return false
+			}
+			*cells[n].runs = nil
+			syncTableCellRuns(cells[n].b)
+			return true
+		}},
+		{func(c *Document) int { return len(styledCells(c)) }, func(c *Document, n int) bool { // keep the first run of the nth styled cell
+			cells := styledCells(c)
+			if n >= len(cells) || len(*cells[n].runs) < 2 {
+				return false
+			}
+			*cells[n].runs = (*cells[n].runs)[:1]
+			*cells[n].text = FlattenRuns(*cells[n].runs)
+			syncTableCellRuns(cells[n].b)
+			return true
+		}},
+		{blockCount, func(c *Document, n int) bool { // make the nth table's cells plain
+			ok := false
+			mutateNth(c, n, func(list *[]Block, i int) {
+				if b := &(*list)[i]; b.HeaderRuns != nil || b.RowRuns != nil {
+					b.HeaderRuns, b.RowRuns = nil, nil
+					ok = true
+				}
+			})
+			return ok
+		}},
+		{blockCount, func(c *Document, n int) bool { // drop the last body row of the nth table
+			ok := false
+			mutateNth(c, n, func(list *[]Block, i int) {
+				if b := &(*list)[i]; b.Kind == BlockTable && len(b.Rows) > 0 {
+					b.Rows = b.Rows[:len(b.Rows)-1]
+					if len(b.Rows) == 0 {
+						b.Rows = nil // the reader gives nil, never an empty slice
+					}
+					if b.RowRuns != nil {
+						b.RowRuns = b.RowRuns[:len(b.RowRuns)-1]
+					}
+					syncTableCellRuns(b)
+					ok = true
+				}
+			})
+			return ok
+		}},
+		{blockCount, func(c *Document, n int) bool { // drop the last column of the nth table
+			ok := false
+			mutateNth(c, n, func(list *[]Block, i int) {
+				b := &(*list)[i]
+				if b.Kind != BlockTable || len(b.Headers) < 2 {
+					return
+				}
+				w := len(b.Headers) - 1
+				b.Headers, b.Aligns = b.Headers[:w], b.Aligns[:w]
+				if b.HeaderRuns != nil {
+					b.HeaderRuns = b.HeaderRuns[:w]
+				}
+				for r := range b.Rows {
+					b.Rows[r] = b.Rows[r][:w]
+					if b.RowRuns != nil && b.RowRuns[r] != nil {
+						b.RowRuns[r] = b.RowRuns[r][:w]
+					}
+				}
+				syncTableCellRuns(b)
+				ok = true
+			})
+			return ok
+		}},
 		{blockCount, func(c *Document, n int) bool { // drop the last list item of the nth block
 			ok := false
 			mutateNth(c, n, func(list *[]Block, i int) {
@@ -1001,6 +1130,9 @@ func shrink(d *Document, check func(*Document) error) *Document {
 				}
 				nilEmptyBlocks(cand)
 				rebuildOutline(cand)
+				if reflect.DeepEqual(cand, cur) {
+					continue // a step that changed nothing is not progress (it would loop until the budget ends)
+				}
 				if fails(cand) {
 					cur, progress = cand, true
 					n--
@@ -1009,6 +1141,37 @@ func shrink(d *Document, check func(*Document) error) *Document {
 		}
 	}
 	return cur
+}
+
+// cellRef points at one styled table cell of a document: its text, its runs and
+// the table that owns them.
+type cellRef struct {
+	b    *Block
+	text *string
+	runs *[]TextRun
+}
+
+// styledCells lists the styled cells of every table of d, in document order.
+func styledCells(d *Document) []cellRef {
+	var out []cellRef
+	walkAll(d, func(b *Block, level int) {
+		if b.Kind != BlockTable {
+			return
+		}
+		for i := range b.HeaderRuns {
+			if len(b.HeaderRuns[i]) > 0 && i < len(b.Headers) {
+				out = append(out, cellRef{b, &b.Headers[i], &b.HeaderRuns[i]})
+			}
+		}
+		for r := range b.RowRuns {
+			for i := range b.RowRuns[r] {
+				if len(b.RowRuns[r][i]) > 0 && r < len(b.Rows) && i < len(b.Rows[r]) {
+					out = append(out, cellRef{b, &b.Rows[r][i], &b.RowRuns[r][i]})
+				}
+			}
+		}
+	})
+	return out
 }
 
 // nilEmptyBlocks turns every empty block list into nil, which is what the
@@ -1136,6 +1299,8 @@ func TestCodecPropertyIdentity(t *testing.T) {
 		"ids", "no ids", "comments", "properties", "property values", "front matter", "section attrs", "section notes",
 		"several sections", "rich text", "rich list item", "checked todo", "unchecked todo", "sheet snapshot", "sheet range",
 		"nested 4 deep", "synced same document", "synced other page", "hard break", "figure svg", "ordered list", "table",
+		// formatted table cells (AODex D14)
+		"styled header cell", "styled body cell", "cell link", "cell code with pipe", "cell math with pipe", "cell written with tags",
 	} {
 		if feature[name] < propMinPerKind {
 			t.Errorf("feature %q appeared %d times, want at least %d", name, feature[name], propMinPerKind)
@@ -1226,8 +1391,48 @@ func countFeatures(d *Document, kinds map[BlockKind]int, feature map[string]int)
 			}
 		case BlockTable:
 			mark("table")
+			countCellFeatures(b, mark)
 		}
 	})
+}
+
+// cellTagFallback matches a mark tag that is markup, not escaped text.
+var cellTagFallback = regexp.MustCompile(`(^|[^\\])<(strong|em|del)>`)
+
+// countCellFeatures marks what the styled cells of table b contain (the formatted
+// cells of AODex D14), once per document.
+func countCellFeatures(b *Block, mark func(string)) {
+	cell := func(text string, runs []TextRun, header bool) {
+		if len(runs) == 0 {
+			return
+		}
+		if header {
+			mark("styled header cell")
+		} else {
+			mark("styled body cell")
+		}
+		for _, r := range runs {
+			switch {
+			case r.Link != "":
+				mark("cell link")
+			case hasMark(r, "code") && strings.Contains(r.Text, "|"):
+				mark("cell code with pipe")
+			case hasMark(r, "math") && strings.Contains(r.Text, "|"):
+				mark("cell math with pipe")
+			}
+		}
+		if cellTagFallback.MatchString(cellText(text, runs)) {
+			mark("cell written with tags")
+		}
+	}
+	for c, runs := range b.HeaderRuns {
+		cell(b.Headers[c], runs, true)
+	}
+	for r, row := range b.RowRuns {
+		for c, runs := range row {
+			cell(b.Rows[r][c], runs, false)
+		}
+	}
 }
 
 // ---- regressions found by the property and fuzz targets ----
@@ -1324,6 +1529,16 @@ var nodropTemplates = []string{
 	"| %s |\n| --- |", "| a | b |\n| - | - |\n| %s |", "| a | b |\n| - | - |\n| %s | **b** |", "| a |\n| - |\n| %s | extra |", "> > %s", "> - %s\n> - b", "> # %s",
 	"- a\n  > %s", "- a\n  # %s", "1. a\n   - %s", "- [ ] a\n  - [ ] %s", "- [ ] a\n\n  - %s", "$$\n%s\n$$\n\n$$\nb\n$$", "$%s$ and $b$", "$$%s$$ x",
 	":::toggle\n:::toggle\n%s\n:::\n:::", "::::toggle\n:::callout\n%s\n:::\n::::", ":::unknown\n%s\n:::", ":::toggle {\"x\":\"%s\"}\n:::", ":::toggle\n%s",
+
+	// Formatted table cells (AODex D14): a hole in every kind of cell content. Raw
+	// HTML, an image and a link title in a cell are refused as in a paragraph, and
+	// a refusal drops nothing.
+	"| **%s** | b |\n| - | - |\n| c | *%s* |", "| ~~%s~~ |\n| - |\n| `c` |", "| a | b |\n| - | - |\n| `%s` | [x](http://%s.io) |",
+	"| a |\n| - |\n| [%s](http://x.io) |", "| a |\n| - |\n| $%s$ |", "| a |\n| - |\n| <http://%s.io> |", "| a |\n| - |\n| `x\\|%s` |",
+	"| a |\n| - |\n| $x\\|%s$ |", "| a |\n| - |\n| x<br>%s |", "| a |\n| - |\n| ![%s](p.png) |", "| a |\n| - |\n| ![a](%s.png) |",
+	"| a |\n| - |\n| [a](u \"%s\") |", "| a |\n| - |\n| **%s** and `c` and [d](e) |", "| a | b |\n| - | - |\n| *%s* |",
+	"| a |\n| - |\n| [a][r] |\n\n[r]: http://%s.io", "| `a` | **%s** |\n| :-: | --: |\n| _%s_ | __c__ |", "| a |\n| - |\n| <strong>%s</strong> |",
+	"| a |\n| - |\n| <em>%s |", "| a |\n| - |\n| $$%s$$ |", "| a |\n| - |\n| %s ~~x~~ |",
 }
 
 var nodropContexts = []func(string) string{

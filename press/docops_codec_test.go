@@ -364,3 +364,110 @@ func TestVerifyMarkdownRoundTripJSONTreatsMissingAlignsAsUnaligned(t *testing.T)
 		t.Fatalf("a ragged row cannot round-trip, want an error naming rows[0], got %v", err)
 	}
 }
+
+// ---- formatted table cells (objective 1026, TRD 26, AODex D14) ----
+
+// formattedCellsDoc is a stored document, made through the agent path, whose table
+// has a bold header cell, a body cell that is code with a pipe, one that is a link
+// and one that is math with a pipe.
+func formattedCellsDoc(t *testing.T) []byte {
+	t.Helper()
+	doc, err := NewDocJSON("Cells")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []byte(`[{"op":"insert_block","sectionId":1,"block":{"kind":"table",
+		"headers":["k","v"],"aligns":["","right"],
+		"headerRuns":[[{"text":"k","marks":["bold"]}],null],
+		"rows":[["a","1"],["b|c","see docs"],["x|y","z"]],
+		"rowRuns":[
+			[[{"text":"a","marks":["bold"]}],[{"text":"1","marks":["code"]}]],
+			[[{"text":"b|c","marks":["code"]}],[{"text":"see "},{"text":"docs","link":"https://x.io"}]],
+			[[{"text":"x|y","marks":["math"]}],null]
+		]}}]`)
+	doc, err = ApplyOpsJSON(doc, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+// The migration guard accepts a document with formatted cells: identity holds.
+func TestVerifyMarkdownRoundTripJSONAcceptsFormattedCells(t *testing.T) {
+	doc := formattedCellsDoc(t)
+	if err := VerifyMarkdownRoundTripJSON(doc); err != nil {
+		t.Fatalf("a table with formatted cells should round-trip: %v", err)
+	}
+	out, err := ExportMarkdownJSON(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := string(out)
+	for _, want := range []string{"| **k** | v |", "| **a** | `1` |", "| `b\\|c` | see [docs](https://x.io) |", "| $x\\|y$ | z |"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("the Markdown should hold %q:\n%s", want, md)
+		}
+	}
+}
+
+// The AODex migration's own path: an LLM-written table (code, bold and links in its
+// cells) is read strictly, keeps its formatting in headerRuns/rowRuns and passes the
+// guard. It was the most common strict refusal (table-cell-formatting) before D14.
+func TestMarkdownToDocJSONStrictReadsFormattedCellsAndPassesTheGuard(t *testing.T) {
+	src := "# Report\n\n| Tool | Command | Docs |\n| --- | :---: | --- |\n| **aof** | `aof-tools upgrade --apply` | [guide](https://x.io/g) |\n| plain | `a\\|b` | <https://a.b> |\n"
+	doc, err := MarkdownToDocJSON(src, nil, MarkdownImport{})
+	if err != nil {
+		t.Fatalf("strict read of formatted cells: %v", err)
+	}
+	if err := VerifyMarkdownRoundTripJSON(doc); err != nil {
+		t.Fatalf("the guard should accept what a strict read produced: %v", err)
+	}
+	d := decodeDoc(t, doc)
+	b := d.Sections[0].Blocks[1]
+	if b.Kind != model.BlockTable || len(b.RowRuns) != 2 {
+		t.Fatalf("want a table with two rows of runs, got %+v", b)
+	}
+	if got := b.RowRuns[1][1]; len(got) != 1 || got[0].Text != "a|b" || len(got[0].Marks) != 1 || got[0].Marks[0] != "code" {
+		t.Errorf("rowRuns[1][1] = %+v, want the code run a|b", got)
+	}
+	if b.Rows[1][1] != "a|b" {
+		t.Errorf("rows[1][1] = %q: the plain text mirrors the runs", b.Rows[1][1])
+	}
+	if md, err := ExportMarkdownJSON(doc); err != nil || !strings.Contains(string(md), "`a\\|b`") {
+		t.Errorf("export should spell the pipe in the code span as \\|: %v\n%s", err, md)
+	}
+
+	// Lenient mode keeps the formatting too; it reports no mapping for a cell.
+	lenient, err := MarkdownToDocJSON(src, nil, MarkdownImport{Lenient: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(lenient) != string(doc) {
+		t.Errorf("lenient and strict differ on a document with nothing to map")
+	}
+
+	// A cell still refuses what a paragraph refuses.
+	_, err = MarkdownToDocJSON("| a |\n| --- |\n| x<br>y |\n", nil, MarkdownImport{})
+	var ue *model.UnrepresentableError
+	if !errors.As(err, &ue) || ue.Construct != model.ConstructRawHTML {
+		t.Fatalf("raw HTML in a cell is still raw-html, got %v", err)
+	}
+}
+
+// A cell's runs that the Markdown cannot spell are blamed by path: a mark the codec
+// does not write is lost, and the guard names the cell.
+func TestVerifyMarkdownRoundTripJSONNamesTheCellRunsThatDoNotSurvive(t *testing.T) {
+	d := decodeDoc(t, formattedCellsDoc(t))
+	b := &d.Sections[0].Blocks[0]
+	b.RowRuns[0][1] = []model.TextRun{{Text: "1", Marks: []string{"underline"}}}
+	raw, _ := json.Marshal(&d)
+	err := VerifyMarkdownRoundTripJSON(raw)
+	if err == nil {
+		t.Fatal("a cell run the Markdown cannot write must be an error")
+	}
+	for _, want := range []string{"sections[0].blocks[0].rowRuns[0][1]", "underline"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}

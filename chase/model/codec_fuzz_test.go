@@ -67,6 +67,12 @@ func FuzzFromMarkdown(f *testing.F) {
 		"> \t`", "$$\nx\n$$ tail\n", ":::toggle\nunclosed", ":::callout {\"icon\":}\n:::\n",
 		"<!-- eden:model {\"v\":1,\"blocks\":[{\"id\":\"b_1\",\"k\":\"paragraph\",\"f\":\"00000000\"}]} -->\n",
 		"- [ ] a\n- b\n", "1. a\n   3. b\n", "| a |\n| - |\n| **b** |\n", "x\r\ny\r\n",
+		// Formatted table cells (TRD 26): every kind of styled cell, pipes in code,
+		// math and link destinations, tags, and the refusals a cell shares with a paragraph.
+		"| **a** | `b\\|c` |\n| :-: | --: |\n| [l](u) | $x\\|y$ |\n",
+		"| *i* | ~~s~~ | <https://a.b> |\n| --- | --- | --- |\n| <strong>d</strong> | `` ` `` | [l](<u v\\|w>) |\n",
+		"| a |\n| - |\n| x<br>y |\n", "| a |\n| - |\n| ![i](u) |\n", "| a |\n| - |\n| [l](u \"t\") |\n",
+		"| `a`**b**~~c~~ |\n| - |\n| $x\\\\|y$ |\n", "| a\\ |\n| - |\n| `\\|` |\n",
 	} {
 		f.Add(s)
 	}
