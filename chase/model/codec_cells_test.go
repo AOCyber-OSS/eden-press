@@ -24,9 +24,13 @@ package model
 
 import (
 	"errors"
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"testing"
+
+	east "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 // Wide table rows (objective 1026, TRD 31, AODex D18). GFM ignores the cells of a
@@ -103,7 +107,7 @@ func TestCodecCellsWideRowPadsHeader(t *testing.T) {
 		},
 		{
 			"a_table_without_outer_pipes",
-			"a | b\n- | -\n1 | 2 | 3\n",
+			"a | b\n--- | ---\n1 | 2 | 3\n",
 			wideTableDoc([]string{"a", "b", ""}, []string{"", "", ""}, [][]string{{"1", "2", "3"}}),
 		},
 		{
@@ -238,7 +242,7 @@ func TestCodecCellsWideRowIdentity(t *testing.T) {
 		"| a | b |\n| :-- | --: |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 | 7 |\n",
 		"| a |\n| - |\n| 1 | 2 |\n| 3 | 4 | 5 |\n| 6 |\n",
 		"| **a** |\n| :-: |\n| x | `c\\|d` | $e\\|f$ | [g\\|h](u\\|v) |\n",
-		"a | b\n- | -\n1 | 2 | 3\n",
+		"a | b\n--- | ---\n1 | 2 | 3\n",
 		"| a |\n| - |\n| x | |\n",
 	}
 	for _, src := range srcs {
@@ -375,7 +379,64 @@ func TestCodecCellsWideRowSpanCoversTheExcessCell(t *testing.T) {
 	if b.Span.Stop < end || b.Span.Stop > len(src) {
 		t.Fatalf("span %+v does not cover the excess cell (ends at %d, the input has %d bytes)", *b.Span, end, len(src))
 	}
-	if b.Span.Start != strings.Index(src, "| a |") && b.Span.Start != strings.Index(src, " a ") {
+	// The span starts in the header row (at its first cell's text), as any table's does.
+	if row := strings.Index(src, "| a |"); b.Span.Start < row || b.Span.Start > row+len("| a |") {
 		t.Fatalf("span %+v starts in the wrong place", *b.Span)
+	}
+}
+
+// The row splitter is a copy of goldmark's (its AST keeps no excess cell to read
+// them from), so it is pinned against goldmark: for a header wide enough to hold
+// the row, the cells the splitter finds are the cells goldmark made, for any mix
+// of pipes, backticks, backslashes and spaces. A goldmark upgrade that changes how
+// a row splits fails here instead of silently disagreeing about where an excess
+// cell starts.
+func TestCodecCellsRowSplitterMatchesGoldmark(t *testing.T) {
+	const width = 6
+	rng := rand.New(rand.NewPCG(1026, 31))
+	alphabet := []string{"a", "b", "|", "|", "\\", "`", " ", " ", "$", "*"}
+	header := "|" + strings.Repeat(" h |", width) + "\n|" + strings.Repeat(" - |", width) + "\n"
+	compared := 0
+	for i := 0; i < 4000; i++ {
+		var rb strings.Builder
+		for n := 1 + rng.IntN(14); n > 0; n-- {
+			rb.WriteString(alphabet[rng.IntN(len(alphabet))])
+		}
+		row := rb.String()
+		src := []byte(header + row + "\n")
+		root := mdEngine.Parser().Parse(text.NewReader(src))
+		tbl, ok := root.FirstChild().(*east.Table)
+		if !ok || tbl.ChildCount() != 2 {
+			continue // the row is not part of the table (a blank line, a list, a fence)
+		}
+		body := tbl.LastChild()
+		var want []text.Segment
+		for c := body.FirstChild(); c != nil; c = c.NextSibling() {
+			if lines := c.Lines(); lines.Len() > 0 {
+				want = append(want, lines.At(0))
+			}
+		}
+		if len(want) > width {
+			want = want[:width] // the cells after the header's width were added by the codec
+		}
+		got := splitTableRow(text.NewSegment(len(header), len(header)+len(row)), src)
+		if len(got) > width {
+			got = got[:width]
+		}
+		if len(got) != len(want) {
+			t.Fatalf("row %q: the splitter found %d cells, goldmark %d", row, len(got), len(want))
+		}
+		for k := range got {
+			g := text.NewSegment(got[k].start, got[k].stop)
+			g = g.TrimLeftSpace(src)
+			g = g.TrimRightSpace(src)
+			if g.Start != want[k].Start || g.Stop != want[k].Stop {
+				t.Fatalf("row %q cell %d: the splitter has [%d,%d), goldmark [%d,%d)", row, k, g.Start, g.Stop, want[k].Start, want[k].Stop)
+			}
+		}
+		compared++
+	}
+	if compared < 1000 {
+		t.Fatalf("only %d of 4000 rows reached a table, so the test says little", compared)
 	}
 }

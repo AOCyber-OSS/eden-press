@@ -340,7 +340,9 @@ func TestMarkdownSourceViewJSONRejectsMalformedJSON(t *testing.T) {
 
 // A table an agent inserted with no "aligns" is read back with one empty alignment
 // per column. That is the same table (nothing is aligned), so the guard must not
-// blame it. Ragged rows, which Markdown cannot spell, are blamed.
+// blame it. Ragged rows, which Markdown cannot spell, are blamed. (A body row wider
+// than the header reads back with the header padded to it, AODex D18, so the first
+// difference is the padded header cell, not the row.)
 func TestVerifyMarkdownRoundTripJSONTreatsMissingAlignsAsUnaligned(t *testing.T) {
 	doc, err := NewDocJSON("")
 	if err != nil {
@@ -360,8 +362,8 @@ func TestVerifyMarkdownRoundTripJSONTreatsMissingAlignsAsUnaligned(t *testing.T)
 		t.Fatal(err)
 	}
 	err = VerifyMarkdownRoundTripJSON(doc)
-	if err == nil || !strings.Contains(err.Error(), "sections[0].blocks[0].rows[0]") {
-		t.Fatalf("a ragged row cannot round-trip, want an error naming rows[0], got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "sections[0].blocks[0].headers[2]") {
+		t.Fatalf("a ragged row cannot round-trip, want an error naming the padded headers[2], got %v", err)
 	}
 }
 

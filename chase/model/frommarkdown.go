@@ -185,7 +185,7 @@ func normalizeNewlines(md string, track bool) (string, []int) {
 // registered, so a bare URL stays text (and needs no escaping on the way out).
 var mdEngine = goldmark.New(
 	goldmark.WithParser(newCodecParser()),
-	goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
+	goldmark.WithExtensions(gfmTable{}, extension.Strikethrough, extension.TaskList),
 	goldmark.WithParserOptions(
 		parser.WithBlockParsers(
 			util.Prioritized(&mathBlockParser{}, 650),
