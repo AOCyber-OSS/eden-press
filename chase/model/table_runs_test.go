@@ -350,3 +350,251 @@ func TestTableRunsInvariant(t *testing.T) {
 		}
 	})
 }
+
+// ---- ops: validation, patch_block, replace_text ----
+
+// opsTableDoc is a stored document with ids: a plain table b_1 (two header
+// cells, a two-cell row and a one-cell row) and a paragraph p_1.
+func opsTableDoc() *Document {
+	return tableDoc(
+		Block{ID: "b_1", Kind: BlockTable, Headers: []string{"a", "b"}, Rows: [][]string{{"c", "d"}, {"e"}}},
+		Block{ID: "p_1", Kind: BlockParagraph, Text: "para"},
+	)
+}
+
+// styledTableDoc is opsTableDoc with styled cells and aligns.
+func styledTableDoc() *Document {
+	return tableDoc(Block{ID: "b_1", Kind: BlockTable,
+		Headers: []string{"a", "b"}, HeaderRuns: [][]TextRun{cellBold("a"), nil},
+		Rows: [][]string{{"c", "d"}, {"e"}}, RowRuns: [][][]TextRun{{cellCode("c"), nil}, nil},
+		Aligns: []string{"", "right"}})
+}
+
+func docBytes(t *testing.T, d *Document) string {
+	t.Helper()
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// TestTableRunsValidation: ApplyOps refuses a cell-runs shape that does not
+// match the cells, a cell run holding a newline, and cell runs on a block that
+// is not a table. A refused batch leaves the document byte-identical.
+func TestTableRunsValidation(t *testing.T) {
+	newline := []TextRun{{Text: "x"}, {Text: "y\nz", Marks: []string{"code"}}}
+	for _, tc := range []struct {
+		name string
+		doc  func() *Document
+		op   Op
+		want string
+	}{
+		{"insert: headerRuns shorter than headers", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockTable, Headers: []string{"x", "y"}, HeaderRuns: [][]TextRun{cellBold("x")}}},
+			"headerRuns"},
+		{"insert: rowRuns longer than rows", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockTable, Rows: [][]string{{"x"}}, RowRuns: [][][]TextRun{nil, nil}}},
+			"rowRuns"},
+		{"insert: rowRuns[r] shorter than its row", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockTable, Rows: [][]string{{"x", "y"}}, RowRuns: [][][]TextRun{{cellBold("x")}}}},
+			"rowRuns[0]"},
+		{"insert: newline in a header run", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockTable, Headers: []string{"xy\nz"}, HeaderRuns: [][]TextRun{newline}}},
+			"newline"},
+		{"insert: newline in a body run", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockTable, Rows: [][]string{{"a", "xy\nz"}}, RowRuns: [][][]TextRun{{nil, newline}}}},
+			"newline"},
+		{"insert: rowRuns on a paragraph", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockParagraph, Text: "p", RowRuns: [][][]TextRun{{cellBold("p")}}}},
+			"table cells only"},
+		{"insert: headerRuns on a paragraph", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockParagraph, Text: "p", HeaderRuns: [][]TextRun{cellBold("p")}}},
+			"table cells only"},
+		{"insert: a nested table with a bad shape", opsTableDoc,
+			Op{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockToggle, Text: "t", Children: []Block{
+				{Kind: BlockTable, Rows: [][]string{{"x"}}, RowRuns: [][][]TextRun{{nil, nil}}}}}},
+			"children[0]"},
+		{"update: rowRuns[r] longer than its row", opsTableDoc,
+			Op{Op: OpUpdateBlock, BlockID: "b_1", Block: &Block{Kind: BlockTable, Rows: [][]string{{"x"}}, RowRuns: [][][]TextRun{{cellBold("x"), nil}}}},
+			"rowRuns[0]"},
+		{"patch: headerRuns shorter than the headers", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{HeaderRuns: [][]TextRun{cellBold("a")}}},
+			"headerRuns"},
+		{"patch: rowRuns shorter than the rows", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{RowRuns: [][][]TextRun{nil}}},
+			"rowRuns"},
+		{"patch: rowRuns[r] shorter than its row", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{RowRuns: [][][]TextRun{{cellBold("c")}, nil}}},
+			"rowRuns[0]"},
+		{"patch: newline in a body run", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{RowRuns: [][][]TextRun{nil, {cellBold("e\n")}}}},
+			"newline"},
+		{"patch: new rows with runs for the old rows", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{Rows: [][]string{{"x"}}, RowRuns: [][][]TextRun{{cellBold("x")}, nil}}},
+			"rowRuns"},
+		{"patch: new headers with too few runs leave the headers", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{Headers: []string{"x", "y", "z"}, HeaderRuns: [][]TextRun{cellBold("x")}}},
+			"headerRuns"},
+		{"patch: rowRuns on a paragraph leaves its text", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "p_1", Block: &Block{Text: "changed", RowRuns: [][][]TextRun{{cellBold("x")}}}},
+			"table cells only"},
+		{"patch: headerRuns on a paragraph", opsTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "p_1", Block: &Block{HeaderRuns: [][]TextRun{cellBold("x")}}},
+			"table cells only"},
+		{"patch: a styled table keeps its runs when refused", styledTableDoc,
+			Op{Op: OpPatchBlock, BlockID: "b_1", Block: &Block{Rows: [][]string{{"x", "y"}}, RowRuns: [][][]TextRun{{cellBold("x")}}}},
+			"rowRuns[0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := tc.doc()
+			before := docBytes(t, d)
+			err := ApplyOps(d, []Op{tc.op})
+			if err == nil {
+				t.Fatalf("accepted; document now %s", docBytes(t, d))
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+			if after := docBytes(t, d); after != before {
+				t.Fatalf("a refused batch changed the document\nbefore: %s\nafter:  %s", before, after)
+			}
+		})
+	}
+}
+
+// patchTable applies one patch_block to b_1 and returns the table it left.
+func patchTable(t *testing.T, d *Document, p *Block) Block {
+	t.Helper()
+	if err := ApplyOps(d, []Op{{Op: OpPatchBlock, BlockID: "b_1", Block: p}}); err != nil {
+		t.Fatalf("patch_block: %v", err)
+	}
+	return d.Sections[0].Blocks[0]
+}
+
+// TestTableRunsPatchBlock pins patch_block's cell-run rules: runs given win and
+// re-derive the text; headers (rows) given without runs clear the stale header
+// (row) runs; a patch that touches neither leaves the runs.
+func TestTableRunsPatchBlock(t *testing.T) {
+	want := func(t *testing.T, what string, got, want any) {
+		t.Helper()
+		if d := deepDiff(got, want); d != "" {
+			t.Errorf("%s: %s", what, d)
+		}
+	}
+	t.Run("runs win and the text is re-derived", func(t *testing.T) {
+		got := patchTable(t, opsTableDoc(), &Block{
+			HeaderRuns: [][]TextRun{cellBold("A"), nil},
+			RowRuns:    [][][]TextRun{nil, {cellCode("E")}}})
+		want(t, "headers", got.Headers, []string{"A", "b"})
+		want(t, "rows", got.Rows, [][]string{{"c", "d"}, {"E"}})
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun{cellBold("A"), nil})
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun{nil, {cellCode("E")}})
+	})
+	t.Run("headers without headerRuns clear the header runs", func(t *testing.T) {
+		got := patchTable(t, styledTableDoc(), &Block{Headers: []string{"x", "y"}})
+		want(t, "headers", got.Headers, []string{"x", "y"})
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun(nil))
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun{{cellCode("c"), nil}, nil})
+	})
+	t.Run("rows without rowRuns clear the row runs", func(t *testing.T) {
+		got := patchTable(t, styledTableDoc(), &Block{Rows: [][]string{{"p", "q"}}})
+		want(t, "rows", got.Rows, [][]string{{"p", "q"}})
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun(nil))
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun{cellBold("a"), nil})
+	})
+	t.Run("an aligns-only patch leaves the runs", func(t *testing.T) {
+		got := patchTable(t, styledTableDoc(), &Block{Aligns: []string{"center", ""}})
+		want(t, "aligns", got.Aligns, []string{"center", ""})
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun{cellBold("a"), nil})
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun{{cellCode("c"), nil}, nil})
+		want(t, "rows", got.Rows, [][]string{{"c", "d"}, {"e"}})
+	})
+	t.Run("headers with headerRuns: the runs win", func(t *testing.T) {
+		got := patchTable(t, styledTableDoc(), &Block{Headers: []string{"x", "y"}, HeaderRuns: [][]TextRun{nil, cellBold("Y")}})
+		want(t, "headers", got.Headers, []string{"x", "Y"})
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun{nil, cellBold("Y")})
+	})
+	t.Run("a plain run sets the text and leaves no runs", func(t *testing.T) {
+		got := patchTable(t, opsTableDoc(), &Block{RowRuns: [][][]TextRun{{{{Text: "C"}}, nil}, nil}})
+		want(t, "rows", got.Rows, [][]string{{"C", "d"}, {"e"}})
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun(nil))
+	})
+	t.Run("the op's own cells are not written", func(t *testing.T) {
+		p := &Block{Headers: []string{"stale", "b"}, HeaderRuns: [][]TextRun{cellBold("A"), nil}}
+		got := patchTable(t, opsTableDoc(), p)
+		want(t, "headers", got.Headers, []string{"A", "b"})
+		want(t, "the op's headers", p.Headers, []string{"stale", "b"})
+	})
+	t.Run("insert_block takes the cell text from the runs", func(t *testing.T) {
+		d := opsTableDoc()
+		b := &Block{ID: "b_9", Kind: BlockTable, Headers: []string{"x"}, HeaderRuns: [][]TextRun{cellBold("X")},
+			Rows: [][]string{{"y"}}, RowRuns: [][][]TextRun{{{{Text: "Y"}}}}}
+		if err := ApplyOps(d, []Op{{Op: OpInsertBlock, SectionID: 1, Block: b}}); err != nil {
+			t.Fatal(err)
+		}
+		got := d.Sections[0].Blocks[2]
+		want(t, "headers", got.Headers, []string{"X"})
+		want(t, "rows", got.Rows, [][]string{{"Y"}})
+		want(t, "headerRuns", got.HeaderRuns, [][]TextRun{cellBold("X")})
+		want(t, "rowRuns", got.RowRuns, [][][]TextRun(nil))
+		want(t, "the op's headers", b.Headers, []string{"x"})
+	})
+}
+
+// TestTableRunsReplaceTextLeavesCells is a characterization: replace_text reads
+// Block.Text and list items only, so it never edits a table cell or its runs,
+// block-scoped or document-wide. An agent edits a cell with patch_block.
+func TestTableRunsReplaceTextLeavesCells(t *testing.T) {
+	table := Block{ID: "b_1", Kind: BlockTable,
+		Headers: []string{"alpha", "b"}, HeaderRuns: [][]TextRun{cellBold("alpha"), nil},
+		Rows: [][]string{{"alpha", "x"}}, RowRuns: [][][]TextRun{{cellCode("alpha"), nil}}}
+	tableJSON := func(t *testing.T, d *Document) string {
+		t.Helper()
+		for _, b := range d.Sections[0].Blocks {
+			if b.ID == "b_1" {
+				raw, err := json.Marshal(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(raw)
+			}
+		}
+		t.Fatal("no table")
+		return ""
+	}
+	for _, tc := range []struct {
+		name     string
+		withPara bool
+		op       Op
+		wantErr  string
+		wantPara string
+	}{
+		{"document-wide, all", true, Op{Op: OpReplaceText, Old: "alpha", New: "omega", All: true}, "", "omega here"},
+		{"document-wide, first", true, Op{Op: OpReplaceText, Old: "alpha", New: "omega"}, "", "omega here"},
+		{"document-wide, only in cells", false, Op{Op: OpReplaceText, Old: "alpha", New: "omega", All: true}, "not found", ""},
+		{"block-scoped on the table", true, Op{Op: OpReplaceText, BlockID: "b_1", Old: "alpha", New: "omega"}, "not found in block", "alpha here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blocks := []Block{table}
+			if tc.withPara {
+				blocks = append([]Block{{ID: "p_1", Kind: BlockParagraph, Text: "alpha here"}}, blocks...)
+			}
+			d := cloneDoc(tableDoc(blocks...))
+			before := tableJSON(t, d)
+			err := ApplyOps(d, []Op{tc.op})
+			if tc.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error %v, want one mentioning %q", err, tc.wantErr)
+			}
+			if after := tableJSON(t, d); after != before {
+				t.Fatalf("replace_text changed the table\nbefore: %s\nafter:  %s", before, after)
+			}
+			if tc.withPara && d.Sections[0].Blocks[0].Text != tc.wantPara {
+				t.Errorf("paragraph %q, want %q", d.Sections[0].Blocks[0].Text, tc.wantPara)
+			}
+		})
+	}
+}
