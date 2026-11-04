@@ -826,6 +826,9 @@ const (
 	// inlineFlat renders text where block constructs cannot occur (heading,
 	// table cell, image alt text) and a newline cannot be written.
 	inlineFlat
+	// inlineCell renders the content of a table cell (TRD 26). RED stub: it takes
+	// the paragraph path until Task 1 GREEN gives it a meaning.
+	inlineCell
 )
 
 // renderRuns writes runs as Markdown inline syntax.

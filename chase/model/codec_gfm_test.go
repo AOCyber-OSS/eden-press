@@ -252,9 +252,11 @@ func refusalCases() []refusalCase {
 	return []refusalCase{
 		{"raw_html_block", "para\n\n<div class=\"x\">hi</div>\n", "raw-html", `<div`},
 		{"raw_html_inline", "a <b>bold</b> c\n", "raw-html", `<b>`},
-		{"table_cell_emphasis", "| a |\n| --- |\n| **b** |\n", "table-cell-formatting", `**b**`},
-		{"table_cell_code", "| a |\n| --- |\n| `c` |\n", "table-cell-formatting", "`c`"},
-		{"table_cell_link", "| a |\n| --- |\n| [l](u) |\n", "table-cell-formatting", `[l](u)`},
+		// D14: a table cell holding bold, code or a link is no longer a refusal (see
+		// codec_table_runs_test.go). A cell refuses what a paragraph refuses.
+		{"table_cell_raw_html", "| a |\n| --- |\n| x<br>y |\n", "raw-html", `<br>`},
+		{"table_cell_image", "| a |\n| --- |\n| ![a](b) |\n", "inline-image", `![a]`},
+		{"table_cell_link_title", "| a |\n| --- |\n| [l](u \"t\") |\n", "link-title", `[l]`},
 		{"ordered_list_start", "intro\n\n3. item\n", "list-start", `3.`},
 		{"nested_ordered_list_start", "1. a\n\n   3. b\n", "list-start", `3.`},
 		{"nested_bullet_under_ordered", "1. a\n   - b\n", "list-mixed-type", `- b`},
@@ -339,9 +341,13 @@ func TestFromMarkdownLenientMappings(t *testing.T) {
 			want: fxDoc([]Block{fxPara("a <b>bold</b> c")}),
 		},
 		{
-			name: "table_cell_marks_are_flattened",
+			// D14: lenient keeps a cell's formatting too; it flattens nothing.
+			name: "table_cell_marks_are_kept",
 			src:  "| a |\n| --- |\n| **b** |\n",
-			want: fxDoc([]Block{{Kind: BlockTable, Headers: []string{"a"}, Aligns: []string{""}, Rows: [][]string{{"b"}}}}),
+			want: fxDoc([]Block{{
+				Kind: BlockTable, Headers: []string{"a"}, Aligns: []string{""}, Rows: [][]string{{"b"}},
+				RowRuns: [][][]TextRun{{{fxRun("b", "bold")}}},
+			}}),
 		},
 		{
 			name: "ordered_list_start_resets_to_one",
