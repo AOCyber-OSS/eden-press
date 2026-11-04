@@ -255,3 +255,117 @@ func TestSheetSnapshotFarCellTerminates(t *testing.T) {
 		}
 	}
 }
+
+// tableCellRunsCase pins one table's fragment literally. The same fragment must
+// come from BlockHTML, BlockHTMLEmbedded and the flowing ToHTML writer.
+type tableCellRunsCase struct {
+	name  string
+	block Block
+	want  string
+}
+
+func tableCellRunsCases() []tableCellRunsCase {
+	run := func(text string, marks ...string) TextRun { return TextRun{Text: text, Marks: marks} }
+	return []tableCellRunsCase{
+		// Characterization (TRD 1026-28 test list 2): a table with no cell runs
+		// renders exactly as it did before cell runs existed.
+		{"plain ragged header-less", Block{Kind: BlockTable, Rows: [][]string{{"a", "b<"}, {"c"}, {}}},
+			"<table>\n<tbody>\n<tr><td>a</td><td>b&lt;</td></tr>\n<tr><td>c</td></tr>\n<tr></tr>\n</tbody></table>\n"},
+		{"plain with header", Block{Kind: BlockTable, Headers: []string{"A", "B&"}, Rows: [][]string{{"1", "<2>"}}},
+			"<table>\n<thead><tr><th>A</th><th>B&amp;</th></tr></thead>\n<tbody>\n<tr><td>1</td><td>&lt;2&gt;</td></tr>\n</tbody></table>\n"},
+		{"plain header only", Block{Kind: BlockTable, Headers: []string{"A"}},
+			"<table>\n<thead><tr><th>A</th></tr></thead>\n<tbody>\n</tbody></table>\n"},
+		// Canonical wire form of an unstyled cell is a nil entry. A table whose
+		// entries are all nil renders like the table without the arrays.
+		{"all nil entries", Block{Kind: BlockTable, Headers: []string{"A", "B"}, Rows: [][]string{{"1", "<2>"}},
+			HeaderRuns: [][]TextRun{nil, nil}, RowRuns: [][][]TextRun{{nil, nil}}},
+			"<table>\n<thead><tr><th>A</th><th>B</th></tr></thead>\n<tbody>\n<tr><td>1</td><td>&lt;2&gt;</td></tr>\n</tbody></table>\n"},
+
+		// Styled cells (test list 3).
+		{"styled header", Block{Kind: BlockTable, Headers: []string{"Metric", "Plain"}, Rows: [][]string{{"x", "y"}},
+			HeaderRuns: [][]TextRun{{run("Metric", "bold")}, nil}},
+			"<table>\n<thead><tr><th><strong>Metric</strong></th><th>Plain</th></tr></thead>\n<tbody>\n<tr><td>x</td><td>y</td></tr>\n</tbody></table>\n"},
+		{"styled body", Block{Kind: BlockTable,
+			Headers: []string{"Metric", "Plain", "Other"},
+			Rows: [][]string{
+				{"a|b", "docs", "old"},
+				{"soft", "x^2 & y", "tail"},
+				{"p", "q", "r"},
+			},
+			HeaderRuns: [][]TextRun{{run("Metric", "bold")}, nil, nil},
+			RowRuns: [][][]TextRun{
+				{{run("a|b", "code")}, {{Text: "docs", Link: "https://e.com/?a=1&b=2"}}, {run("old", "strike")}},
+				{{run("soft", "italic")}, {run("x^2 & y", "math")}, nil},
+				nil, // a plain row
+			}},
+			"<table>\n<thead><tr><th><strong>Metric</strong></th><th>Plain</th><th>Other</th></tr></thead>\n<tbody>\n" +
+				"<tr><td><code>a|b</code></td><td><a href=\"https://e.com/?a=1&amp;b=2\">docs</a></td><td><s>old</s></td></tr>\n" +
+				// A math run has no tag in this writer: its TeX shows as text,
+				// the same as a math run in a paragraph on the fragment route.
+				"<tr><td><em>soft</em></td><td>x^2 &amp; y</td><td>tail</td></tr>\n" +
+				"<tr><td>p</td><td>q</td><td>r</td></tr>\n" +
+				"</tbody></table>\n"},
+		{"mixed runs in one cell", Block{Kind: BlockTable, Headers: []string{"H"}, Rows: [][]string{{"a b <c>"}},
+			RowRuns: [][][]TextRun{{{run("a ", "bold", "italic"), {Text: "b "}, {Text: "<c>", Link: "https://e.com", Marks: []string{"code"}}}}}},
+			"<table>\n<thead><tr><th>H</th></tr></thead>\n<tbody>\n" +
+				"<tr><td><em><strong>a </strong></em>b <a href=\"https://e.com\"><code>&lt;c&gt;</code></a></td></tr>\n" +
+				"</tbody></table>\n"},
+		{"cell text is escaped inside a styled run", Block{Kind: BlockTable, Rows: [][]string{{"<script>x</script>"}},
+			RowRuns: [][][]TextRun{{{run("<script>x</script>", "bold")}}}},
+			"<table>\n<tbody>\n<tr><td><strong>&lt;script&gt;x&lt;/script&gt;</strong></td></tr>\n</tbody></table>\n"},
+
+		// Non-canonical documents (RenderModelJSON renders documents it did not
+		// author): an entry that does not line up with a cell is a plain cell,
+		// and nothing panics.
+		{"runs arrays longer than the cells", Block{Kind: BlockTable, Headers: []string{"H"}, Rows: [][]string{{"c"}},
+			HeaderRuns: [][]TextRun{{run("H", "bold")}, {run("ghost", "bold")}},
+			RowRuns:    [][][]TextRun{{{run("c", "italic")}, {run("ghost", "italic")}}, {{run("ghost", "italic")}}}},
+			"<table>\n<thead><tr><th><strong>H</strong></th></tr></thead>\n<tbody>\n<tr><td><em>c</em></td></tr>\n</tbody></table>\n"},
+		{"runs arrays shorter than the cells", Block{Kind: BlockTable, Headers: []string{"H1", "H2"}, Rows: [][]string{{"a", "b"}, {"c", "d"}},
+			HeaderRuns: [][]TextRun{{run("H1", "bold")}},
+			RowRuns:    [][][]TextRun{{{run("a", "italic")}}}},
+			"<table>\n<thead><tr><th><strong>H1</strong></th><th>H2</th></tr></thead>\n<tbody>\n<tr><td><em>a</em></td><td>b</td></tr>\n<tr><td>c</td><td>d</td></tr>\n</tbody></table>\n"},
+		{"empty runs entry is a plain cell", Block{Kind: BlockTable, Headers: []string{"H"}, Rows: [][]string{{"c&"}},
+			HeaderRuns: [][]TextRun{{}}, RowRuns: [][][]TextRun{{{}}}},
+			"<table>\n<thead><tr><th>H</th></tr></thead>\n<tbody>\n<tr><td>c&amp;</td></tr>\n</tbody></table>\n"},
+		{"header runs on a header-less table are ignored", Block{Kind: BlockTable, Rows: [][]string{{"c"}},
+			HeaderRuns: [][]TextRun{{run("H", "bold")}}},
+			"<table>\n<tbody>\n<tr><td>c</td></tr>\n</tbody></table>\n"},
+	}
+}
+
+// TestBlockHTMLTableCellRuns pins the table writer's cell output literally and
+// requires the three entry points to agree (a table has no embedded variant).
+func TestBlockHTMLTableCellRuns(t *testing.T) {
+	for _, tc := range tableCellRunsCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := &Document{SchemaVersion: SchemaVersion, Sections: []Section{{ID: 1, Blocks: []Block{tc.block}}}}
+			if got := BlockHTML(doc, tc.block); got != tc.want {
+				t.Errorf("BlockHTML:\n got:  %q\n want: %q", got, tc.want)
+			}
+			if got := BlockHTMLEmbedded(doc, tc.block); got != tc.want {
+				t.Errorf("BlockHTMLEmbedded:\n got:  %q\n want: %q", got, tc.want)
+			}
+			if got := flowFragment(t, doc, tc.block); got != tc.want {
+				t.Errorf("ToHTML fragment:\n got:  %q\n want: %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBlockHTMLTableCellRunsMatchParagraphRuns pins that a cell renders its runs
+// with the same function a paragraph does: one mark nesting, one link form.
+func TestBlockHTMLTableCellRunsMatchParagraphRuns(t *testing.T) {
+	runs := []TextRun{
+		{Text: "a ", Marks: []string{"bold", "italic", "strike"}},
+		{Text: "x^2", Marks: []string{"math"}},
+		{Text: " <b>", Link: "https://e.com/?q=1&r=2", Marks: []string{"code"}},
+	}
+	para := BlockHTML(nil, Block{Kind: BlockParagraph, Runs: runs})
+	inner := strings.TrimSuffix(strings.TrimPrefix(para, "<p>"), "</p>\n")
+	tbl := Block{Kind: BlockTable, Rows: [][]string{{FlattenRuns(runs)}}, RowRuns: [][][]TextRun{{runs}}}
+	want := "<table>\n<tbody>\n<tr><td>" + inner + "</td></tr>\n</tbody></table>\n"
+	if got := BlockHTML(nil, tbl); got != want {
+		t.Errorf("cell runs differ from paragraph runs:\n got:  %q\n want: %q", got, want)
+	}
+}
