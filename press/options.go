@@ -56,7 +56,7 @@ type Options struct {
 	//
 	// It only matters to a profile that HAS an inline-SVG layer (slides, whose
 	// markup is always SVG-wrapped). A profile with one container chain (paged:
-	// fixed physical pages) is never SVG-wrapped, whatever this says -- the
+	// physical pages) is never SVG-wrapped, whatever this says -- the
 	// profile decides, so its markup always matches its CSS.
 	InlineSVG bool
 

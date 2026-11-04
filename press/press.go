@@ -100,7 +100,7 @@ func Render(md string, opts Options) (Output, error) {
 	//    Whether each section is wrapped in <svg><foreignObject> is the
 	//    PROFILE's call, not the seam's: slides (Container(true) differs from
 	//    Container(false)) is wrapped, so the viewer can scale a fixed-aspect
-	//    slide; paged (one container chain, fixed physical page boxes) is not,
+	//    slide; paged (one container chain, physical pages of a fixed width) is not,
 	//    because its stylesheet is scoped to "div.edenpress-paged > section" and
 	//    a wrapper would put every page outside that chain, so no page-box rule
 	//    would match (D15).
@@ -256,12 +256,14 @@ func pressExtraOpts(opts Options, p profile.Profile) []goldmark.Option {
 // than trusting a caller flag.
 //
 // A profile with a single container chain (paged) never has an SVG layer:
-// opts.InlineSVG does not turn one on, and its page box is stated here. The
+// opts.InlineSVG does not turn one on, and its page geometry is stated here. The
 // packed theme carries the theme's own section size (the bundled themes are
-// 1280x720 slide themes), so the profile's resolved page size is appended as the
-// LAST unit rule -- same selector, later in the cascade -- and wins. The size is
-// profile.ResolveSize(directive "size" -> the profile's table -> its default),
-// the same resolver convert/png and convert/pdf capture at.
+// 1280x720 slide themes), so the profile's page rules (pageFlowRules: the page
+// width, a content-driven height with the page height as its on-screen minimum,
+// and the print padding) are appended LAST -- same selector, later in the
+// cascade -- and win. The size is profile.ResolveSize(directive "size" -> the
+// profile's table -> its default), the same resolver convert/png and convert/pdf
+// capture at.
 func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Options) (string, error) {
 	scaffoldCSS := p.Scaffold(false)
 	// Recover the advanced-background CSS suffix the same way chase/chase.go's
@@ -300,16 +302,33 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 		return "", fmt.Errorf("press: Render: pack theme %q: %w", name, err)
 	}
 	if !hasSVGLayer {
-		css += "\n" + pageSizeRule(p, profile.ResolveSize(p, meta.Directives))
+		css += "\n" + pageFlowRules(p, profile.ResolveSize(p, meta.Directives))
 	}
 	return css, nil
 }
 
-// pageSizeRule is the unit rule that gives every page the resolved physical
-// size, scoped exactly as the packer scopes the unit's own rules: the profile's
-// container chain, a child combinator, the unit element.
-func pageSizeRule(p profile.Profile, size theme.Size) string {
-	return fmt.Sprintf("%s > %s { width: %dpx; height: %dpx; }", p.Container(false), p.UnitElement(), size.WidthPx, size.HeightPx)
+// pageFlowRules are the unit rules that give every page the resolved physical
+// size while letting a long page flow (D16), scoped exactly as the packer scopes
+// the unit's own rules: the profile's container chain, a child combinator, the
+// unit element. They come AFTER the theme, so they win over its slide geometry.
+//
+//   - The page is the profile's width, and its height follows its content:
+//     `height: auto` beats the theme's fixed (720px slide) height, and nothing
+//     hides its overflow, so no content is clipped.
+//   - On screen (the PNG export and any preview) the page height is a MINIMUM,
+//     so a short or empty section is still one whole page and a long one is one
+//     tall page.
+//   - In print (the PDF export) a long section breaks across as many pages as it
+//     needs. The vertical page margin is the profile's @page margin, which
+//     applies to every page including continuation pages, so the section drops
+//     its own top and bottom padding there. There is deliberately no minimum
+//     height in print: a page-height minimum spills one blank page per
+//     document, and a forced break already gives an empty section its own page.
+func pageFlowRules(p profile.Profile, size theme.Size) string {
+	unit := p.Container(false) + " > " + p.UnitElement()
+	return fmt.Sprintf("%s { width: %dpx; height: auto; overflow: visible; }\n", unit, size.WidthPx) +
+		fmt.Sprintf("@media screen { %s { min-height: %dpx; } }\n", unit, size.HeightPx) +
+		fmt.Sprintf("@media print { %s { padding-top: 0; padding-bottom: 0; } }", unit)
 }
 
 // resolveThemeName applies the fixed fallback chain opts.Theme -> front-matter

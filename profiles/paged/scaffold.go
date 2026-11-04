@@ -28,22 +28,23 @@ package paged
 //
 // Three things it must get right, none of which apply to a slide deck:
 //
-//  1. A page is a PHYSICAL box. Each section is a fixed-size page with real
-//     margins, and page breaks between sections are enforced for print. The
-//     screen presentation stacks pages vertically with a gap and a shadow, so
-//     an on-screen preview reads as a document rather than one endless column.
+//  1. A page is PHYSICAL paper. Each section starts a new page, has the page's
+//     width and real margins, and is at least one page tall; a section longer
+//     than a page flows onto as many pages as it needs, and nothing clips it
+//     (D16). press appends the size rules after the theme (the scaffold comes
+//     before it and would lose). The screen presentation stacks sections
+//     vertically with a gap and a shadow, so an on-screen preview reads as a
+//     document rather than one endless column.
 //
 //  2. Page NUMBERS come from a CSS counter, not from an attribute. Marpit
 //     stamps data-marpit-pagination onto each slide at parse time; a paged
 //     document instead increments a counter per section, so numbering survives
 //     sections being added or reordered without re-running the directive pass.
 //
-//  3. @page carries the physical size for print/PDF. Without it a browser
-//     prints at ITS default page size and the carefully-sized section boxes
-//     get scaled or clipped — the single most common way "it looked right on
-//     screen" turns into a broken PDF. The size is re-stated per named size by
-//     chase/theme's size handling; the @page rule here carries the margin box
-//     and the running header/footer slots.
+//  3. @page carries the vertical page margin for print/PDF, so a section that
+//     breaks across pages has a top and a bottom margin on EVERY page, not
+//     only where it starts and ends. The paper size itself is stated by the
+//     exporter (convert/pdf), which appends a size-only @page rule.
 //
 // The `--edenpress-*` custom properties are the documented override surface: a
 // theme sets them rather than re-declaring the structural rules.
@@ -55,7 +56,9 @@ const ScaffoldCSS = `
   --edenpress-rule-color: #d0d0d0;
 }
 
-/* Each section IS a page: a fixed physical box, never a flowing column.
+/* Each section starts a page and flows: press appends its width, a
+   content-driven height and the page height as an on-screen minimum, after
+   the theme. Nothing here hides its overflow, so no content is ever clipped.
    The page-number counter is incremented per section and never explicitly
    reset -- an un-reset counter is implicitly created at the root scope, so
    numbering starts at 1 without needing a rule on the container (which the
@@ -67,12 +70,11 @@ section {
   margin: 0 auto var(--edenpress-page-gap);
   padding: var(--edenpress-page-margin);
   background: #fff;
-  overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 
-/* Running header and page number live inside the page's own margin box, so
-   they cannot collide with body content however long the content runs. */
+/* Running header and page number live inside the section's own padding, so
+   they cannot collide with body content on screen however long it runs. */
 section::before {
   content: var(--edenpress-header-text);
   position: absolute;
@@ -131,22 +133,31 @@ section::after {
   color: #444;
 }
 
-/* @page carries the physical page box for print/PDF. Without it a browser
-   prints at ITS OWN default page size and the carefully-sized section boxes
-   get scaled or clipped -- the most common way "it looked right on screen"
-   becomes a broken PDF. Margin is zero here because each section already
-   carries its own padding. */
+/* @page carries the VERTICAL page margin for print/PDF, so a section that
+   breaks across pages keeps a top and a bottom margin on every page,
+   continuation pages included (press zeroes the section's own top and bottom
+   padding in print). The horizontal margin is the section's own left and right
+   padding. The value is a literal because var() does not resolve inside
+   @page; it equals --edenpress-page-margin's default above, and a test pins
+   the two together. convert/pdf states the paper size in a size-only @page
+   rule, so this margin is the one that applies. */
 @page {
-  margin: 0;
+  margin: 20mm 0;
 }
 
-/* Print: drop the screen chrome, enforce one section per physical page. */
+/* Print: drop the screen chrome, start every section on a new page. The
+   running header is positioned in the section's top padding, which print does
+   not have, so it would sit on the first line of text: it is hidden. */
 @media print {
   section {
     margin: 0;
     box-shadow: none;
     break-after: page;
     page-break-after: always;
+  }
+
+  section::before {
+    display: none;
   }
 
   section:last-child {

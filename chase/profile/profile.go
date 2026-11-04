@@ -151,8 +151,8 @@ func ResolveSize(p Profile, directives map[string]string) theme.Size {
 // (Marpit's <svg><foreignObject> wrapper, which scales a fixed-aspect slide to
 // any viewport). A profile does exactly when its two container chains differ:
 // Container(true) is the SVG chain, Container(false) the plain one. A profile
-// whose chains are equal (paged, whose pages are fixed physical boxes) has no
-// SVG layer, and a renderer must not wrap its units in one -- the packed CSS is
+// whose chains are equal (paged, whose pages are physical paper) has no SVG
+// layer, and a renderer must not wrap its units in one -- the packed CSS is
 // scoped to the one chain, so a wrapper would put every unit outside it.
 //
 // Decided by comparing the chains rather than by a new Profile method, so the

@@ -99,6 +99,17 @@ func PageCSSInches(size theme.Size) string {
 	return fmt.Sprintf("@page{size:%sin %sin;margin:0;}", formatInches(w), formatInches(h))
 }
 
+// PageSizeCSSInches returns an `@page{size:<w>in <h>in;}` rule: PageCSSInches'
+// paper size with NO margin declaration, so the page margin an earlier @page
+// rule in the document sets still applies. convert/pdf uses it for a profile
+// without an SVG layer (paged), whose scaffold carries the page margin that a
+// section breaking across pages needs on every page; slides keep PageCSSInches.
+func PageSizeCSSInches(size theme.Size) string {
+	w := float64(size.WidthPx) / pxPerInch
+	h := float64(size.HeightPx) / pxPerInch
+	return fmt.Sprintf("@page{size:%sin %sin;}", formatInches(w), formatInches(h))
+}
+
 // formatInches renders an inch value to at most 3 decimal places, trimming
 // trailing zeros (and a trailing bare "." if the value is a whole number) so
 // 13.333333... -> "13.333", 7.5 -> "7.5", and 10.0 -> "10" -- matching the

@@ -117,6 +117,32 @@ func TestPageCSSInches(t *testing.T) {
 	}
 }
 
+// TestPageSizeCSSInches: the paged paper sizes, size only. The rule must carry
+// no margin, or it would re-zero the paged scaffold's @page margin that it
+// follows in the composed document (D16, TRD 1026-30).
+func TestPageSizeCSSInches(t *testing.T) {
+	for _, c := range []struct {
+		size theme.Size
+		want string
+	}{
+		{theme.Size{Name: "a4", WidthPx: 794, HeightPx: 1123}, "@page{size:8.271in 11.698in;}"},
+		{theme.Size{Name: "letter", WidthPx: 816, HeightPx: 1056}, "@page{size:8.5in 11in;}"},
+		{theme.Size{Name: "16:9", WidthPx: 1280, HeightPx: 720}, "@page{size:13.333in 7.5in;}"},
+	} {
+		got := PageSizeCSSInches(c.size)
+		if got != c.want {
+			t.Errorf("PageSizeCSSInches(%s) = %q, want %q", c.size.Name, got, c.want)
+		}
+		if strings.Contains(got, "margin") {
+			t.Errorf("PageSizeCSSInches(%s) = %q declares a margin", c.size.Name, got)
+		}
+		// The same paper as PageCSSInches, minus its margin declaration.
+		if want := strings.Replace(PageCSSInches(c.size), "margin:0;", "", 1); got != want {
+			t.Errorf("PageSizeCSSInches(%s) = %q, want PageCSSInches without its margin: %q", c.size.Name, got, want)
+		}
+	}
+}
+
 // TestFontFaceDataURI is Test-list case 3: FontFaceDataURI must return a
 // non-empty @font-face rule with the expected shape when the OTF is
 // embedded, or an empty string when the asset was deferred -- either

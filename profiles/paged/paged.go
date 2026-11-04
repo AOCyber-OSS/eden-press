@@ -78,8 +78,8 @@ func (paged) ContainerClass() string { return "edenpress-paged" }
 //
 // The inlineSVG branch that slides uses does not apply here: Marpit's
 // inline-SVG mode exists to scale a fixed-aspect slide to any viewport, which
-// is meaningless for paged output whose whole point is fixed physical page
-// dimensions. Both branches therefore return the same chain, so a caller that
+// is meaningless for paged output whose whole point is physical paper: a page
+// width, page margins, and page breaks. Both branches therefore return the same chain, so a caller that
 // enables inline SVG against this profile gets CSS that still matches.
 //
 // That equality is load-bearing, not just defensive: it is how press.Render
@@ -135,6 +135,9 @@ func (paged) Pagination() profile.PaginationRule {
 // use (see Container; press.Render does not emit one for it).
 //
 // The scaffold does not state the page SIZE. The packed theme carries its own
-// section size, so press appends the resolved page size (Sizes, picked by the
-// document's `size` directive) as the last unit rule, after the theme.
+// section size, so press appends the page rules after the theme, from the
+// resolved size (Sizes, picked by the document's `size` directive): the page
+// width, a height that follows the content with the page height as its
+// on-screen minimum, and no vertical padding in print, where the scaffold's
+// @page margin applies to every page (D16).
 func (paged) Scaffold(bool) string { return ScaffoldCSS }

@@ -477,6 +477,25 @@ func TestComposeDocumentPagedKeepsPageMargin(t *testing.T) {
 	}
 }
 
+// TestPrintMedia: a profile without an SVG layer (paged) prints under print
+// media, so its @media print rules (page breaks, the zeroed vertical padding)
+// apply; slides keep the screen media every slides export has always used.
+func TestPrintMedia(t *testing.T) {
+	for _, tc := range []struct {
+		profile string
+		want    bool
+	}{
+		{"paged", true},
+		{"slides", false},
+		{"", false},
+		{"epub", false},
+	} {
+		if got := printMedia(press.Output{Profile: tc.profile}); got != tc.want {
+			t.Errorf("printMedia(%q) = %v, want %v", tc.profile, got, tc.want)
+		}
+	}
+}
+
 // --- resolveSize: the Chrome-free proof --------------------------------
 
 // TestResolveSize is where the real proof of this exporter's geometry lives:
