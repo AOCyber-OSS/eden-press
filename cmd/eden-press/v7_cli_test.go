@@ -131,7 +131,7 @@ func TestDocV7FullFeatureCLIRoundTrip(t *testing.T) {
 	}
 	md, _ := os.ReadFile(outMD)
 	mds := string(md)
-	for _, want := range []string{"# Roadmap", "- [x] Write thorough tests", "Note: Important", "[Spec](spec.pdf)", "<svg/>", "| A | B |", "| 1 | 2 |"} {
+	for _, want := range []string{"# Roadmap", "- [x] Write thorough tests", "Note: Important", `:::file {"name":"Spec","mime":"application/pdf","size":12,"src":"spec.pdf"}`, "<svg/>", `"cells":[{"r":0,"c":0,"v":"A"},{"r":0,"c":1,"v":"B"},{"r":1,"c":0,"v":"1"},{"r":1,"c":1,"v":"2"}]`, "<!-- eden:model "} {
 		if !strings.Contains(mds, want) {
 			t.Fatalf("md missing %q in:\n%s", want, mds)
 		}

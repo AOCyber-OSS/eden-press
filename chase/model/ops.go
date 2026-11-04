@@ -191,6 +191,7 @@ func insertBlock(doc *Document, op Op) error {
 	}
 	b := *op.Block
 	SyncTextFromRuns(&b)
+	syncTableCellRuns(&b)
 	if b.ID == "" {
 		b.ID = nextBlockID(doc)
 	} else if findBlockPtr(doc, b.ID) != nil {
@@ -251,6 +252,7 @@ func updateBlock(doc *Document, op Op) error {
 	}
 	b := *op.Block
 	SyncTextFromRuns(&b)
+	syncTableCellRuns(&b)
 	if b.ID == "" {
 		b.ID = op.BlockID
 	} else if b.ID != op.BlockID {
@@ -412,6 +414,9 @@ func renumberSections(doc *Document) {
 }
 
 func validateEditableBlock(b Block) error {
+	if err := validateCellRuns(b); err != nil {
+		return err
+	}
 	switch b.Kind {
 	case BlockParagraph:
 		return validateChildren(b)
@@ -476,6 +481,58 @@ func validateEditableBlock(b Block) error {
 		}
 		return fmt.Errorf("unsupported block kind %q", b.Kind)
 	}
+}
+
+// validateCellRuns checks a block's cell runs (schema v7; AODex 1026 D14). Only
+// a table carries HeaderRuns or RowRuns. A non-nil HeaderRuns has one entry per
+// header cell, a non-nil RowRuns one entry per row, and a non-nil RowRuns[r]
+// one entry per cell of row r, so the runs stay in lockstep with the cells; a
+// nil entry is a plain cell (or a row of plain cells). No cell run holds a
+// newline: a GFM table cell is one line, so a newline is refused rather than
+// flattened. Marks are not checked, as they are not for Block.Runs.
+// A block with no kind is left to validateEditableBlock to report.
+func validateCellRuns(b Block) error {
+	if (b.HeaderRuns == nil && b.RowRuns == nil) || b.Kind == "" {
+		return nil
+	}
+	if b.Kind != BlockTable {
+		return fmt.Errorf("%s block cannot carry headerRuns or rowRuns (table cells only)", b.Kind)
+	}
+	if b.HeaderRuns != nil && len(b.HeaderRuns) != len(b.Headers) {
+		return fmt.Errorf("table headerRuns has %d entries for %d header cells", len(b.HeaderRuns), len(b.Headers))
+	}
+	for c, runs := range b.HeaderRuns {
+		if err := singleLineCell(fmt.Sprintf("headerRuns[%d]", c), runs); err != nil {
+			return err
+		}
+	}
+	if b.RowRuns != nil && len(b.RowRuns) != len(b.Rows) {
+		return fmt.Errorf("table rowRuns has %d entries for %d rows", len(b.RowRuns), len(b.Rows))
+	}
+	for r, row := range b.RowRuns {
+		if row == nil {
+			continue
+		}
+		if len(row) != len(b.Rows[r]) {
+			return fmt.Errorf("table rowRuns[%d] has %d entries for %d cells", r, len(row), len(b.Rows[r]))
+		}
+		for c, runs := range row {
+			if err := singleLineCell(fmt.Sprintf("rowRuns[%d][%d]", r, c), runs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// singleLineCell refuses a cell whose runs hold a newline.
+func singleLineCell(at string, runs []TextRun) error {
+	for _, run := range runs {
+		if strings.Contains(run.Text, "\n") {
+			return fmt.Errorf("table %s: a cell run cannot hold a newline (a table cell is one line)", at)
+		}
+	}
+	return nil
 }
 
 func validateChildren(b Block) error {

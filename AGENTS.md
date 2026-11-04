@@ -34,8 +34,8 @@ prints a JSON error envelope on stderr on failure (even without `--format json`)
 | `doc create [--title T] [-o page.json]` | Empty single-section page JSON (`eden-press.model/v7`) |
 | `doc get <page.json\|->` | Validate / pretty-print; assigns missing block/list-item ids |
 | `doc apply <page.json\|-> --ops ops.json [--dry-run] [-o out.json]` | Apply ops (`--dry-run` validates without mutating) |
-| `doc import <in.md\|-> [-o page.json]` | Markdown → docmodel JSON via `press.Render` (**always assigns block ids**) |
-| `doc export <page.json\|-> [-o out.md]` | Docmodel → Marp-compatible Markdown (nested/sheet/figure best-effort; some features lossy) |
+| `doc import <in.md\|-> [-o page.json]` | Markdown → docmodel JSON via `press.Render` (**always assigns block ids**; unchanged, and not lossless: it sanitizes and drops what the renderer drops. The lossless import is `press.MarkdownToDocJSON`, see Eden Markdown) |
+| `doc export <page.json\|-> [-o out.md]` | Docmodel → Eden Markdown: **lossless and deterministic** (every kind, ids, comments and properties; see Eden Markdown) |
 
 `apply` ops JSON may be a bare array or `{"ops":[...]}`.
 
@@ -55,7 +55,7 @@ prints a JSON error envelope on stderr on failure (even without `--format json`)
 |---|---|---|
 | `insert_block` | `sectionId` **or** `parentBlockId`, `block` | Optional `index` (0-based). Auto-assigns `block.id` when omitted |
 | `update_block` | `blockId`, `block` | Full replace (keeps id). Synced: mutate the **source**, not the instance |
-| `patch_block` | `blockId`, `block` | Merge fields/runs/checked/sheetEmbed; `clearChecked`/`clearCollapsed` clear bools |
+| `patch_block` | `blockId`, `block` | Merge fields/runs/checked/sheetEmbed; `clearChecked`/`clearCollapsed` clear bools. Table: `headerRuns`/`rowRuns` given win and re-derive the cell text; `headers`/`rows` given **without** their runs clear the old runs, so send the runs with the cells to keep formatting. A refused patch changes nothing |
 | `delete_block` | `blockId` | Removes the block (and its children) |
 | `move_block` | `blockId` | Optional `sectionId` / `parentBlockId` / `index`. Cycle into own descendant is rejected |
 | `replace_text` | `old`, `new` | Optional `blockId`, `all`. Operates on plain `text` (runs re-flattened; marks may drop) |
@@ -79,6 +79,7 @@ Editable block kinds: `paragraph`, `heading`, `list`, `code`, `math`, `table`,
 Schema v7 additions:
 
 - `runs[]` — rich text `{text, marks?, link?}`; plain `text` is the search/replace authority
+- `headerRuns` / `rowRuns` — formatted table cells, beside the plain `headers` / `rows`: `headerRuns[i]` are the runs of `headers[i]`, `rowRuns[r][c]` of `rows[r][c]`. `null` is a plain cell (or a row of plain cells); a key is absent when no cell is styled. Sizes match the cells (`rowRuns[r]` matches its own, possibly ragged, row); a cell run never holds a newline; tables only. `replace_text` does not edit cells — use `patch_block`
 - `todo` — `checked` bool + optional `children`
 - `callout` — `text`/`runs` + optional `icon`/`tone`
 - `divider` — thematic break
@@ -111,6 +112,188 @@ eden-press doc export page.json -o page.md
 # Import existing Markdown into the docmodel (ids assigned):
 eden-press doc import deck.md -o page.json
 ```
+
+## Eden Markdown (lossless codec)
+
+`doc export` (`press.ExportMarkdownJSON`, `model.ToMarkdown`) writes **Eden
+Markdown**: Marp-compatible Markdown that carries the whole docmodel. It is
+**lossless and deterministic**:
+
+- For a document in canonical form (limits below) `FromMarkdown(ToMarkdown(d)) == d`,
+  block, list-item and comment ids included (they ride in a trailing comment, or
+  come from `Prev`).
+- `ToMarkdown(d)` is byte-identical on every call (map keys are sorted), and
+  `ToMarkdown(FromMarkdown(ToMarkdown(d))) == ToMarkdown(d)`.
+- Reading never drops content silently. The strict reader refuses what the model
+  cannot carry exactly (`*model.UnrepresentableError`); the lenient reader applies
+  a fixed mapping.
+
+This changed `doc export` output for the v7 kinds: before, a callout was a quote
+with an emoji, a toggle was `<details>`, a sheet was a table of literal text, and
+a synced block was replaced by its source text. A pure Marp renderer shows the
+`:::kind` lines of the directives below as text; the HTML comments are invisible.
+
+| Task | Use |
+|---|---|
+| Docmodel to Markdown | `eden-press doc export`, `press.ExportMarkdownJSON(doc)` |
+| Markdown to docmodel, lossless | `press.MarkdownToDocJSON(md, prevDoc, press.MarkdownImport{Lenient, Spans})`; pass the stored document as `prevDoc` to keep ids and comment anchors across an edit |
+| The Markdown an editor shows, and its outline with spans | `press.MarkdownSourceViewJSON(doc)`: `md` equals `ExportMarkdownJSON`; `md[o.Span.Start:o.Span.Stop]` is heading `o` (byte offsets; a UTF-16 client converts) |
+| Will a stored document survive Markdown? | `press.VerifyMarkdownRoundTripJSON(doc)`: nil, or an error naming the first differing JSON path |
+
+`doc import` still goes through `press.Render` (unchanged). Go callers that may
+import `chase/model` use `model.FromMarkdown(md, model.FromMarkdownOptions{Prev, Spans, Lenient})`.
+
+### Spellings, one per kind
+
+| Kind | Eden Markdown |
+|---|---|
+| `paragraph` | text lines; a hard break is a backslash and a newline; a soft break (plain newline) reads as a space. Rich text: `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `[text](href)`, `$tex$` (a run marked `math`). Where CommonMark's delimiter rules would not read `**`/`~~` back, the block uses `<strong>`, `<em>`, `<del>` (the only HTML read) |
+| `heading` | `#` to `######` |
+| `list` | `-` bullets or `1.` numbers, children indented by the parent's marker width; adjacent lists alternate `-`/`*` (or `.`/`)`) so they never merge; numbering must start at 1 |
+| `code` | a fence one backtick longer than any backtick run inside; the language is the one info word; `Text` is exactly what is between the fences (a trailing newline shows as a blank line before the closing fence) |
+| `math` | display: `$$`, the TeX, `$$` on their own lines; a paragraph of only `$tex$` is a non-display math block |
+| `table` | GFM pipe table; delimiter row `---`, `:---`, `:---:`, `---:`. A cell holds inline runs as a paragraph does: `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `$tex$`, `[text](href)`, `<https://url>` (read into `headerRuns` / `rowRuns`; the flattened text is `headers` / `rows`). Every `\|` is a pipe: in text, in a link destination, in a code span and in math TeX (`` `a\|b` `` is code `a|b`, `$a\|b$` is TeX `a|b`, and TeX `a\|b` is `$a\\|b$`). A cell cannot hold a newline, raw HTML (other than `<strong> <em> <del>`), an image or a link title |
+| `image` | `![alt](src "title")`, `<src>` when it has spaces; a title may span lines |
+| `quote` | `> ` lines: its leading paragraphs are `Text`, the rest are `Children` |
+| `divider` | `***` (a `---` rule is a section break, never a divider) |
+| `todo` | `- [ ] text` or `- [x] text`; children indented under it; consecutive childless todos are one tight list |
+| `toggle`, `callout`, `file`, `sheet`, `figure`, `synced` | container directives, below |
+
+**Directives.** `:::kind {json}` on one line, a body, then `:::`. The fence is three
+or more colons at the start of a line; the closer is colons only and at least as
+long as the opener; `ToMarkdown` makes the fence one colon longer than any colon run
+at the start of a body line, so directives nest like code fences (same-length
+fences do not nest). The header is one JSON object from `json.Marshal` with the
+fields `icon`, `tone`, `collapsed`, `name`, `mime`, `size`, `src`, `title`, `alt`
+(a figure's text), `sheetEmbed`, `syncRef`, `noText`, in that order, all omitted
+when empty, with `<`, `>`, `&` escaped. The header may be left out when every field
+is empty. The body is the block's text paragraph (rich text allowed) and then its
+children as Markdown; `"noText":true` says the first body paragraph is a child, not
+the text. A `figure`'s body is its SVG verbatim. Fields by kind: toggle `collapsed`;
+callout `icon`, `tone`; file `name`, `mime`, `size`, `src`; sheet `sheetEmbed`
+(snapshot, formulas and rels included); figure `src`, `title`, `alt`; synced
+`syncRef` and no body. A line of prose that starts with `:::` is written `\:::`.
+
+**Section layer.**
+- Sections are separated by a `---` rule; an empty section is just its rule.
+- Front matter (`Meta.Directives`): `---`, sorted `key: value` lines, `---`. Keys match
+  `[A-Za-z0-9_][A-Za-z0-9_.-]*`; a value is plain, `"double"` (Go escapes) or `'single'`,
+  and is quoted when it holds `:`, `#` or another YAML special.
+- Section attrs: one comment first in the section, `<!-- eden:attrs {"k":"v"} -->`
+  (a JSON object of strings, keys sorted).
+- Section notes: after the blocks, one comment each in order,
+  `<!-- eden:note "json string" -->`.
+- Marp input still reads: a top-level comment whose keys are all known directives
+  (global, local or `_`-prefixed spot) is attrs (a later attr of the same key in a
+  section wins); any other whole top-level comment is a note.
+- **The trailer.** The last thing in the file, preceded by a blank line, when the
+  document has ids, properties, property values or comments:
+  `<!-- eden:model {"v":1,"blocks":[...],"properties":[...],"propertyValues":{...},"comments":[...]} -->`.
+  `blocks` lists every block depth first as `{"id","k","f"[,"li"]}` with a content
+  fingerprint (`f`, FNV-1a, 8 hex digits) so ids survive an edit of the Markdown
+  even with no `Prev`; `properties`, `propertyValues` and `comments` are the model's
+  JSON. Keep it in the editor's source view, or re-attach it before reading, or the
+  ids, properties and comments are lost. A document with none of that has no trailer.
+
+**Ids across an edit.** With `Prev` (else the trailer) the reader matches blocks in
+this order: identical blocks in order, then moved blocks, then blocks edited in place
+between two matched neighbours; the rest are new and get ids above every id ever
+used, so a deleted block's id (still named by a comment) is never reused. Comments
+are never dropped or re-anchored.
+
+### What strict mode refuses (`UnrepresentableError.Construct`)
+
+`Offset` is the byte offset of the construct. Lenient mode never fails and applies
+the mapping in the last column.
+
+| Construct | Strict refuses | Lenient mapping |
+|---|---|---|
+| `raw-html` | an HTML block, inline HTML other than `<strong> <em> <del>` (also in a table cell: `<br>` stays a refusal), or a comment that is not a whole top-level comment | a block becomes a paragraph of the literal source; inline HTML becomes literal text |
+| `list-start` | an ordered list that does not start at 1 | the start is reset to 1 |
+| `list-mixed-type` | a nested list of the other type | the outer list's type wins |
+| `list-mixed-todo` | a task item in a list with plain items, nested in a plain list, or in an ordered list | the item stays a list item with `[ ] ` / `[x] ` as text |
+| `list-item-blocks` | a list item with a second paragraph, code, a quote or a table | the extra blocks' text is appended after a line break |
+| `link-title` | `[a](u "t")`, also in a table cell | the title is dropped |
+| `empty-link` | `[](u)` or `[a]()` | an empty-text link is dropped; no destination is plain text |
+| `inline-image` | an image sharing a paragraph with other content, or in a table cell | the image becomes its alt text |
+| `code-info-string` | a fence info string of more than one word | the first word is the language |
+| `inline-display-math` | `$$x$$` sharing a paragraph with other content | inline math |
+| `math-unclosed` | a `$$` block with no closing `$$` | the math runs to the end of its container |
+| `math-trailing-text` | text after the closing `$$` on its line | the text is the paragraph after the math block |
+| `front-matter` | a leading `---` block with a line that is not `key: value`, a bad quoted value or a duplicate key | bad lines are skipped, a later duplicate wins |
+| `unknown-directive` | `:::name` other than the six | the whole directive, fences included, as literal paragraphs |
+| `directive-json` | a bad directive header (bad JSON, an unknown key, a wrong type, trailing text), a bad `eden:attrs`/`eden:note`/`eden:model` payload, an unsupported trailer version, a second trailer | a directive stays literal text; a comment stays a note |
+| `directive-unclosed` | a directive with no closing fence before the end of its container | it runs to the end of its container |
+| `unsupported` | a Markdown node this codec does not read | skipped |
+
+**Table cells (AODex D14).** `table-cell-formatting`, the most common strict refusal of
+LLM-written Markdown, is no longer emitted: a table cell is read the way a paragraph is,
+so bold, italic, strike, code, inline math, links and autolinks in a cell are kept in
+`headerRuns` / `rowRuns` by strict and lenient mode alike (lenient flattens nothing). The
+name stays exported (`model.ConstructTableCellFormatting`) so callers that switch on
+Construct names still compile. A cell refuses what a paragraph refuses, under the same
+names (`raw-html`, `inline-image`, `link-title`, `empty-link`, `inline-display-math`), and
+strict mode still reports only the first.
+
+**Wide table rows (AODex D18).** GFM ignores the cells of a body row that run past the header,
+and a reader that did the same would drop them without a word (strict mode too). `FromMarkdown`
+never drops a table cell: a table is as wide as its widest row, strict and lenient alike, and
+there is no refusal for it. The header gains empty cells (`headers` `""`, no `headerRuns`
+entry), `aligns` gains `""` (unaligned) entries, a narrower row gains empty cells, and every
+cell of every row is kept. For example
+
+```markdown
+| a |
+| - |
+| x | zqsentinel |
+```
+
+reads as `headers` `["a", ""]`, `aligns` `["", ""]`, `rows` `[["x", "zqsentinel"]]`, and
+`ToMarkdown` writes it back as `| a |  |` / `| --- | --- |` / `| x | zqsentinel |`, which
+reads as the same table. An excess cell is read like any other cell (bold, code, math, links,
+`\|`), so it can refuse what a cell refuses. A table whose rows are all as wide as or
+narrower than its header reads exactly as before.
+
+Read without a refusal and without a trace (they carry no content): the bullet
+character, the ordered delimiter, list tightness and numbering, `*` versus `_`
+emphasis, ATX versus setext headings, fence character and length, indented versus
+fenced code, reference versus inline links, `<url>` autolinks, character references,
+backslash escapes, an unused `[x]: url` definition, and a soft line break (a
+space). Footnotes are not a feature of the model: `[^1]: Some text` stays as a
+paragraph, but a one-word `[^1]: note` is a link reference definition, so it
+vanishes when nothing uses it and turns a `[^1]` into a link to `note` when
+something does.
+
+### Canonical form: what the guarantee covers
+
+`ToMarkdown` still writes something sensible for anything below, but the reader may
+not give the same document back. `press.VerifyMarkdownRoundTripJSON` reports such a
+document by path.
+
+- a document with no section (use one empty section); section ids that are not 1..n;
+- a text that starts or ends with a newline, or holds a blank line (a quote's
+  paragraphs are the exception);
+- a marked or linked run with whitespace at its edge, or two neighbouring runs with the
+  same marks and link; marks other than `bold`, `italic`, `strike`, `code`, `math` (not
+  written); a `math` run followed by a digit;
+- a paragraph that is only one image or only one math run (those are `image` and
+  `math` blocks);
+- display math TeX holding an unescaped `$$`, and inline math TeX holding an unescaped
+  `$`, edge whitespace or a newline (TeX reserves `$`; write `\$`);
+- a list that skips a level or starts above level 0;
+- a table row with more or fewer cells than the header (the reader pads the header to the
+  widest row and a narrower row with empty cells, so the document reads back as the padded
+  table; no cell is lost, see "Wide table rows" above);
+- a table cell whose runs are not canonical (see `headerRuns` / `rowRuns` above: a plain
+  cell is `null`, no run holds a newline), and cell text that differs from its runs;
+- children on a block other than `quote`, `toggle`, `todo` and `callout` (dropped);
+  a quote whose first child is a paragraph (it merges into the quote's text);
+- a whitespace-only line in code, math or an SVG nested in a todo, and a todo whose
+  child list ends in an empty item while more children follow (goldmark closes the
+  todo there);
+- invalid UTF-8 (JSON replaces it).
+
+Ids, spans: spans are never part of identity; they depend on the string they index.
 
 ## Workbook CRUD (`eden-press workbook`)
 
@@ -343,7 +526,10 @@ Field notes an agent must get right:
   `text`. `rows` is an array of row arrays of cell strings; `aligns` is one
   entry per column, each `"left"`/`"right"`/`"center"` or `""` when the column
   declared no alignment. Ragged rows are reported as authored — GFM pads at
-  render time, but the model reports what was written. An **image** block puts
+  render time, but the model reports what was written. Optional `headerRuns` /
+  `rowRuns` carry formatted cells (see "Schema v7 additions"); `headers` /
+  `rows` always hold the plain cell text, so a reader that ignores the runs
+  still reads every cell. An **image** block puts
   its destination in `src`, its alt text in `text`, and its optional
   `![alt](src "title")` third argument in `title`. A **quote** block carries its
   concatenated text in `text` (multi-paragraph quotes are joined by a blank

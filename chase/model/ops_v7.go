@@ -151,84 +151,101 @@ func patchBlock(doc *Document, op Op) error {
 	if p.Kind != "" && p.Kind != ptr.Kind {
 		return fmt.Errorf("patch_block: cannot change kind from %q to %q", ptr.Kind, p.Kind)
 	}
+	// The patch is applied to a copy and the block is replaced only once the
+	// copy validates, so a refused patch leaves the document as it was.
+	next := *ptr
 	if p.Text != "" || len(p.Runs) > 0 {
 		if len(p.Runs) > 0 {
-			ptr.Runs = append([]TextRun{}, p.Runs...)
-			ptr.Text = FlattenRuns(ptr.Runs)
+			next.Runs = append([]TextRun{}, p.Runs...)
+			next.Text = FlattenRuns(next.Runs)
 		} else {
-			ptr.Text = p.Text
-			ptr.Runs = SingleRun(p.Text)
+			next.Text = p.Text
+			next.Runs = SingleRun(p.Text)
 		}
 	}
 	if p.Level != 0 {
-		ptr.Level = p.Level
+		next.Level = p.Level
 	}
 	if p.Language != "" {
-		ptr.Language = p.Language
+		next.Language = p.Language
 	}
 	if p.Display {
-		ptr.Display = true
+		next.Display = true
 	}
 	if p.Checked {
-		ptr.Checked = true
+		next.Checked = true
 	}
 	if op.ClearChecked {
-		ptr.Checked = false
+		next.Checked = false
 	}
 	if p.Icon != "" {
-		ptr.Icon = p.Icon
+		next.Icon = p.Icon
 	}
 	if p.Tone != "" {
-		ptr.Tone = p.Tone
+		next.Tone = p.Tone
 	}
 	if p.Src != "" {
-		ptr.Src = p.Src
+		next.Src = p.Src
 	}
 	if p.Title != "" {
-		ptr.Title = p.Title
+		next.Title = p.Title
 	}
 	if p.Name != "" {
-		ptr.Name = p.Name
+		next.Name = p.Name
 	}
 	if p.Mime != "" {
-		ptr.Mime = p.Mime
+		next.Mime = p.Mime
 	}
 	if p.Size != 0 {
-		ptr.Size = p.Size
+		next.Size = p.Size
 	}
 	if p.SVG != "" {
-		ptr.SVG = p.SVG
+		next.SVG = p.SVG
 	}
 	if p.SheetEmbed != nil {
-		ptr.SheetEmbed = p.SheetEmbed
+		next.SheetEmbed = p.SheetEmbed
 	}
 	if p.SyncRef != nil {
-		ptr.SyncRef = p.SyncRef
+		next.SyncRef = p.SyncRef
 	}
 	if p.Collapsed {
-		ptr.Collapsed = true
+		next.Collapsed = true
 	}
 	if op.ClearCollapsed {
-		ptr.Collapsed = false
+		next.Collapsed = false
 	}
 	if p.Items != nil {
-		ptr.Items = p.Items
+		next.Items = p.Items
 	}
+	// Cell runs (schema v7; AODex 1026 D14). New Headers (Rows) without
+	// HeaderRuns (RowRuns) clear the old runs, which describe the old cells.
+	// Runs given win: they are set, and the cell text is re-derived from them.
+	// A patch that names neither the cells nor their runs leaves the runs alone.
 	if p.Headers != nil {
-		ptr.Headers = p.Headers
+		next.Headers = p.Headers
+		next.HeaderRuns = nil
 	}
 	if p.Rows != nil {
-		ptr.Rows = p.Rows
+		next.Rows = p.Rows
+		next.RowRuns = nil
+	}
+	if p.HeaderRuns != nil {
+		next.HeaderRuns = p.HeaderRuns
+	}
+	if p.RowRuns != nil {
+		next.RowRuns = p.RowRuns
 	}
 	if p.Aligns != nil {
-		ptr.Aligns = p.Aligns
+		next.Aligns = p.Aligns
 	}
 	if p.Children != nil {
-		ptr.Children = p.Children
+		next.Children = p.Children
 	}
-	if err := validateEditableBlock(*ptr); err != nil {
+	if err := validateEditableBlock(next); err != nil {
 		return err
 	}
+	syncTableCellRuns(&next)
+	*ptr = next
 	return nil
 }
 
