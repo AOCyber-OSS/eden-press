@@ -42,9 +42,9 @@ const inlineSVGSlideTag = "<svg data-marpit-svg"
 
 // renderedInlineSVG reports whether out was rendered in inline-SVG container
 // mode, read from the markup itself -- the mode png.ToImages' slide selector
-// must match. press.Render decides that mode (today it always enables it,
-// whatever press.Options.InlineSVG says), so the --inline-svg flag alone is
-// not a reliable answer.
+// must match. press.Render decides that mode (it wraps a profile that has an
+// SVG layer, slides, whatever press.Options.InlineSVG says, and never wraps
+// paged), so the --inline-svg flag alone is not a reliable answer.
 func renderedInlineSVG(out press.Output) bool {
 	return strings.Contains(out.HTML, inlineSVGSlideTag)
 }

@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
@@ -61,12 +62,12 @@ type Options struct{}
 //  2. Compose a self-contained HTML document: out.HTML wrapped in a
 //     <style> combining chrome.ComposeCSS(out.CSS) (base CSS + the
 //     animation-kill override + the embedded STIX font) with
-//     chrome.PageCSSInches(size) (the @page rule ToPDF's
-//     WithPreferCSSPageSize(true) call honors).
+//     an @page rule (the one ToPDF's WithPreferCSSPageSize(true) call
+//     honors; see composeDocument for the slides and paged forms).
 //  3. Open a fresh tab on sess, apply the 05-02 ApplyDeterminism recipe
-//     pinned to size's pixel dimensions, then load the composed document
-//     via chrome.LoadHTML (SetDocumentContent, not a data: URL or
-//     file://).
+//     pinned to size's pixel dimensions (then, for a paged document, emulate
+//     print media; see printMedia), then load the composed document via
+//     chrome.LoadHTML (SetDocumentContent, not a data: URL or file://).
 //  4. Run page.PrintToPDF INSIDE a chromedp.ActionFunc -- it is not a
 //     first-class chromedp.Action; Do(ctx) returns three values (data,
 //     stream, err) -- with WithPrintBackground(true),
@@ -87,6 +88,25 @@ func ToPDF(sess *chrome.Session, out press.Output, opts Options) ([]byte, error)
 
 	if err := chrome.ApplyDeterminism(tab, int64(size.WidthPx), int64(size.HeightPx)); err != nil {
 		return nil, fmt.Errorf("convert/pdf: ToPDF: %w", err)
+	}
+
+	// ApplyDeterminism emulates screen media (it is shared with the PNG path).
+	// A paged document is laid out for PAPER: its @media print rules start
+	// every section on a new page and hand the vertical margin to @page so a
+	// long section breaks across pages on margins. Emulate print for it, keeping
+	// the reduced-motion feature. Slides keep the screen media they always had.
+	if printMedia(out) {
+		err := chromedp.Run(tab, chromedp.ActionFunc(func(ctx context.Context) error {
+			return emulation.SetEmulatedMedia().
+				WithMedia("print").
+				WithFeatures([]*emulation.MediaFeature{
+					{Name: "prefers-reduced-motion", Value: "reduce"},
+				}).
+				Do(ctx)
+		}))
+		if err != nil {
+			return nil, fmt.Errorf("convert/pdf: ToPDF: emulating print media: %w", err)
+		}
 	}
 
 	if err := chrome.LoadHTML(tab, composeDocument(out, size)); err != nil {
@@ -144,13 +164,8 @@ func resolveSize(out press.Output) (theme.Size, error) {
 			"convert/pdf: resolveSize: unknown profile %q (import the profiles/%s package for its init side-effect)",
 			out.Profile, out.Profile)
 	}
-	table := p.Sizes()
-	if name := out.Meta.Directives["size"]; name != "" {
-		if s, ok := table.ByName[name]; ok {
-			return s, nil
-		}
-	}
-	return table.Default, nil
+	// The ONE size resolver, shared with the CSS packer and convert/png.
+	return profile.ResolveSize(p, out.Meta.Directives), nil
 }
 
 // printLayoutCSS makes every inline-SVG slide occupy exactly one PDF page: the
@@ -171,14 +186,31 @@ func printLayoutCSS(out press.Output, size theme.Size) string {
 	return fmt.Sprintf("%s{display:block;width:%dpx;height:%dpx;}", containers, size.WidthPx, size.HeightPx)
 }
 
+// printMedia reports whether out prints under print media: true for a profile
+// without an inline-SVG layer (paged), whose stylesheet is written for paper.
+// Slides (and an Output whose profile is not registered) keep screen media.
+func printMedia(out press.Output) bool {
+	p, ok := profile.Get(out.Profile)
+	return ok && !profile.UsesInlineSVG(p)
+}
+
 // composeDocument wraps out's rendered body-fragment HTML into a
 // self-contained HTML document Chrome can load directly via
 // page.SetDocumentContent: chrome.ComposeCSS(out.CSS) folds in the
-// animation-kill override plus the embedded STIX font, and
-// chrome.PageCSSInches(size) appends the @page rule that drives
-// WithPreferCSSPageSize(true)'s paper sizing.
+// animation-kill override plus the embedded STIX font, and an @page rule
+// drives WithPreferCSSPageSize(true)'s paper sizing.
+//
+// For slides that rule is chrome.PageCSSInches(size), which also zeroes the
+// page margin: a slide is exactly one page box. A paged document gets the
+// size-only chrome.PageSizeCSSInches(size) instead, because its scaffold's
+// `@page` margin, earlier in out.CSS, is what puts every page of a section that
+// breaks across pages on margins (D16); a margin here would override it.
 func composeDocument(out press.Output, size theme.Size) string {
-	css := chrome.ComposeCSS(out.CSS) + chrome.PageCSSInches(size) + printLayoutCSS(out, size)
+	pageRule := chrome.PageCSSInches(size)
+	if printMedia(out) {
+		pageRule = chrome.PageSizeCSSInches(size)
+	}
+	css := chrome.ComposeCSS(out.CSS) + pageRule + printLayoutCSS(out, size)
 
 	var b strings.Builder
 	b.WriteString(`<!doctype html><html><head><meta charset="utf-8"><style>`)

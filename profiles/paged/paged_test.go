@@ -23,10 +23,12 @@
 package paged
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"go.aocyber.ai/eden-press/chase/profile"
+	"go.aocyber.ai/eden-press/chase/theme"
 )
 
 // TestRegisteredUnderOwnID: importing this package registers "paged" without
@@ -106,6 +108,68 @@ func TestPaginationUsesACounter(t *testing.T) {
 	}
 	if !strings.HasPrefix(pr.Selector, New().UnitElement()) {
 		t.Errorf("Selector %q does not target the unit element %q", pr.Selector, New().UnitElement())
+	}
+}
+
+// flatRuleRE captures one flat `selector { declarations }` rule. The document
+// theme has no nested at-rules (TestDefaultThemeIsDocument asserts that), so
+// a flat match reads all of it.
+var flatRuleRE = regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`)
+
+var commentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
+// TestDefaultThemeIsDocument (D17, TRD 1026-30 Test list 8): the paged profile
+// supplies its own default theme, `document`, through the optional
+// profile.DefaultThemer interface. Its CSS loads through theme.Load (so its
+// leading comment names it), sets the body type, and leaves the page geometry
+// (width, height, padding) to the scaffold and press.
+func TestDefaultThemeIsDocument(t *testing.T) {
+	dt, ok := New().(interface{ DefaultTheme() (name, css string) })
+	if !ok {
+		t.Fatal("paged does not implement DefaultTheme() (name, css string)")
+	}
+	name, css := dt.DefaultTheme()
+	if name != "document" {
+		t.Errorf("DefaultTheme name = %q, want document", name)
+	}
+	th, err := theme.Load(css, New().UnitElement(), New().Sizes().ByName)
+	if err != nil {
+		t.Fatalf("theme.Load(DefaultTheme CSS): %v", err)
+	}
+	if th.Name != name {
+		t.Errorf("the CSS names itself %q, DefaultTheme returns %q", th.Name, name)
+	}
+
+	body := commentRE.ReplaceAllString(css, "")
+	if strings.Contains(body, "@media") || strings.Contains(body, "light-dark(") {
+		t.Errorf("document theme uses @media or light-dark(); it is one flat light stylesheet")
+	}
+	sawBody := false
+	for _, m := range flatRuleRE.FindAllStringSubmatch(body, -1) {
+		isUnit := false
+		for _, sel := range strings.Split(m[1], ",") {
+			if strings.TrimSpace(sel) == "section" {
+				isUnit = true
+			}
+		}
+		if !isUnit {
+			continue
+		}
+		for _, decl := range strings.Split(m[2], ";") {
+			prop, value, _ := strings.Cut(decl, ":")
+			prop, value = strings.TrimSpace(prop), strings.TrimSpace(value)
+			switch {
+			case strings.TrimPrefix(strings.TrimPrefix(prop, "min-"), "max-") == "width",
+				strings.TrimPrefix(strings.TrimPrefix(prop, "min-"), "max-") == "height",
+				prop == "padding", strings.HasPrefix(prop, "padding-"):
+				t.Errorf("document theme sets %s: %s on section; the scaffold and press own the page geometry", prop, value)
+			case prop == "font-size" && value == "11pt":
+				sawBody = true
+			}
+		}
+	}
+	if !sawBody {
+		t.Error("document theme does not set font-size: 11pt on section")
 	}
 }
 

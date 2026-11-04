@@ -41,8 +41,11 @@ import (
 // Sanitize is nil-defaulted (zero => the built-in always-on policy applies).
 type Options struct {
 	// Theme selects the named theme. "" resolves the deck's own front-matter
-	// `theme:` directive, and absent that, Marp Core's built-in "default"
-	// theme. A non-empty value overrides the front matter.
+	// `theme:` directive; absent that, the profile's own default theme when it
+	// supplies one (paged: the "document" theme, an 11pt print type scale), and
+	// otherwise Marp Core's built-in "default" theme (slides). A non-empty value
+	// overrides the front matter. "default" therefore means the Marp slides
+	// theme on every profile; leave Theme empty to mean "no theme chosen".
 	Theme string
 
 	// Profile selects the chase/profile.Profile that supplies the unit element
@@ -53,6 +56,11 @@ type Options struct {
 	// InlineSVG selects the inline-<svg><foreignObject> container mode. The
 	// 03-09 baseline turns this on to match Marp Core; the flag's own zero
 	// value is false and is documented here without any speculative inversion.
+	//
+	// It only matters to a profile that HAS an inline-SVG layer (slides, whose
+	// markup is always SVG-wrapped). A profile with one container chain (paged:
+	// physical pages) is never SVG-wrapped, whatever this says -- the
+	// profile decides, so its markup always matches its CSS.
 	InlineSVG bool
 
 	// MathMode selects the math rendering backend. "" resolves to "mathml"

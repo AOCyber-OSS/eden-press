@@ -169,7 +169,7 @@ exits 3 with a remedy message instead of attempting a launch.`,
 func registerExportFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 
-	f.String("theme", "", `theme name; "" resolves the deck's front-matter "theme:", then "default" (press.Render's own fallback)`)
+	f.String("theme", "", `theme name; "" resolves the deck's front-matter "theme:", then the profile's own default ("document" for paged), then "default" (press.Render's own fallback)`)
 	f.String("profile", "", `chase/profile id; "" resolves profile.Default() ("slides")`)
 	f.String("math", "", `math rendering mode: "mathml" (default) or "off"`)
 	f.Bool("no-highlight", false, "disable chroma syntax highlighting")
@@ -231,12 +231,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 	case "png":
 		// LOAD-BEARING: png.ToImages must use the container mode press.Render
 		// ACTUALLY rendered, read from out.HTML, not the --inline-svg flag.
-		// press.Render always emits the inline-<svg><foreignObject> wrapper
-		// (press.go: ParseWithEngine enables it unconditionally), so passing
-		// the flag's default false made ToImages' `div.marpit > section`
+		// press.Render emits the inline-<svg><foreignObject> wrapper for a
+		// profile that has an SVG layer (slides), whatever the flag says, so
+		// passing the flag's default false made ToImages' `div.marpit > section`
 		// selector match nothing and chromedp.Screenshot wait forever; a
 		// mismatched mode the other way makes the nth-of-type selector
-		// resolve position 1 N times.
+		// resolve position 1 N times. (A profile without an SVG layer, paged,
+		// is addressed as plain children whatever is passed: png.unitSelector.)
 		imgs, err := png.ToImages(sess, out, png.Options{InlineSVG: renderedInlineSVG(out)})
 		if err != nil {
 			return fail(exitRender, err)

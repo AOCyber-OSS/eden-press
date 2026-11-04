@@ -25,6 +25,8 @@ package pdf
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"regexp"
 	"strings"
@@ -334,6 +336,163 @@ func TestToPDFInlineSVGFixture(t *testing.T) {
 	const nonTrivialSize = 1024
 	if len(data) < nonTrivialSize {
 		t.Fatalf("inline-SVG PDF is only %d bytes -- suspiciously small, likely a blank page (Pitfall 4/A foreignObject silent-non-render trap)", len(data))
+	}
+}
+
+// --- composeDocument: slides byte-identical, paged prints on margins ------
+//
+// D16 (TRD 1026-30): a paged section flows across as many pages as it needs,
+// and every page, continuation pages included, needs a top and a bottom margin.
+// That margin lives in the paged scaffold's `@page`, so the composed document
+// must not re-zero it. Slides compose exactly as before.
+
+// composeSlidesDeck is a slides deck through the inline-SVG layered path (an
+// advanced background) with an EMPTY slide.
+const composeSlidesDeck = "---\nmarp: true\npaginate: true\n---\n\n# Deck\n\nFirst slide.\n\n---\n\n![bg left](bg.png)\n\n## Second\n\n---\n\n---\n\n### Fourth\n"
+
+// composeSlidesGolden are sha256 digests of composeDocument's output for slides
+// Outputs, captured from the code BEFORE the D16 change (eden-press 22a0550). A
+// paged change must not move a byte of the slides PDF input.
+var composeSlidesGolden = map[string]string{
+	"fixture":           "2d73f54183b955c2c095683a8e05d4565b1705254a924e4f9c4c08b54ac1bf6c",
+	"Render/16:9":       "e3e2764cab2bce14b79291c6c77883029c9da2f72c7b7ee2949c84be13d8e2b1",
+	"Render/4:3":        "3ef4ba9e2ef65219df54122dfbfea130634a0f7ca713f9696d5cbcd99da30ed8",
+	"Render/theme gaia": "f36a65a24deabea6e7e419dc523d96345f5cedf9dca75e539c5e1e170a564346",
+}
+
+func TestComposeDocumentSlidesUnchanged(t *testing.T) {
+	render := func(md string, opts press.Options) press.Output {
+		t.Helper()
+		out, err := press.Render(md, opts)
+		if err != nil {
+			t.Fatalf("press.Render: %v", err)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		key string
+		out press.Output
+	}{
+		{"fixture", fixtureOutput(t)},
+		{"Render/16:9", render(composeSlidesDeck, press.Options{})},
+		{"Render/4:3", render(strings.Replace(composeSlidesDeck, "paginate: true\n", "paginate: true\nsize: 4:3\n", 1), press.Options{})},
+		{"Render/theme gaia", render(composeSlidesDeck, press.Options{Theme: "gaia"})},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			size, err := resolveSize(tc.out)
+			if err != nil {
+				t.Fatalf("resolveSize: %v", err)
+			}
+			sum := sha256.Sum256([]byte(composeDocument(tc.out, size)))
+			if got, want := hex.EncodeToString(sum[:]), composeSlidesGolden[tc.key]; got != want {
+				t.Errorf("slides composeDocument changed: sha256 %s, golden %s", got, want)
+			}
+		})
+	}
+}
+
+// pageAtRuleRE captures one `@page { ... }` body; the composed document's
+// @page rules are flat (no nested margin boxes).
+var pageAtRuleRE = regexp.MustCompile(`@page\s*\{([^{}]*)\}`)
+
+// pageDecls returns the declarations of each @page rule in css, in order.
+func pageDecls(css string) []map[string]string {
+	var out []map[string]string
+	for _, m := range pageAtRuleRE.FindAllStringSubmatch(css, -1) {
+		decls := map[string]string{}
+		for _, d := range strings.Split(m[1], ";") {
+			if name, value, ok := strings.Cut(d, ":"); ok {
+				decls[strings.TrimSpace(name)] = strings.TrimSpace(value)
+			}
+		}
+		out = append(out, decls)
+	}
+	return out
+}
+
+// styleOf returns the text of the composed document's one <style> element.
+func styleOf(t *testing.T, doc string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(doc, "<style>")
+	if !ok {
+		t.Fatalf("composed document has no <style>")
+	}
+	css, _, ok := strings.Cut(rest, "</style>")
+	if !ok {
+		t.Fatalf("composed document's <style> is not closed")
+	}
+	return css
+}
+
+// TestComposeDocumentPagedKeepsPageMargin: for a paged Output, the @page rule
+// the composer appends after the packed CSS states the paper SIZE and nothing
+// else, so the scaffold's `@page { margin: 20mm 0; }` is the margin that applies.
+func TestComposeDocumentPagedKeepsPageMargin(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		directives string
+		size       string
+	}{
+		{"A4", "", "8.271in 11.698in"},
+		{"letter", "---\nsize: letter\n---\n\n", "8.5in 11in"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := press.Render(tc.directives+"# Report\n\nBody.\n", press.Options{Profile: "paged"})
+			if err != nil {
+				t.Fatalf("press.Render: %v", err)
+			}
+			size, err := resolveSize(out)
+			if err != nil {
+				t.Fatalf("resolveSize: %v", err)
+			}
+			css := styleOf(t, composeDocument(out, size))
+			appended, ok := strings.CutPrefix(css, chrome.ComposeCSS(out.CSS))
+			if !ok {
+				t.Fatalf("composed CSS does not start with ComposeCSS(out.CSS)")
+			}
+
+			sized := false
+			for _, d := range pageDecls(appended) {
+				if m, ok := d["margin"]; ok {
+					t.Errorf("the composer's @page re-states margin: %s; it must leave the scaffold's page margin alone", m)
+				}
+				if d["size"] == tc.size {
+					sized = true
+				}
+			}
+			if !sized {
+				t.Errorf("no appended @page states size: %s (appended: %q)", tc.size, appended)
+			}
+
+			effective := ""
+			for _, d := range pageDecls(css) {
+				if m, ok := d["margin"]; ok {
+					effective = m
+				}
+			}
+			if effective != "20mm 0" {
+				t.Errorf("effective @page margin = %q, want %q (the paged scaffold's)", effective, "20mm 0")
+			}
+		})
+	}
+}
+
+// TestPrintMedia: a profile without an SVG layer (paged) prints under print
+// media, so its @media print rules (page breaks, the zeroed vertical padding)
+// apply; slides keep the screen media every slides export has always used.
+func TestPrintMedia(t *testing.T) {
+	for _, tc := range []struct {
+		profile string
+		want    bool
+	}{
+		{"paged", true},
+		{"slides", false},
+		{"", false},
+		{"epub", false},
+	} {
+		if got := printMedia(press.Output{Profile: tc.profile}); got != tc.want {
+			t.Errorf("printMedia(%q) = %v, want %v", tc.profile, got, tc.want)
+		}
 	}
 }
 

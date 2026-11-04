@@ -28,6 +28,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"strconv"
+	"strings"
 
 	"github.com/chromedp/chromedp"
 
@@ -61,6 +62,12 @@ type Options struct {
 	// carries whichever mode press.Render produced it in) -- it only tells
 	// ToImages which selector shape to use when addressing each slide's
 	// <section> for its Screenshot call.
+	//
+	// It is a hint, never an override of what the profile and the markup say. A
+	// profile with no SVG layer (paged) is always addressed as direct children
+	// of its container, so true there is harmless; and a slides Output whose
+	// markup carries the <svg> wrapper (every press.Render slides output does)
+	// is addressed through it even when this is false.
 	InlineSVG bool
 }
 
@@ -103,13 +110,10 @@ func ToImages(sess *chrome.Session, out press.Output, opts Options) ([][]byte, e
 		return nil, fmt.Errorf("convert/png: ToImages: %w", err)
 	}
 
-	base := p.Container(false) // always "div.marpit" -- the one physical root both modes hang off of.
-	unit := p.UnitElement()    // "section"
-
 	images := make([][]byte, 0, n)
 	for i := 0; i < n; i++ {
 		k := i + 1 // CSS nth-of-type is 1-based; Model.Sections is 0-based.
-		sel := slideSelector(base, unit, opts.InlineSVG, k)
+		sel := unitSelector(p, out, opts, k)
 
 		var buf []byte
 		if err := chromedp.Run(tab, chromedp.Screenshot(sel, &buf, chromedp.ByQuery)); err != nil {
@@ -161,16 +165,36 @@ func resolveProfileSize(out press.Output) (profile.Profile, theme.Size, error) {
 			out.Profile, out.Profile)
 	}
 
-	table := p.Sizes()
-	size := table.Default
+	// The ONE size resolver (directive -> the profile's table -> its default),
+	// shared with the CSS packer and convert/pdf so the page box the stylesheet
+	// declares and the viewport captured here cannot disagree.
+	var directives map[string]string
 	if out.Model != nil {
-		if name := out.Model.Meta.Directives["size"]; name != "" {
-			if sz, ok := table.ByName[name]; ok {
-				size = sz
-			}
-		}
+		directives = out.Model.Meta.Directives
 	}
-	return p, size, nil
+	return p, profile.ResolveSize(p, directives), nil
+}
+
+// inlineSVGSlideTag is the start of the per-slide wrapper chase/markdown's
+// inline-SVG mode emits (inlinesvg.go's wrapBaseSvg), used to tell from the
+// markup itself which container mode an Output was rendered in.
+const inlineSVGSlideTag = "<svg data-marpit-svg"
+
+// unitSelector builds the chromedp.ByQuery selector for the k-th unit of out
+// under profile p. The shape comes from the profile and the markup, with
+// opts.InlineSVG only a hint (see Options.InlineSVG):
+//
+//   - a profile with no inline-SVG layer (paged: p.Container(true) ==
+//     p.Container(false)) is never SVG-wrapped, so its units are direct children
+//     of the container whatever the caller passed;
+//   - a profile with one (slides) is addressed through the wrapper when the
+//     caller says so OR the markup carries it.
+func unitSelector(p profile.Profile, out press.Output, opts Options, k int) string {
+	wrapped := profile.UsesInlineSVG(p) &&
+		(opts.InlineSVG || strings.Contains(out.HTML, inlineSVGSlideTag))
+	// Container(false) is the one physical root both modes hang off of
+	// ("div.marpit", "div.edenpress-paged").
+	return slideSelector(p.Container(false), p.UnitElement(), wrapped, k)
 }
 
 // slideSelector builds the k-th slide's chromedp.ByQuery (querySelector)

@@ -100,6 +100,27 @@ type Profile interface {
 	Scaffold(inlineSVG bool) string
 }
 
+// DefaultThemer is an OPTIONAL interface a Profile may also implement, to name
+// the theme a document gets when it names none itself. It is not part of
+// Profile, so existing profiles keep compiling; a renderer checks for it by
+// type assertion (press does, in its theme packing):
+//
+//	if dt, ok := p.(profile.DefaultThemer); ok { name, css := dt.DefaultTheme() }
+//
+// DefaultTheme returns the theme's name and its CSS text. The CSS must name
+// itself with a leading `@theme <name>` comment, as every theme does
+// (chase/theme.Load enforces it), and that name must equal the name returned.
+// The renderer registers it BEFORE any caller-supplied theme, so a caller theme
+// of the same name replaces it, and an explicit theme choice (an option or the
+// document's `theme` directive) always wins over it.
+//
+// profiles/paged implements it with a document theme (an 11pt body), because
+// the bundled Marp themes are slide themes; profiles/slides does not, and keeps
+// the Marp `default` theme.
+type DefaultThemer interface {
+	DefaultTheme() (name, css string)
+}
+
 // SizeTable is a profile's named-size table plus its default size —
 // e.g. slides' {"4:3": ..., "16:9": ...} with Default set to the
 // "16:9" entry. It reuses chase/theme.Size (the existing
@@ -126,4 +147,37 @@ type SizeTable struct {
 type PaginationRule struct {
 	Selector    string
 	ContentExpr string
+}
+
+// ResolveSize returns the size a document renders at under p: the document's
+// `size` directive looked up in p's own size table, or the table's Default when
+// the directive is absent, empty, or names a size p does not define.
+//
+// It is the ONE resolver. The CSS packer (press), the PNG exporter and the PDF
+// exporter all call it, so the page box the stylesheet declares and the viewport
+// and @page size the exporters capture at come from the same table and cannot
+// disagree. directives is the document's resolved front-matter directive map
+// (model.Meta.Directives); nil is fine.
+func ResolveSize(p Profile, directives map[string]string) theme.Size {
+	table := p.Sizes()
+	if name := directives["size"]; name != "" {
+		if sz, ok := table.ByName[name]; ok {
+			return sz
+		}
+	}
+	return table.Default
+}
+
+// UsesInlineSVG reports whether p lays its units out inside an inline-SVG layer
+// (Marpit's <svg><foreignObject> wrapper, which scales a fixed-aspect slide to
+// any viewport). A profile does exactly when its two container chains differ:
+// Container(true) is the SVG chain, Container(false) the plain one. A profile
+// whose chains are equal (paged, whose pages are physical paper) has no SVG
+// layer, and a renderer must not wrap its units in one -- the packed CSS is
+// scoped to the one chain, so a wrapper would put every unit outside it.
+//
+// Decided by comparing the chains rather than by a new Profile method, so the
+// interface other profiles implement does not change.
+func UsesInlineSVG(p Profile) bool {
+	return p.Container(true) != p.Container(false)
 }

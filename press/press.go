@@ -47,10 +47,11 @@ import (
 )
 
 // defaultThemeName is the terminal fallback in press.Render's theme-resolution
-// chain (opts.Theme -> front-matter theme: -> "default"). press deliberately
-// deviates from chase/chase.go's scaffold-only default to match Marp Core,
-// whose own default deck theme is the bundled "default" theme -- not a bare
-// scaffold (03-RESEARCH Open Question #2, RESOLVED).
+// chain (opts.Theme -> front-matter theme: -> the profile's default theme ->
+// "default"), which is what slides, supplying no default theme, gets. press
+// deliberately deviates from chase/chase.go's scaffold-only default to match
+// Marp Core, whose own default deck theme is the bundled "default" theme -- not
+// a bare scaffold (03-RESEARCH Open Question #2, RESOLVED).
 const defaultThemeName = "default"
 
 // parseWithEngine is the seam's one-parse entrypoint, held in a package-level
@@ -58,10 +59,11 @@ const defaultThemeName = "default"
 // press_test.go's TestOneParseInvariant wraps this with a call counter to prove
 // Render invokes it EXACTLY once (03-09 must_haves: "calling
 // chase/markdown.ParseWithEngine EXACTLY ONCE"). Production behavior is
-// identical to calling markdown.ParseWithEngine directly -- the indirection is
-// the idiomatic Go way to make a package-function call countable without a
-// mock framework.
-var parseWithEngine = markdown.ParseWithEngine
+// identical to calling markdown.ParseWithEngineSVG directly -- the indirection
+// is the idiomatic Go way to make a package-function call countable without a
+// mock framework. The third argument is the inline-SVG decision, made per
+// profile (see Render step 3).
+var parseWithEngine = markdown.ParseWithEngineSVG
 
 // Render is the PUBLIC one-parse-two-sinks composition (API-01): it wires every
 // press battery (03-03 strikethrough, 03-04 emoji, 03-05 highlight, 03-06 math,
@@ -96,8 +98,15 @@ func Render(md string, opts Options) (Output, error) {
 	engine := markdown.NewEngine(pressExtraOpts(opts, p)...)
 
 	// 3. THE ONE PARSE -- via the seam, using the caller's battery engine.
+	//    Whether each section is wrapped in <svg><foreignObject> is the
+	//    PROFILE's call, not the seam's: slides (Container(true) differs from
+	//    Container(false)) is wrapped, so the viewer can scale a fixed-aspect
+	//    slide; paged (one container chain, physical pages of a fixed width) is not,
+	//    because its stylesheet is scoped to "div.edenpress-paged > section" and
+	//    a wrapper would put every page outside that chain, so no page-box rule
+	//    would match (D15).
 	source := []byte(md)
-	doc, pc := parseWithEngine(md, engine)
+	doc, pc := parseWithEngine(md, engine, profile.UsesInlineSVG(p))
 
 	// 4. Sink 1: HTML, rendered from the SAME finalized doc by the SAME
 	//    engine's renderer (never a second parse / md.Convert), then the
@@ -128,7 +137,8 @@ func Render(md string, opts Options) (Output, error) {
 	}
 
 	// 7. Pack CSS from the embedded ThemeSet, theme resolved
-	//    opts.Theme -> front-matter theme: -> "default".
+	//    opts.Theme -> front-matter theme: -> the profile's default theme
+	//    (paged: "document") -> "default".
 	css, err := packThemeCSS(p, pc, m.Meta, opts)
 	if err != nil {
 		return Output{}, err
@@ -234,17 +244,30 @@ func pressExtraOpts(opts Options, p profile.Profile) []goldmark.Option {
 // user/front-matter/default NAMED theme rather than the bare scaffold identity.
 //
 // The theme name resolves in the fixed order opts.Theme -> Meta.Directives
-// ["theme"] (the deck's own front-matter theme: directive) -> defaultThemeName.
+// ["theme"] (the deck's own front-matter theme: directive) -> the profile's own
+// default theme (profile.DefaultThemer; registered before opts.ThemeCSS, so a
+// caller theme of the same name replaces it) -> defaultThemeName.
 // The ThemeSet is built once from the active profile's unit element + scaffold /
 // advanced-background CSS + bare-@size fallback table (press/themes.ThemeSet).
 //
-// inlineSVG is derived from pc (svgEnabled) OR'd with opts.InlineSVG: the seam's
-// ParseWithEngine unconditionally enables inline-SVG mode, so the rendered HTML
-// ALWAYS carries the <svg><foreignObject> wrapper -- the packed CSS must match
-// that container chain, so it is packed InlineSVG=true to stay consistent (a
-// non-SVG pack would scope theme rules onto div.marpit and mis-target the
-// SVG-wrapped sections). This mirrors chase/chase.go's packCSS, which likewise
-// reads inline-SVG mode from pc rather than trusting a caller flag.
+// inlineSVG is derived from pc (svgEnabled) OR'd with opts.InlineSVG, for a
+// profile that has an inline-SVG layer (slides): Render enables inline-SVG mode
+// for it, so the rendered HTML ALWAYS carries the <svg><foreignObject> wrapper
+// and the packed CSS must match that container chain, so it is packed
+// InlineSVG=true to stay consistent (a non-SVG pack would scope theme rules onto
+// div.marpit and mis-target the SVG-wrapped sections). This mirrors
+// chase/chase.go's packCSS, which likewise reads inline-SVG mode from pc rather
+// than trusting a caller flag.
+//
+// A profile with a single container chain (paged) never has an SVG layer:
+// opts.InlineSVG does not turn one on, and its page geometry is stated here. The
+// packed theme carries the theme's own section size (the bundled themes are
+// 1280x720 slide themes), so the profile's page rules (pageFlowRules: the page
+// width, a content-driven height with the page height as its on-screen minimum,
+// and the print padding) are appended LAST -- same selector, later in the
+// cascade -- and win. The size is profile.ResolveSize(directive "size" -> the
+// profile's table -> its default), the same resolver convert/png and convert/pdf
+// capture at.
 func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Options) (string, error) {
 	scaffoldCSS := p.Scaffold(false)
 	// Recover the advanced-background CSS suffix the same way chase/chase.go's
@@ -257,6 +280,15 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 		p.Container(false), p.Container(true))
 	if err != nil {
 		return "", fmt.Errorf("press: Render: build theme set: %w", err)
+	}
+
+	// The profile's own default theme, when it supplies one (D17: paged's
+	// `document` theme). Registered BEFORE the caller's themes, so a caller
+	// theme of the same name (AODex names a synthesized theme after its row,
+	// so a row called "Document" is `document`) replaces it.
+	profileTheme, err := registerProfileTheme(ts, p)
+	if err != nil {
+		return "", err
 	}
 
 	// Register any caller-supplied custom themes (opts.ThemeCSS, TRD 04-01)
@@ -275,20 +307,71 @@ func packThemeCSS(p profile.Profile, pc parser.Context, meta model.Meta, opts Op
 		ts.Add(th) // registered under th.Name (= the block's own @theme name)
 	}
 
-	name := resolveThemeName(opts.Theme, meta)
-	inlineSVG := svgEnabled(pc) || opts.InlineSVG
+	name := resolveThemeName(opts.Theme, meta, profileTheme)
+	hasSVGLayer := profile.UsesInlineSVG(p)
+	inlineSVG := hasSVGLayer && (svgEnabled(pc) || opts.InlineSVG)
 	css, err := ts.Pack(name, theme.PackOptions{InlineSVG: inlineSVG})
 	if err != nil {
 		return "", fmt.Errorf("press: Render: pack theme %q: %w", name, err)
 	}
+	if !hasSVGLayer {
+		css += "\n" + pageFlowRules(p, profile.ResolveSize(p, meta.Directives))
+	}
 	return css, nil
 }
 
+// pageFlowRules are the unit rules that give every page the resolved physical
+// size while letting a long page flow (D16), scoped exactly as the packer scopes
+// the unit's own rules: the profile's container chain, a child combinator, the
+// unit element. They come AFTER the theme, so they win over its slide geometry.
+//
+//   - The page is the profile's width, and its height follows its content:
+//     `height: auto` beats the theme's fixed (720px slide) height, and nothing
+//     hides its overflow, so no content is clipped.
+//   - On screen (the PNG export and any preview) the page height is a MINIMUM,
+//     so a short or empty section is still one whole page and a long one is one
+//     tall page.
+//   - In print (the PDF export) a long section breaks across as many pages as it
+//     needs. The vertical page margin is the profile's @page margin, which
+//     applies to every page including continuation pages, so the section drops
+//     its own top and bottom padding there. There is deliberately no minimum
+//     height in print: a page-height minimum spills one blank page per
+//     document, and a forced break already gives an empty section its own page.
+func pageFlowRules(p profile.Profile, size theme.Size) string {
+	unit := p.Container(false) + " > " + p.UnitElement()
+	return fmt.Sprintf("%s { width: %dpx; height: auto; overflow: visible; }\n", unit, size.WidthPx) +
+		fmt.Sprintf("@media screen { %s { min-height: %dpx; } }\n", unit, size.HeightPx) +
+		fmt.Sprintf("@media print { %s { padding-top: 0; padding-bottom: 0; } }", unit)
+}
+
+// registerProfileTheme loads p's default theme into ts when p supplies one
+// (the optional profile.DefaultThemer), through the same theme.Load + Add path
+// every other theme takes, and returns its name; it returns "" for a profile
+// without one (slides).
+func registerProfileTheme(ts *theme.ThemeSet, p profile.Profile) (string, error) {
+	dt, ok := p.(profile.DefaultThemer)
+	if !ok {
+		return "", nil
+	}
+	name, css := dt.DefaultTheme()
+	th, err := theme.Load(css, p.UnitElement(), p.Sizes().ByName)
+	if err != nil {
+		return "", fmt.Errorf("press: Render: load profile %q default theme: %w", p.ID(), err)
+	}
+	if th.Name != name {
+		return "", fmt.Errorf("press: Render: profile %q default theme %q names itself %q", p.ID(), name, th.Name)
+	}
+	ts.Add(th)
+	return name, nil
+}
+
 // resolveThemeName applies the fixed fallback chain opts.Theme -> front-matter
-// theme: (Meta.Directives["theme"]) -> defaultThemeName. A non-empty opts.Theme
-// overrides the front matter; absent both, the bundled "default" theme is used
-// (NOT the bare scaffold -- press matches Marp Core's default-deck behavior).
-func resolveThemeName(optTheme string, meta model.Meta) string {
+// theme: (Meta.Directives["theme"]) -> the profile's own default theme ->
+// defaultThemeName. A non-empty opts.Theme overrides the front matter; absent
+// both, a profile that supplies a default theme (paged: `document`) gets it,
+// and any other profile gets the bundled "default" theme (NOT the bare
+// scaffold -- press matches Marp Core's default-deck behavior for slides).
+func resolveThemeName(optTheme string, meta model.Meta, profileTheme string) string {
 	if optTheme != "" {
 		return optTheme
 	}
@@ -296,6 +379,9 @@ func resolveThemeName(optTheme string, meta model.Meta) string {
 		if fm := meta.Directives["theme"]; fm != "" {
 			return fm
 		}
+	}
+	if profileTheme != "" {
+		return profileTheme
 	}
 	return defaultThemeName
 }
