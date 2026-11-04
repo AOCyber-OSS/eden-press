@@ -799,3 +799,201 @@ func TestRenderModelConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// --- 12. formatted table cells (TRD 1026-28) --------------------------------------------------------------
+
+// cellRun is a one-run cell entry.
+func cellRun(text string, marks ...string) []model.TextRun {
+	return []model.TextRun{{Text: text, Marks: marks}}
+}
+
+// formattedCellTable is a table whose cells carry runs: a bold header, a code
+// cell, an italic cell, an https link, a javascript: link and hostile text
+// inside a styled and an unstyled cell. Its flat text (Headers/Rows) is what
+// the runs flatten to, as the canonical form requires.
+func formattedCellTable() model.Block {
+	return model.Block{
+		Kind:    model.BlockTable,
+		Headers: []string{"Metric", "Q3", "Where"},
+		Rows: [][]string{
+			{"p95", "550ms", "docs"},
+			{"bad", "<script>alert(2)</script>", "<script>alert(3)</script>"},
+			{"plain", "row", "here"},
+		},
+		HeaderRuns: [][]model.TextRun{cellRun("Metric", "bold"), nil, nil},
+		RowRuns: [][][]model.TextRun{
+			{cellRun("p95", "italic"), cellRun("550ms", "code"), {{Text: "docs", Link: "https://e.test/docs?a=1&b=2"}}},
+			{{{Text: "bad", Link: "javascript:alert(1)"}}, nil, cellRun("<script>alert(3)</script>", "bold")},
+			nil, // a plain row
+		},
+	}
+}
+
+// plainCellTable is formattedCellTable without its runs: the document a Markdown
+// author of the same text would have, and the oracle for "formatting adds no text".
+func plainCellTable() model.Block {
+	bl := formattedCellTable()
+	bl.HeaderRuns, bl.RowRuns = nil, nil
+	return bl
+}
+
+func TestRenderModelFormattedTableCells(t *testing.T) {
+	for _, profile := range []string{"paged", "slides"} {
+		t.Run(profile, func(t *testing.T) {
+			secs := func(tbl model.Block) *model.Document {
+				return docOf(nil,
+					[]model.Block{head(1, "One"), para("before")},
+					[]model.Block{head(2, "Two"), tbl, para("after")},
+					[]model.Block{para("last")},
+				)
+			}
+			opts := Options{Profile: profile}
+			got := mustRenderModel(t, secs(formattedCellTable()), opts)
+			plain := mustRenderModel(t, secs(plainCellTable()), opts)
+
+			us := unitsOf(got.HTML)
+			if len(us) != 3 {
+				t.Fatalf("units = %d, want 3 (one per section):\n%s", len(us), got.HTML)
+			}
+			if got.CSS != plain.CSS {
+				t.Errorf("CSS differs from the plain-table document's (len %d vs %d)", len(got.CSS), len(plain.CSS))
+			}
+			tbl := us[1]
+
+			// Formatting shows inside the cell it belongs to.
+			for _, want := range []string{
+				`<th><strong>Metric</strong></th>`,
+				`<th>Q3</th>`,
+				`<td><em>p95</em></td>`,
+				`<td><code>550ms</code></td>`,
+				`<td><a href="https://e.test/docs?a=1&amp;b=2">docs</a></td>`,
+				`<tr><td>plain</td><td>row</td><td>here</td></tr>`,
+			} {
+				if !strings.Contains(tbl, want) {
+					t.Errorf("table missing %q:\n%s", want, tbl)
+				}
+			}
+			// The same table with no runs has none of it.
+			for _, tag := range []string{"<strong>", "<em>", "<code>", "<a "} {
+				if strings.Contains(unitsOf(plain.HTML)[1], tag) {
+					t.Errorf("plain-table document unexpectedly contains %q", tag)
+				}
+			}
+
+			// Hostile content: the javascript: link keeps its text and loses its
+			// href; script text stays text, in a styled and an unstyled cell.
+			if strings.Contains(got.HTML, "javascript:") || strings.Contains(got.HTML, "<script") {
+				t.Errorf("active content survived:\n%s", tbl)
+			}
+			if !strings.Contains(tbl, `<td>bad</td>`) && !strings.Contains(tbl, `<td><a>bad</a></td>`) {
+				t.Errorf("the javascript: link cell should keep its text and drop its href:\n%s", tbl)
+			}
+			for _, want := range []string{
+				`<td>&lt;script&gt;alert(2)&lt;/script&gt;</td>`,
+				`<td><strong>&lt;script&gt;alert(3)&lt;/script&gt;</strong></td>`,
+			} {
+				if !strings.Contains(tbl, want) {
+					t.Errorf("table missing escaped text %q:\n%s", want, tbl)
+				}
+			}
+
+			// Styling adds no words: every unit's visible text equals the plain
+			// document's.
+			pus := unitsOf(plain.HTML)
+			for i := range us {
+				if textOf(us[i]) != textOf(pus[i]) {
+					t.Errorf("unit %d text differs from the plain-table document's:\n got:  %q\n want: %q", i+1, textOf(us[i]), textOf(pus[i]))
+				}
+			}
+			// The Model the caller gets back keeps the runs (it is the input, validated).
+			var found bool
+			for _, bl := range got.Model.Sections[1].Blocks {
+				if bl.Kind == model.BlockTable && len(bl.RowRuns) > 0 && len(bl.HeaderRuns) > 0 {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("Output.Model lost the table's cell runs")
+			}
+		})
+	}
+}
+
+// TestRenderModelFormattedCellsOutOfRangeRuns: RenderModelJSON renders documents
+// it did not author, so runs arrays that do not line up with the cells must
+// render plain cells and never panic.
+func TestRenderModelFormattedCellsOutOfRangeRuns(t *testing.T) {
+	doc := docOf(nil, []model.Block{{
+		Kind:       model.BlockTable,
+		Headers:    []string{"H"},
+		Rows:       [][]string{{"a", "b"}, {"c"}},
+		HeaderRuns: [][]model.TextRun{cellRun("H", "bold"), cellRun("ghost", "bold")},
+		RowRuns:    [][][]model.TextRun{{cellRun("a", "code")}, nil, {cellRun("ghost", "code")}},
+	}})
+	for _, profile := range []string{"paged", "slides"} {
+		out, err := RenderModel(doc, Options{Profile: profile})
+		if err != nil {
+			t.Fatalf("%s: %v", profile, err)
+		}
+		if strings.Contains(out.HTML, "ghost") {
+			t.Errorf("%s: a runs entry past the last cell rendered:\n%s", profile, out.HTML)
+		}
+		for _, want := range []string{`<th><strong>H</strong></th>`, `<td><code>a</code></td>`, `<td>b</td>`, `<td>c</td>`} {
+			if !strings.Contains(out.HTML, want) {
+				t.Errorf("%s: missing %q:\n%s", profile, want, out.HTML)
+			}
+		}
+	}
+}
+
+// TestRenderModelJSONFormattedCells: the JSON entry point (the AODex export
+// path) renders the cell runs a stored document carries.
+func TestRenderModelJSONFormattedCells(t *testing.T) {
+	raw, err := json.Marshal(docOf(nil, []model.Block{formattedCellTable()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"headerRuns":[[{"text":"Metric","marks":["bold"]}],null,null]`, `"rowRuns":[`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("test document lost its wire form %q: %s", want, raw)
+		}
+	}
+	out, err := RenderModelJSON(raw, Options{Profile: "paged"})
+	if err != nil {
+		t.Fatalf("RenderModelJSON: %v", err)
+	}
+	for _, want := range []string{`<th><strong>Metric</strong></th>`, `<td><code>550ms</code></td>`} {
+		if !strings.Contains(out.HTML, want) {
+			t.Errorf("JSON render missing %q:\n%s", want, out.HTML)
+		}
+	}
+}
+
+// TestRenderStaysPlainForMarkdownTables: press.Render's Model comes from
+// model.Build, which has never produced cell runs and still does not. A
+// formatted Markdown cell is flattened to its text there; the formatted form
+// is the docmodel codec's (FromMarkdown), not Build's.
+func TestRenderStaysPlainForMarkdownTables(t *testing.T) {
+	out, err := Render("| **b** |\n|---|\n| `c` |\n", Options{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var tables int
+	for _, sec := range out.Model.Sections {
+		for _, bl := range sec.Blocks {
+			if bl.Kind != model.BlockTable {
+				continue
+			}
+			tables++
+			if bl.HeaderRuns != nil || bl.RowRuns != nil {
+				t.Errorf("Build emitted cell runs: headerRuns=%v rowRuns=%v", bl.HeaderRuns, bl.RowRuns)
+			}
+			if !reflect.DeepEqual(bl.Headers, []string{"b"}) || !reflect.DeepEqual(bl.Rows, [][]string{{"c"}}) {
+				t.Errorf("flattened cells = %q / %q, want [b] / [[c]]", bl.Headers, bl.Rows)
+			}
+		}
+	}
+	if tables != 1 {
+		t.Errorf("tables in Output.Model = %d, want 1", tables)
+	}
+}

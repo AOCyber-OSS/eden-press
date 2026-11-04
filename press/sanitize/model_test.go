@@ -51,6 +51,12 @@ var v7Fragments = []struct {
 	{"sheet", `<div class="sheet-embed"><header>Tasks</header><table><tr><td>6</td></tr></table></div>`,
 		[]string{`class="sheet-embed"`, `<header>Tasks</header>`, `<td>6</td>`}},
 	{"divider", `<hr/>`, []string{`<hr`}},
+	// BlockHTML writes a styled table cell's runs inside <th>/<td> (TRD 1026-28).
+	{"table with formatted cells", `<table>` +
+		`<thead><tr><th><strong>Metric</strong></th><th>Q3</th></tr></thead>` +
+		`<tbody><tr><td><em>p95</em></td><td><code>a|b</code></td><td><s>old</s></td><td><a href="https://e.test/d?a=1&amp;b=2">docs</a></td></tr></tbody></table>`,
+		[]string{`<th><strong>Metric</strong></th>`, `<td><em>p95</em></td>`, `<td><code>a|b</code></td>`, `<td><s>old</s></td>`,
+			`<td><a href="https://e.test/d?a=1&amp;b=2">docs</a></td>`}},
 	{"figure svg", `<figure class="figure"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50" width="100" height="50">` +
 		`<defs><linearGradient id="g1" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#d4a853"/></linearGradient></defs>` +
 		`<g transform="translate(2 2)"><rect x="1" y="2" width="30" height="20" rx="3" fill="url(#g1)" stroke="#000" stroke-width="2"/>` +
@@ -111,6 +117,11 @@ func TestModelPolicyStripsActiveContent(t *testing.T) {
 		{"input cannot change form target",
 			`<input type="checkbox" formaction="https://evil.test" form="f" disabled>`,
 			[]string{"formaction", "evil.test", "form="}, []string{`type="checkbox"`}},
+		{"table cell link scheme and text",
+			`<table><tbody><tr><td><a href="javascript:alert(1)"><strong>x</strong></a></td><td><a href="https://e.test/y">y</a></td>` +
+				`<td>&lt;script&gt;alert(2)&lt;/script&gt;</td><td><code onclick="alert(3)">z</code></td></tr></tbody></table>`,
+			[]string{"javascript", "<script", "onclick", "alert(1)", "alert(3)"},
+			[]string{`<td><strong>x</strong></td>`, `<a href="https://e.test/y">y</a>`, `&lt;script&gt;alert(2)&lt;/script&gt;`, `<td><code>z</code></td>`}},
 		{"aside link scheme",
 			`<aside class="callout"><a href="javascript:alert(1)">x</a><a href="data:text/html,<script>1</script>">y</a></aside>`,
 			[]string{"javascript", "<script"}, []string{`<aside class="callout">`}},
