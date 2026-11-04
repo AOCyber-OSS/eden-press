@@ -284,7 +284,9 @@ func TestCodecTableRunsRefusalsAreUnchanged(t *testing.T) {
 		{"image", "| a |\n| --- |\n| ![a](b) |\n", "inline-image", "![a]"},
 		{"link_title", "| a |\n| --- |\n| [l](u \"t\") |\n", "link-title", "[l]"},
 		{"empty_link", "| a |\n| --- |\n| [](u) |\n", "empty-link", "[]("},
-		{"unclosed_mark_tag", "| a |\n| --- |\n| <strong>x |\n", "raw-html", "<strong>"},
+		// An unclosed tag is reported where its container starts: here the cell (the
+		// space after its pipe), as a paragraph's is at the paragraph's start.
+		{"unclosed_mark_tag", "| a |\n| --- |\n| <strong>x |\n", "raw-html", " <strong>x"},
 		{"inline_display_math", "| a |\n| --- |\n| $$x$$ |\n", "inline-display-math", "$$x$$"},
 	}
 	for _, tc := range cases {

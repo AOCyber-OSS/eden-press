@@ -32,6 +32,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark/ast"
+	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -62,14 +63,24 @@ import (
 //   - a code fence is one backtick longer than any backtick run inside the
 //     code, and the code between the fences is exactly Block.Text: a trailing
 //     newline in Text is a blank line before the closing fence;
-//   - display math is `$$`, TeX, `$$` on separate lines with nothing added.
+//   - display math is `$$`, TeX, `$$` on separate lines with nothing added;
+//   - a table cell is its runs when the block has HeaderRuns/RowRuns for it, and
+//     its plain text otherwise. Runs are written exactly as in a paragraph
+//     (delimiters, or tags where a delimiter would not read back), checked by
+//     reading the cell back inside a one-column table. Every `|` is escaped: `\|` in
+//     text, in a link destination, in a code span (GFM un-escapes a code span's
+//     pipe before it parses the span) and in math TeX (the reader does the same
+//     for TeX inside a cell, so TeX `a|b` is `$a\|b$` there, and TeX `a\|b` is
+//     `$a\\|b$`).
 //
 // Identity holds for Documents in canonical form (see canonRuns and FromMarkdown):
 // styled runs have no edge whitespace and no two neighbours share marks and
 // link; a list starts at level 0 and never skips a level; Section IDs are 1..n;
 // text never starts or ends with a newline or contains a blank line; a paragraph
 // is never only one image or only inline math (those are image and math blocks);
-// a math run is not followed by a digit; display math TeX holds no unescaped "$$"
+// a math run is not followed by a digit; a table's cell runs are in the canonical
+// form EnsureTextRunsInvariant gives them (a plain cell is nil, no run holds a
+// newline) and every row has as many cells as the header; display math TeX holds no unescaped "$$"
 // and inline math TeX no unescaped "$" (TeX reserves it; write \$); a todo's child
 // list does not end in an empty item while more children follow it (goldmark closes
 // the todo there); and a Document has at least one Section. ToMarkdown still writes
@@ -263,7 +274,7 @@ func renderBlock(doc *Document, bl Block, flip bool) string {
 	case BlockList:
 		return renderList(bl, flip)
 	case BlockTable:
-		return renderTable(bl.Headers, bl.Aligns, bl.Rows)
+		return renderTable(bl)
 	case BlockImage:
 		return renderImage(bl.Text, bl.Src, bl.Title)
 	case BlockDivider:
@@ -547,9 +558,11 @@ func renderList(bl Block, flip bool) string {
 
 // ---- tables ----
 
-// renderTable writes a GFM table. Cell text is plain text, so it is escaped
-// (pipes included); a "left" alignment is written explicitly as `:---`.
-func renderTable(headers, aligns []string, rows [][]string) string {
+// renderTable writes a GFM table. A cell is its runs when it has them and its
+// plain text otherwise, written in the cell inline mode, so every pipe is
+// escaped; a "left" alignment is written explicitly as `:---`.
+func renderTable(bl Block) string {
+	headers, aligns, rows := bl.Headers, bl.Aligns, bl.Rows
 	n := len(headers)
 	if n == 0 {
 		n = len(aligns)
@@ -563,7 +576,7 @@ func renderTable(headers, aligns []string, rows [][]string) string {
 	cells := make([]string, n)
 	for i := range cells {
 		if i < len(headers) {
-			cells[i] = cellText(headers[i])
+			cells[i] = cellText(headers[i], cellRunsAt(bl.HeaderRuns, i))
 		}
 	}
 	delim := make([]string, n)
@@ -584,10 +597,14 @@ func renderTable(headers, aligns []string, rows [][]string) string {
 		}
 	}
 	lines := []string{tableRow(cells), tableRow(delim)}
-	for _, row := range rows {
+	for r, row := range rows {
 		escaped := make([]string, len(row))
 		for i, c := range row {
-			escaped[i] = cellText(c)
+			var runs []TextRun
+			if r < len(bl.RowRuns) {
+				runs = cellRunsAt(bl.RowRuns[r], i)
+			}
+			escaped[i] = cellText(c, runs)
 		}
 		lines = append(lines, tableRow(escaped))
 	}
@@ -598,8 +615,21 @@ func tableRow(cells []string) string {
 	return "| " + strings.Join(cells, " | ") + " |"
 }
 
-func cellText(s string) string {
-	return padEdges(escapeInline(s, false, inlineFlat))
+// cellRunsAt is the runs of cell i of a row of runs, or nil for a plain cell.
+func cellRunsAt(runs [][]TextRun, i int) []TextRun {
+	if i < len(runs) {
+		return runs[i]
+	}
+	return nil
+}
+
+// cellText writes one cell: its runs when it has them (they win over text, as a
+// block's Runs do), else its plain text.
+func cellText(text string, runs []TextRun) string {
+	if len(runs) == 0 && text != "" {
+		runs = []TextRun{{Text: text}}
+	}
+	return renderRuns(runs, inlineCell)
 }
 
 // ---- images and links ----
@@ -826,8 +856,10 @@ const (
 	// inlineFlat renders text where block constructs cannot occur (heading,
 	// table cell, image alt text) and a newline cannot be written.
 	inlineFlat
-	// inlineCell renders the content of a table cell (TRD 26). RED stub: it takes
-	// the paragraph path until Task 1 GREEN gives it a meaning.
+	// inlineCell renders the content of a table cell. Like inlineFlat nothing
+	// line-leading is escaped and a newline cannot be written; in addition every
+	// `|` is escaped (`\|`), inside code spans, math and link destinations too,
+	// and the read-back check parses a one-column table instead of a heading.
 	inlineCell
 )
 
@@ -863,6 +895,9 @@ func hasEmphasis(runs []TextRun) bool {
 // readsBackAs reports whether out, read as the content of a paragraph (or, in
 // flat mode, of a heading), gives exactly the runs want.
 func readsBackAs(out string, want []TextRun, mode inlineMode) bool {
+	if mode == inlineCell {
+		return cellReadsBackAs(out, want)
+	}
 	src := out
 	if mode == inlineFlat {
 		src = "# " + out
@@ -878,6 +913,33 @@ func readsBackAs(out string, want []TextRun, mode inlineMode) bool {
 		return reflect.DeepEqual(r.inline(first), want)
 	}
 	return false
+}
+
+// cellReadsBackAs reports whether out, written as the only cell of a table's header
+// row, reads back as exactly one cell holding the runs want. Reading it inside a
+// table is the point: GFM splits a row at every unescaped pipe before it parses
+// any inline syntax, and un-escapes a pipe in a code span, so neither a paragraph
+// nor a heading read says what a cell does.
+func cellReadsBackAs(out string, want []TextRun) bool {
+	r := &mdReader{src: []byte("| " + out + " |\n| --- |\n"), lenient: true}
+	root := mdEngine.Parser().Parse(text.NewReader(r.src))
+	first := root.FirstChild()
+	if first == nil || first.NextSibling() != nil {
+		return false
+	}
+	tbl, ok := first.(*east.Table)
+	if !ok {
+		return false
+	}
+	head, ok := tbl.FirstChild().(*east.TableHeader)
+	if !ok || head.ChildCount() != 1 {
+		return false
+	}
+	cell, ok := head.FirstChild().(*east.TableCell)
+	if !ok {
+		return false
+	}
+	return reflect.DeepEqual(r.inline(cell), want)
 }
 
 // renderCanonRuns writes already-canonical runs. With tags set, bold, italic
@@ -901,7 +963,11 @@ func renderCanonRuns(runs []TextRun, mode inlineMode, tags bool) string {
 				// "![" would start an image.
 				out = out[:len(out)-1] + `\!`
 			}
-			out += "[" + inner.String() + "](" + linkDest(link) + ")"
+			dest := linkDest(link)
+			if mode == inlineCell {
+				dest = escapeCellPipes(dest)
+			}
+			out += "[" + inner.String() + "](" + dest + ")"
 		} else {
 			for _, r := range runs[i:j] {
 				out += renderMarked(r, atLine(), mode, tags)
@@ -921,8 +987,15 @@ func renderMarked(r TextRun, lineStart bool, mode inlineMode, tags bool) string 
 	switch {
 	case hasMark(r, "code"):
 		s = codeSpan(r.Text)
+		if mode == inlineCell {
+			s = escapeCellPipes(s)
+		}
 	case hasMark(r, "math"):
-		s = "$" + r.Text + "$"
+		tex := r.Text
+		if mode == inlineCell {
+			tex = escapeCellPipes(tex)
+		}
+		s = "$" + tex + "$"
 	default:
 		s = escapeInline(r.Text, lineStart && !wrapped, mode)
 	}
@@ -954,6 +1027,14 @@ func codeSpan(s string) string {
 		pad = " "
 	}
 	return delim + pad + s + pad + delim
+}
+
+// escapeCellPipes writes a backslash before every `|` of s, which is how a pipe is
+// spelled inside a table cell wherever the text is not escaped for Markdown:
+// code spans (GFM un-escapes the pipe before the code span is read), math (the
+// reader does the same, see cellTeX) and link destinations (a backslash escape).
+func escapeCellPipes(s string) string {
+	return strings.ReplaceAll(s, "|", `\|`)
 }
 
 // escapeInline backslash-escapes the characters of plain text that a Markdown

@@ -825,7 +825,7 @@ func (*mathInlineParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 				(after < len(line) && line[after] >= '0' && line[after] <= '9') {
 				return nil // as for $...$, padding, a stray $ or a digit right after means this is not math
 			}
-			node := &mathInlineNode{tex: string(tex), display: true}
+			node := &mathInlineNode{tex: cellTeX(parent, tex), display: true}
 			block.Advance(2 + idx + 2)
 			return node
 		}
@@ -842,12 +842,40 @@ func (*mathInlineParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 			if isMathSpace(line[j-1]) || (j+1 < len(line) && line[j+1] >= '0' && line[j+1] <= '9') {
 				continue
 			}
-			node := &mathInlineNode{tex: string(line[1:j])}
+			node := &mathInlineNode{tex: cellTeX(parent, line[1:j])}
 			block.Advance(j + 1)
 			return node
 		}
 	}
 	return nil
+}
+
+// cellTeX is the TeX a math node holds. In a table cell GFM reads `\|` as `|` in
+// every inline span, so a `|` in TeX is written `\|` there and read back the
+// same way; ToMarkdown writes a backslash before every `|` of a cell's TeX. TeX
+// that is itself `\|` is therefore spelled `\\|` (the first backslash is read as
+// itself, the second escapes the pipe). Outside a cell the TeX is read verbatim.
+func cellTeX(parent ast.Node, tex []byte) string {
+	if parent == nil || parent.Kind() != east.KindTableCell {
+		return string(tex)
+	}
+	return unescapeCellPipes(string(tex))
+}
+
+// unescapeCellPipes turns each `\|` of s into `|`, reading left to right, so
+// that any other backslash stays itself.
+func unescapeCellPipes(s string) string {
+	if !strings.Contains(s, `\|`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '|' {
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // indexDoubleDollar is the index of the first "$$" in s that is not escaped by a
@@ -1020,44 +1048,48 @@ func (r *mdReader) plainText(n ast.Node) string {
 	return strings.Join(parts, "\n")
 }
 
+// table reads a GFM table. A cell is read through the inline walker, the one a
+// paragraph uses, so a cell holds bold, italic, strike, code, inline math, links
+// and autolinks and refuses exactly what a paragraph refuses (AODex D14). The
+// cells' text goes to Headers and Rows; the runs of a styled cell go to
+// HeaderRuns and RowRuns, put in the canonical form the model defines (a plain
+// cell is null, a table with no styled cell has neither field).
 func (r *mdReader) table(t *east.Table) Block {
 	bl := Block{Kind: BlockTable, Aligns: alignNames(t.Alignments)}
 	for c := t.FirstChild(); c != nil; c = c.NextSibling() {
 		switch row := c.(type) {
 		case *east.TableHeader:
-			bl.Headers = r.cells(row)
+			bl.Headers, bl.HeaderRuns = r.cells(row)
 		case *east.TableRow:
-			bl.Rows = append(bl.Rows, r.cells(row))
+			cells, runs := r.cells(row)
+			bl.Rows = append(bl.Rows, cells)
+			bl.RowRuns = append(bl.RowRuns, runs)
 		}
 	}
+	syncTableCellRuns(&bl)
 	return bl
 }
 
-func (r *mdReader) cells(row ast.Node) []string {
+// cells reads a row: each cell's text and, for a styled cell, its runs (nil for a
+// plain one).
+func (r *mdReader) cells(row ast.Node) ([]string, [][]TextRun) {
 	var cells []string
+	var runs [][]TextRun
 	for c := row.FirstChild(); c != nil; c = c.NextSibling() {
 		if cell, ok := c.(*east.TableCell); ok {
-			cells = append(cells, r.cellText(cell))
+			txt, rs := r.cell(cell)
+			cells = append(cells, txt)
+			runs = append(runs, rs)
 		}
 	}
-	return cells
+	return cells, runs
 }
 
-// cellText is a cell's plain text. Anything but text in a cell is formatting
-// the plain-text Rows cannot hold.
-func (r *mdReader) cellText(cell *east.TableCell) string {
-	var b strings.Builder
-	for c := cell.FirstChild(); c != nil; c = c.NextSibling() {
-		if t, ok := c.(*ast.Text); ok {
-			b.WriteString(decodeText(t.Segment.Value(r.src)))
-			continue
-		}
-		r.refuse(c.Pos(), ConstructTableCellFormatting, c.Kind().String())
-		w := &inlineWalker{r: r}
-		w.walk(c)
-		b.WriteString(FlattenRuns(w.runs))
-	}
-	return b.String()
+// cell reads one cell as a one-line paragraph would be read: the same walker, the
+// same refusals, and a line break (which a cell cannot hold) as a space. The runs
+// are nil when the cell is plain.
+func (r *mdReader) cell(cell *east.TableCell) (string, []TextRun) {
+	return richFields(singleLine(r.inline(cell)))
 }
 
 // ---- inline ----

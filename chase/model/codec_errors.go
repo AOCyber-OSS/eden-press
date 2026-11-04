@@ -65,9 +65,14 @@ const (
 	// literal text.
 	ConstructRawHTML = "raw-html"
 
-	// ConstructTableCellFormatting is a table cell holding anything but plain
-	// text (emphasis, code, a link, an image, math). Table rows are plain text
-	// in v7. Lenient: the cell is flattened to its plain text.
+	// ConstructTableCellFormatting is no longer emitted (AODex 1026 D14). A table
+	// cell now holds bold, italic, strike, code, inline math, links and
+	// autolinks as Block.HeaderRuns and Block.RowRuns, so FromMarkdown does not
+	// refuse them, and lenient mode does not flatten them. What a cell cannot
+	// carry it refuses under the paragraph's own names: raw-html, inline-image,
+	// link-title, empty-link, inline-display-math. The name stays exported
+	// because callers switch on Construct names; it is the historical name of
+	// the refusal that was the most common one in LLM-written Markdown.
 	ConstructTableCellFormatting = "table-cell-formatting"
 
 	// ConstructListStart is an ordered list that does not start at 1; the
