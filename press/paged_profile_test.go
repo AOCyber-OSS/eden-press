@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -37,10 +36,11 @@ import (
 	"go.aocyber.ai/eden-press/chase/model"
 	"go.aocyber.ai/eden-press/press"
 
-	// Blank import registers profiles/paged. press itself only blank-imports
+	// This import also registers profiles/paged. press itself only blank-imports
 	// profiles/slides, so a consumer opting into a second profile opts in by
-	// importing it -- the same registry contract slides uses.
-	_ "go.aocyber.ai/eden-press/profiles/paged"
+	// importing it -- the same registry contract slides uses. The tests read its
+	// ScaffoldCSS too.
+	"go.aocyber.ai/eden-press/profiles/paged"
 )
 
 const pagedDoc = `# Q3 Report
@@ -351,58 +351,317 @@ func TestPagedMarkupAndCSSAgree(t *testing.T) {
 	}
 }
 
-// unitRuleRE matches a top-level `div.edenpress-paged > section { ... }` rule.
-var unitRuleRE = regexp.MustCompile(`(?m)^div\.edenpress-paged > section \{([^}]*)\}`)
+// --- a small CSS reader for the packed stylesheet ------------------------------
+//
+// The D16 contract is about the CASCADE: which rule comes last, under which
+// media. Substring checks cannot see that, so the tests below read the packed CSS
+// into its rules, in source order, and assert on the parsed declarations.
 
-// lastUnitSize returns the width and height the LAST top-level unit rule in css
-// declares, which is the one the cascade applies.
-func lastUnitSize(t *testing.T, css string) (w, h int) {
-	t.Helper()
-	all := unitRuleRE.FindAllStringSubmatch(css, -1)
-	if len(all) == 0 {
-		t.Fatal("no top-level `div.edenpress-paged > section` rule in the packed CSS")
-	}
-	body := all[len(all)-1][1]
-	dim := func(prop string) int {
-		m := regexp.MustCompile(`(?:^|[;\s])` + prop + `:\s*(\d+)px`).FindStringSubmatch(body)
-		if m == nil {
-			t.Fatalf("last unit rule declares no %s: {%s}", prop, body)
-		}
-		v, _ := strconv.Atoi(m[1])
-		return v
-	}
-	return dim("width"), dim("height")
+// cssRule is one rule of a stylesheet, in source order. Media is the prelude of
+// the conditional block that holds it ("" at top level, "@media print" inside a
+// print block). A declaration at-rule (@page, @font-face) is a rule whose
+// Selector is its prelude.
+type cssRule struct {
+	Media    string
+	Selector string
+	Decls    map[string]string
 }
 
-// TestPagedPackedCSSCarriesProfileSize (Test list 2): the page box is the
-// profile's size, not the theme's 1280x720. A4 by default, the named size when a
-// `size` directive picks one, A4 again for a name the table does not have.
-func TestPagedPackedCSSCarriesProfileSize(t *testing.T) {
-	cases := []struct {
-		name       string
-		directives map[string]string
-		w, h       int
-	}{
-		{"default is A4", nil, 794, 1123},
-		{"size: a4", map[string]string{"size": "a4"}, 794, 1123},
-		{"size: letter", map[string]string{"size": "letter"}, 816, 1056},
-		{"size: a5", map[string]string{"size": "a5"}, 559, 794},
-		{"size: legal", map[string]string{"size": "legal"}, 816, 1344},
-		{"size: tabloid", map[string]string{"size": "tabloid"}, 1056, 1632},
-		{"size: nonsense falls back to A4", map[string]string{"size": "nonsense"}, 794, 1123},
+// parseCSSRules splits css into its rules. It reads what the packer and the
+// profiles emit: style rules, declaration at-rules, nested @media / @supports
+// blocks, quoted strings, parentheses (url(data:...;...)) and comments.
+// @keyframes bodies are skipped.
+func parseCSSRules(css string) []cssRule {
+	var rules []cssRule
+	parseCSSBlock(css, "", &rules)
+	return rules
+}
+
+func parseCSSBlock(s, media string, out *[]cssRule) {
+	for i := 0; i < len(s); {
+		end := scanCSS(s, i, func(c byte) bool { return c == '{' || c == ';' })
+		if end >= len(s) {
+			return
+		}
+		prelude := strings.TrimSpace(stripCSSComments(s[i:end]))
+		if s[end] == ';' { // a statement at-rule (@import, @charset)
+			i = end + 1
+			continue
+		}
+		closing := matchCSSBrace(s, end)
+		body := s[end+1 : closing]
+		i = closing + 1
+		switch {
+		case strings.HasPrefix(prelude, "@media"), strings.HasPrefix(prelude, "@supports"):
+			parseCSSBlock(body, prelude, out)
+		case strings.Contains(prelude, "keyframes"):
+		default:
+			*out = append(*out, cssRule{Media: media, Selector: prelude, Decls: parseCSSDecls(body)})
+		}
 	}
+}
+
+// scanCSS returns the index of the first byte at or after i that stop accepts,
+// outside strings, comments and parentheses, or len(s).
+func scanCSS(s string, i int, stop func(byte) bool) int {
+	depth := 0
+	for i < len(s) {
+		switch c := s[i]; {
+		case c == '"' || c == '\'':
+			i = skipCSSString(s, i)
+			continue
+		case c == '/' && i+1 < len(s) && s[i+1] == '*':
+			if j := strings.Index(s[i+2:], "*/"); j >= 0 {
+				i += j + 4
+			} else {
+				i = len(s)
+			}
+			continue
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case depth == 0 && stop(c):
+			return i
+		}
+		i++
+	}
+	return len(s)
+}
+
+// skipCSSString returns the index just past the quoted string starting at i.
+func skipCSSString(s string, i int) int {
+	q := s[i]
+	for i++; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case q:
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+// matchCSSBrace returns the index of the '}' closing the '{' at open.
+func matchCSSBrace(s string, open int) int {
+	depth := 0
+	for i := open; i < len(s); {
+		j := scanCSS(s, i, func(c byte) bool { return c == '{' || c == '}' })
+		if j >= len(s) {
+			return len(s) - 1
+		}
+		if s[j] == '{' {
+			depth++
+		} else if depth--; depth == 0 {
+			return j
+		}
+		i = j + 1
+	}
+	return len(s) - 1
+}
+
+func stripCSSComments(s string) string {
+	for {
+		a := strings.Index(s, "/*")
+		if a < 0 {
+			return s
+		}
+		b := strings.Index(s[a+2:], "*/")
+		if b < 0 {
+			return s[:a]
+		}
+		s = s[:a] + s[a+2+b+2:]
+	}
+}
+
+// parseCSSDecls reads a declaration block into property -> value. A later
+// declaration of the same property replaces an earlier one, as in the cascade.
+func parseCSSDecls(body string) map[string]string {
+	decls := map[string]string{}
+	for i := 0; i < len(body); {
+		end := scanCSS(body, i, func(c byte) bool { return c == ';' })
+		decl := strings.TrimSpace(stripCSSComments(body[i:end]))
+		i = end + 1
+		name, value, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		decls[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(value)
+	}
+	return decls
+}
+
+// selectorList splits a selector list at its top-level commas.
+func selectorList(sel string) []string {
+	var parts []string
+	for i := 0; i <= len(sel); {
+		end := scanCSS(sel, i, func(c byte) bool { return c == ',' })
+		parts = append(parts, strings.TrimSpace(sel[i:end]))
+		i = end + 1
+	}
+	return parts
+}
+
+// targets reports whether the rule's selector list contains sel exactly.
+func (r cssRule) targets(sel string) bool {
+	for _, s := range selectorList(r.Selector) {
+		if s == sel {
+			return true
+		}
+	}
+	return false
+}
+
+// appliesInPrint reports whether the rule's block applies to print media: top
+// level, or a media query that names print.
+func (r cssRule) appliesInPrint() bool {
+	return r.Media == "" || strings.Contains(r.Media, "print")
+}
+
+// pagedUnit is the selector every paged page rule is scoped under.
+const pagedUnit = "div.edenpress-paged > section"
+
+// pagedSizes is the profile's size table as the tests see it: each `size`
+// directive and the page box it must produce (A4 for a name the table lacks).
+var pagedSizes = []struct {
+	name       string
+	directives map[string]string
+	w, h       int
+}{
+	{"default is A4", nil, 794, 1123},
+	{"size: a4", map[string]string{"size": "a4"}, 794, 1123},
+	{"size: letter", map[string]string{"size": "letter"}, 816, 1056},
+	{"size: a5", map[string]string{"size": "a5"}, 559, 794},
+	{"size: legal", map[string]string{"size": "legal"}, 816, 1344},
+	{"size: tabloid", map[string]string{"size": "tabloid"}, 1056, 1632},
+	{"size: nonsense falls back to A4", map[string]string{"size": "nonsense"}, 794, 1123},
+}
+
+// TestPagedPackedCSSFlowsAtProfileSize (D16, TRD 30 Test list 1; rewritten from
+// TRD 27's TestPagedPackedCSSCarriesProfileSize, which pinned a fixed page
+// height). A paged section is at least one page and grows with its content:
+//   - the LAST top-level unit rule gives it the profile width, `height: auto`
+//     and `overflow: visible`, so the theme's 720px slide height loses;
+//   - a screen-only rule gives it the page height as a MINIMUM, so an empty
+//     section still shows (and screenshots as) one whole page;
+//   - nothing that applies in print gives it a page-height minimum (that spills
+//     one blank page per document), and a print rule AFTER the theme drops its
+//     vertical padding, because the @page margin carries it on every page;
+//   - no rule anywhere clips it.
+func TestPagedPackedCSSFlowsAtProfileSize(t *testing.T) {
 	for _, ep := range pagedEntryPoints {
 		for _, profile := range []string{"paged", "article"} {
-			for _, tc := range cases {
+			for _, tc := range pagedSizes {
 				t.Run(ep.name+"/"+profile+"/"+tc.name, func(t *testing.T) {
 					out := ep.render(t, press.Options{Profile: profile}, tc.directives)
-					w, h := lastUnitSize(t, out.CSS)
-					if w != tc.w || h != tc.h {
-						t.Errorf("last unit rule is %dx%d, want %dx%d", w, h, tc.w, tc.h)
+					rules := parseCSSRules(out.CSS)
+
+					lastTop, lastPadding := -1, -1
+					screenMin, printPadding := -1, -1
+					for i, r := range rules {
+						if !r.targets(pagedUnit) {
+							continue
+						}
+						for _, p := range []string{"overflow", "overflow-x", "overflow-y"} {
+							if v := r.Decls[p]; v == "hidden" || v == "clip" {
+								t.Errorf("rule %d (%q, media %q) clips the page: %s: %s", i, r.Selector, r.Media, p, v)
+							}
+						}
+						if r.Media == "" {
+							lastTop = i
+							if _, ok := r.Decls["padding"]; ok {
+								lastPadding = i
+							}
+						}
+						if r.appliesInPrint() {
+							if v, ok := r.Decls["min-height"]; ok && v != "0" && v != "auto" && v != "none" {
+								t.Errorf("rule %d (media %q) gives the page a min-height of %s in print; that spills a blank page", i, r.Media, v)
+							}
+						}
+						if strings.Contains(r.Media, "screen") && r.Decls["min-height"] == fmt.Sprintf("%dpx", tc.h) {
+							screenMin = i
+						}
+						if strings.Contains(r.Media, "print") && r.Decls["padding-top"] == "0" && r.Decls["padding-bottom"] == "0" {
+							printPadding = i
+						}
+					}
+					if lastTop < 0 {
+						t.Fatalf("no top-level %q rule in the packed CSS", pagedUnit)
+					}
+					last := rules[lastTop].Decls
+					for prop, want := range map[string]string{
+						"width":    fmt.Sprintf("%dpx", tc.w),
+						"height":   "auto",
+						"overflow": "visible",
+					} {
+						if got := last[prop]; got != want {
+							t.Errorf("last top-level unit rule: %s = %q, want %q (rule: %v)", prop, got, want, last)
+						}
+					}
+					if screenMin < 0 {
+						t.Errorf("no @media screen rule gives %q a min-height of %dpx", pagedUnit, tc.h)
+					}
+					if printPadding < 0 {
+						t.Errorf("no @media print rule sets padding-top: 0 and padding-bottom: 0 on %q", pagedUnit)
+					} else if printPadding < lastPadding {
+						t.Errorf("the print padding rule (%d) comes before the theme's padding (%d) and loses to it", printPadding, lastPadding)
 					}
 				})
 			}
 		}
+	}
+}
+
+// TestPagedScaffoldPrintsOnMargins (D16, Test list 1): the scaffold's page rules
+// for a flowing section. The section no longer hides its overflow, @page carries
+// the vertical page margin (so every continuation page has a top and a bottom
+// margin) as a LITERAL equal to --edenpress-page-margin's default, because var()
+// does not resolve inside @page, and the running header is hidden in print.
+func TestPagedScaffoldPrintsOnMargins(t *testing.T) {
+	scaffold := parseCSSRules(paged.ScaffoldCSS)
+	var pageMargin, rootMargin string
+	for _, r := range scaffold {
+		switch {
+		case r.Selector == ":root":
+			rootMargin = r.Decls["--edenpress-page-margin"]
+		case r.Selector == "@page":
+			pageMargin = r.Decls["margin"]
+		case r.targets("section"):
+			if v := r.Decls["overflow"]; v == "hidden" || v == "clip" {
+				t.Errorf("scaffold section rule (media %q) clips the page: overflow: %s", r.Media, v)
+			}
+		}
+	}
+	if rootMargin == "" {
+		t.Fatal("scaffold declares no --edenpress-page-margin default")
+	}
+	if want := rootMargin + " 0"; pageMargin != want {
+		t.Errorf("scaffold @page margin = %q, want %q (the --edenpress-page-margin default, vertical only)", pageMargin, want)
+	}
+
+	for _, ep := range pagedEntryPoints {
+		t.Run(ep.name, func(t *testing.T) {
+			out := ep.render(t, press.Options{Profile: "paged"}, nil)
+			var packedPage string
+			hidesHeader := false
+			for _, r := range parseCSSRules(out.CSS) {
+				if r.Selector == "@page" {
+					if m, ok := r.Decls["margin"]; ok {
+						packedPage = m
+					}
+				}
+				if strings.Contains(r.Media, "print") && r.targets(pagedUnit+"::before") && r.Decls["display"] == "none" {
+					hidesHeader = true
+				}
+			}
+			if packedPage != rootMargin+" 0" {
+				t.Errorf("packed @page margin = %q, want %q", packedPage, rootMargin+" 0")
+			}
+			if !hidesHeader {
+				t.Errorf("packed CSS does not hide %s::before in print; the running header would sit on the first line", pagedUnit)
+			}
+		})
 	}
 }
 

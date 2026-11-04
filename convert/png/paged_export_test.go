@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -306,26 +307,41 @@ func abs(v float64) float64 {
 }
 
 // longSectionMD is ONE section of paragraphs (no `---`), the shape most AODex
-// documents have, ending in a sentinel paragraph.
+// documents have. Paragraph i opens with a link to https://p<i>.edenpress.test/
+// and the last paragraph is a sentinel linking to sentinelURI. Chrome writes a
+// PDF /Link annotation only for a link it actually paints, so the annotations
+// in the exported PDF say which paragraphs made it onto a page, and where.
 func longSectionMD(paragraphs int) string {
 	const filler = "The quarterly review covered revenue, churn, hiring and the roadmap for the " +
 		"next two releases, and the team agreed to revisit the pricing model before the end of the year. "
 	var b strings.Builder
 	b.WriteString("# Long report\n\n")
 	for i := 1; i <= paragraphs; i++ {
-		fmt.Fprintf(&b, "Paragraph %d. %s\n\n", i, filler)
+		fmt.Fprintf(&b, "[P%d](https://p%d.edenpress.test/) Paragraph %d. %s\n\n", i, i, i, filler)
 	}
-	b.WriteString("SENTINEL-END-OF-DOCUMENT\n")
+	b.WriteString("[SENTINEL](" + sentinelURI + ") SENTINEL-END-OF-DOCUMENT\n")
 	return b.String()
 }
 
-// longSectionMetrics are the numbers the characterization reads out of Chrome.
+const sentinelURI = "https://sentinel.edenpress.test/"
+
+// longSectionURIs are the link targets longSectionMD(paragraphs) carries.
+func longSectionURIs(paragraphs int) []string {
+	uris := make([]string, 0, paragraphs+1)
+	for i := 1; i <= paragraphs; i++ {
+		uris = append(uris, fmt.Sprintf("https://p%d.edenpress.test/", i))
+	}
+	return append(uris, sentinelURI)
+}
+
+// longSectionMetrics are the numbers the long-section tests read out of Chrome.
 type longSectionMetrics struct {
 	PageHeight     float64 `json:"pageHeight"`     // the section's border box
-	ClientHeight   float64 `json:"clientHeight"`   // the clip edge (overflow: hidden)
+	ClientHeight   float64 `json:"clientHeight"`   // the section's padding box
 	ScrollHeight   float64 `json:"scrollHeight"`   // the content's natural height
 	SentinelTop    float64 `json:"sentinelTop"`    // relative to the section's top
 	SentinelBottom float64 `json:"sentinelBottom"` // relative to the section's top
+	OverflowY      string  `json:"overflowY"`      // the section's computed overflow-y
 }
 
 const longSectionJS = `(() => {
@@ -334,7 +350,7 @@ const longSectionJS = `(() => {
   const ps = s.querySelectorAll('p');
   const q = ps[ps.length - 1].getBoundingClientRect();
   return JSON.stringify({pageHeight: r.height, clientHeight: s.clientHeight, scrollHeight: s.scrollHeight,
-    sentinelTop: q.top - r.top, sentinelBottom: q.bottom - r.top});
+    sentinelTop: q.top - r.top, sentinelBottom: q.bottom - r.top, overflowY: getComputedStyle(s).overflowY});
 })()`
 
 // measureLongSection loads out the way ToImages does and reads the geometry
@@ -370,67 +386,230 @@ func measureLongSection(t *testing.T, sess *chrome.Session, out press.Output, me
 	return m
 }
 
-// TestPagedLongSectionCharacterization (Test list 7): ONE section holding about
-// three pages of paragraphs. It records what the page box does with content that
-// does not fit, so the operator can decide before the tag. It asserts only what
-// the measurement shows.
-func TestPagedLongSectionCharacterization(t *testing.T) {
-	sess := newTestSession(t)
-	defer sess.Close()
+// --- PDF link annotations, read from the raw bytes ------------------------------
 
-	out, err := press.Render(longSectionMD(longSectionParagraphs), press.Options{Profile: "paged"})
+var (
+	pdfObjRE  = regexp.MustCompile(`(?s)\d+\s+\d+\s+obj\b(.*?)endobj`)
+	pdfLinkRE = regexp.MustCompile(`/Subtype\s*/Link\b`)
+	pdfRectRE = regexp.MustCompile(`/Rect\s*\[\s*([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\s*\]`)
+	pdfURIRE  = regexp.MustCompile(`/URI\s*\(([^)]*)\)`)
+)
+
+// pdfLink is one /Link annotation: its target and its /Rect in PDF points
+// (origin at the bottom left of its page), normalised so X1 <= X2, Y1 <= Y2.
+type pdfLink struct {
+	URI            string
+	X1, Y1, X2, Y2 float64
+}
+
+// pdfLinks returns every URI /Link annotation in a PDF. Chrome writes each one
+// as its own uncompressed object, so a regex over the objects finds them.
+func pdfLinks(t *testing.T, data []byte) []pdfLink {
+	t.Helper()
+	var links []pdfLink
+	for _, obj := range pdfObjRE.FindAllSubmatch(data, -1) {
+		body := obj[1]
+		u, r := pdfURIRE.FindSubmatch(body), pdfRectRE.FindSubmatch(body)
+		if !pdfLinkRE.Match(body) || u == nil || r == nil {
+			continue
+		}
+		n := make([]float64, 4)
+		for i := range n {
+			v, err := strconv.ParseFloat(string(r[i+1]), 64)
+			if err != nil {
+				t.Fatalf("/Rect number %q: %v", r[i+1], err)
+			}
+			n[i] = v
+		}
+		links = append(links, pdfLink{URI: string(u[1]),
+			X1: min(n[0], n[2]), Y1: min(n[1], n[3]), X2: max(n[0], n[2]), Y2: max(n[1], n[3])})
+	}
+	return links
+}
+
+// pageMarginPt is the paged scaffold's 20 mm page margin in PDF points.
+const pageMarginPt = 20 / 25.4 * 72 // 56.69
+
+// marginTolerancePt is how far an annotation may stand past the margin line:
+// a link's box includes its line's leading.
+const marginTolerancePt = 2
+
+// assertLinksOnMargins checks that every URI in want has at least one /Link
+// annotation (Chrome writes the odd duplicate, so this asserts presence, not a
+// count), and that every annotation lies inside the page's 20 mm top and bottom
+// margins and inside the MediaBox horizontally. It returns how many of want
+// were found.
+func assertLinksOnMargins(t *testing.T, data []byte, want []string) int {
+	t.Helper()
+	_, wpt, hpt := pdfGeometry(t, data)
+	links := pdfLinks(t, data)
+	seen := map[string]bool{}
+	for _, l := range links {
+		seen[l.URI] = true
+		if l.Y1 < pageMarginPt-marginTolerancePt || l.Y2 > hpt-pageMarginPt+marginTolerancePt {
+			t.Errorf("link %s spans y %.1f..%.1f pt, outside the %.1f pt top and bottom margins of a %.0f pt page",
+				l.URI, l.Y1, l.Y2, pageMarginPt, hpt)
+		}
+		if l.X1 < 0 || l.X2 > wpt {
+			t.Errorf("link %s spans x %.1f..%.1f pt, outside the %.0f pt MediaBox", l.URI, l.X1, l.X2, wpt)
+		}
+	}
+	found := 0
+	var missing []string
+	for _, u := range want {
+		if seen[u] {
+			found++
+		} else {
+			missing = append(missing, u)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d of %d links have no annotation in the PDF (never painted): %v", len(missing), len(want), missing)
+	}
+	return found
+}
+
+// requireLinkAnnotations is the positive control for every absence check above:
+// a one-page document with one link must export exactly that link's annotation.
+// If this Chrome writes annotations some other way, "link missing" would be
+// meaningless, so the tests that depend on it stop here instead.
+func requireLinkAnnotations(t *testing.T, sess *chrome.Session) {
+	t.Helper()
+	const control = "https://control.edenpress.test/"
+	out, err := press.Render("# Control\n\n[CONTROL]("+control+") one link on one page.\n", press.Options{Profile: "paged"})
 	if err != nil {
 		t.Fatalf("press.Render: %v", err)
 	}
-	if len(out.Model.Sections) != 1 {
-		t.Fatalf("sections = %d, want 1", len(out.Model.Sections))
-	}
-
-	screen := measureLongSection(t, sess, out, "screen")
-	printed := measureLongSection(t, sess, out, "print")
-
-	imgs := toImagesWithin(t, sess, out, Options{})
-	if len(imgs) != 1 {
-		t.Fatalf("len(images) = %d, want 1", len(imgs))
-	}
-	_, pngH := imageSize(t, imgs[0])
-
 	data, err := pdf.ToPDF(sess, out, pdf.Options{})
 	if err != nil {
 		t.Fatalf("ToPDF: %v", err)
 	}
-	pages, _, _ := pdfGeometry(t, data)
-
-	t.Logf("LONG SECTION (%d paragraphs, 1 section): content is %.0f px tall = %.2f A4 pages (1123 px)",
-		longSectionParagraphs, screen.ScrollHeight, screen.ScrollHeight/1123)
-	t.Logf("  PNG height: %d px; PDF pages: %d", pngH, pages)
-	t.Logf("  screen: page box %.0f px, clip edge %.0f px, sentinel paragraph spans %.0f..%.0f px from the page top",
-		screen.PageHeight, screen.ClientHeight, screen.SentinelTop, screen.SentinelBottom)
-	t.Logf("  print:  page box %.0f px, clip edge %.0f px, sentinel paragraph spans %.0f..%.0f px from the page top",
-		printed.PageHeight, printed.ClientHeight, printed.SentinelTop, printed.SentinelBottom)
-
-	// What the measurement shows, pinned so the behaviour is visible and a
-	// change to it is deliberate. The scaffold gives every section a fixed page
-	// box (height: A4, overflow: hidden) and one section is one page, so content
-	// past the first page is CLIPPED, not flowed onto more pages: a long
-	// single-section document exports as ONE page showing its first A4 worth.
-	// If a product decision makes long sections flow, this is the test to change.
-	if screen.ScrollHeight < 2.5*1123 {
-		t.Fatalf("content is only %.0f px tall (%.2f pages); the sample is not a multi-page section", screen.ScrollHeight, screen.ScrollHeight/1123)
+	links := pdfLinks(t, data)
+	if len(links) == 0 {
+		t.Fatalf("positive control: a one-link PDF has no /Link annotation; this Chrome does not write them as the tests read them")
 	}
-	if pngH != 1123 {
-		t.Errorf("PNG height = %d, want 1123 (the page box, not the content)", pngH)
-	}
-	if pages != 1 {
-		t.Errorf("PDF pages = %d, want 1 (a fixed page box does not paginate its overflow)", pages)
-	}
-	for name, m := range map[string]longSectionMetrics{"screen": screen, "print": printed} {
-		if m.SentinelTop < m.ClientHeight {
-			t.Errorf("%s: the last paragraph starts at %.0f px, inside the %.0f px page box; content is no longer clipped", name, m.SentinelTop, m.ClientHeight)
+	for _, l := range links {
+		if l.URI != control {
+			t.Fatalf("positive control: annotation %q, want only %q", l.URI, control)
 		}
 	}
 }
 
-// longSectionParagraphs is sized so the section holds roughly three A4 pages of
-// content under the bundled default theme.
-const longSectionParagraphs = 17
+// TestPagedPDFLinkAnnotationControl (D16, TRD 30 Test list 4).
+func TestPagedPDFLinkAnnotationControl(t *testing.T) {
+	sess := newTestSession(t)
+	defer sess.Close()
+	requireLinkAnnotations(t, sess)
+}
+
+// longSectionParagraphs sizes the long section at several A4 pages under the
+// paged default theme AND under the 29px Marp `default` theme, while staying
+// under Chrome's 16384 px screenshot limit at 29px.
+const longSectionParagraphs = 48
+
+func renderLongSection(t *testing.T, md string, opts press.Options) press.Output {
+	t.Helper()
+	opts.Profile = "paged"
+	out, err := press.Render(md, opts)
+	if err != nil {
+		t.Fatalf("press.Render: %v", err)
+	}
+	return out
+}
+
+// TestPagedLongSectionFlows (D16, TRD 30 Test list 3; rewritten from TRD 27's
+// TestPagedLongSectionCharacterization, which pinned the clipping). ONE section
+// holding several A4 pages of paragraphs flows instead of being clipped:
+//   - the PDF has as many pages as the content needs, every paragraph's link is
+//     painted (the sentinel last one included), and every link sits inside the
+//     20 mm top and bottom margins on every page, continuation pages included;
+//   - the PNG is one image per section at the section's full height;
+//   - on screen, nothing hides the section's overflow and the sentinel lies
+//     inside the section's box.
+func TestPagedLongSectionFlows(t *testing.T) {
+	sess := newTestSession(t)
+	defer sess.Close()
+	requireLinkAnnotations(t, sess)
+
+	for _, theme := range []string{"", "default"} {
+		t.Run("theme="+theme, func(t *testing.T) {
+			out := renderLongSection(t, longSectionMD(longSectionParagraphs), press.Options{Theme: theme})
+			if len(out.Model.Sections) != 1 {
+				t.Fatalf("sections = %d, want 1", len(out.Model.Sections))
+			}
+
+			screen := measureLongSection(t, sess, out, "screen")
+			imgs := toImagesWithin(t, sess, out, Options{})
+			data, err := pdf.ToPDF(sess, out, pdf.Options{})
+			if err != nil {
+				t.Fatalf("ToPDF: %v", err)
+			}
+			pages, _, _ := pdfGeometry(t, data)
+			pngW, pngH := 0, 0
+			if len(imgs) > 0 {
+				pngW, pngH = imageSize(t, imgs[0])
+			}
+			want := longSectionURIs(longSectionParagraphs)
+			found := assertLinksOnMargins(t, data, want)
+
+			t.Logf("LONG SECTION theme=%q (%d paragraphs, 1 section): content %.0f px = %.2f A4 pages; PDF %d pages; PNG %d image(s), first %dx%d px; links found %d of %d; overflow-y %s; sentinel %.0f..%.0f px of %.0f px",
+				theme, longSectionParagraphs, screen.ScrollHeight, screen.ScrollHeight/1123, pages, len(imgs), pngW, pngH,
+				found, len(want), screen.OverflowY, screen.SentinelTop, screen.SentinelBottom, screen.PageHeight)
+
+			if screen.ScrollHeight < 2.5*1123 {
+				t.Fatalf("content is only %.0f px tall (%.2f pages); the sample is not a multi-page section", screen.ScrollHeight, screen.ScrollHeight/1123)
+			}
+			if pages < 3 {
+				t.Errorf("PDF pages = %d, want at least 3 for %.2f pages of content", pages, screen.ScrollHeight/1123)
+			}
+			if len(imgs) != 1 {
+				t.Fatalf("len(images) = %d, want 1 (one image per section)", len(imgs))
+			}
+			if pngW != 794 {
+				t.Errorf("PNG width = %d, want 794", pngW)
+			}
+			if minH := int(math.Round(screen.ScrollHeight)) - 1; pngH < minH || pngH <= 1123 {
+				t.Errorf("PNG height = %d, want at least the content height %d and over 1123", pngH, minH)
+			}
+			if screen.OverflowY != "visible" {
+				t.Errorf("section overflow-y = %q, want visible", screen.OverflowY)
+			}
+			if screen.SentinelBottom > screen.PageHeight {
+				t.Errorf("sentinel ends at %.0f px, below the %.0f px section box", screen.SentinelBottom, screen.PageHeight)
+			}
+		})
+	}
+}
+
+// TestPagedMixedDocumentPaginates (D16, TRD 30 Test list 5): a long section
+// followed by a short one. The long one takes the pages it needs and the short
+// one starts its own page, so the PDF has exactly one page more than the long
+// section alone, and every link of both is painted.
+func TestPagedMixedDocumentPaginates(t *testing.T) {
+	sess := newTestSession(t)
+	defer sess.Close()
+	requireLinkAnnotations(t, sess)
+
+	const tail = "https://tail.edenpress.test/"
+	long := longSectionMD(longSectionParagraphs)
+	alone, err := pdf.ToPDF(sess, renderLongSection(t, long, press.Options{}), pdf.Options{})
+	if err != nil {
+		t.Fatalf("ToPDF(long alone): %v", err)
+	}
+	alonePages, _, _ := pdfGeometry(t, alone)
+
+	mixed := renderLongSection(t, long+"\n---\n\n# Short\n\n[TAIL]("+tail+") the short last section.\n", press.Options{})
+	if len(mixed.Model.Sections) != 2 {
+		t.Fatalf("sections = %d, want 2", len(mixed.Model.Sections))
+	}
+	data, err := pdf.ToPDF(sess, mixed, pdf.Options{})
+	if err != nil {
+		t.Fatalf("ToPDF(mixed): %v", err)
+	}
+	pages, _, _ := pdfGeometry(t, data)
+	found := assertLinksOnMargins(t, data, append(longSectionURIs(longSectionParagraphs), tail))
+	t.Logf("MIXED: long alone %d pages; long + short %d pages; links found %d", alonePages, pages, found)
+	if pages != alonePages+1 {
+		t.Errorf("PDF pages = %d, want %d (the long section's %d, plus one for the short section)", pages, alonePages+1, alonePages)
+	}
+}
