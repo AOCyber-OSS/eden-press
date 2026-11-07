@@ -24,7 +24,6 @@ package model
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -199,16 +198,15 @@ func insertBlock(doc *Document, op Op) error {
 	b := *op.Block
 	SyncTextFromRuns(&b)
 	syncTableCellRuns(&b)
+	// One walk of the document, plus the inserted subtree: the block is not in
+	// the document yet, so its own b_N and any its children carry count too,
+	// and a generated id never repeats one of them.
+	next := max(maxBlockID(doc), maxBlockIDIn([]Block{b}))
 	if b.ID == "" {
-		b.ID = nextBlockID(doc)
+		next++
+		b.ID = fmt.Sprintf("b_%d", next)
 	} else if findBlockPtr(doc, b.ID) != nil {
 		return fmt.Errorf("insert_block: duplicate block id %q", b.ID)
-	}
-	// The block is not in the document yet, so its own b_N counts too: its
-	// children are numbered above it, never given its id.
-	next := maxBlockID(doc)
-	if n, ok := blockIDNumber(b.ID); ok && n > next {
-		next = n
 	}
 	ensureBlockIDsSlice(&b.Children, &next)
 
@@ -647,28 +645,21 @@ func nextBlockID(doc *Document) string {
 
 // maxBlockID is the highest N among the document's b_N block ids (0 for none).
 func maxBlockID(doc *Document) int {
-	max := 0
-	var walk func([]Block)
-	walk = func(blocks []Block) {
-		for _, b := range blocks {
-			if n, ok := blockIDNumber(b.ID); ok && n > max {
-				max = n
-			}
-			walk(b.Children)
-		}
-	}
+	m := 0
 	for _, sec := range doc.Sections {
-		walk(sec.Blocks)
+		m = max(m, maxBlockIDIn(sec.Blocks))
 	}
-	return max
+	return m
 }
 
-func blockIDNumber(id string) (int, bool) {
-	if !strings.HasPrefix(id, "b_") {
-		return 0, false
+// maxBlockIDIn is the highest N among the b_N ids in blocks and their children.
+func maxBlockIDIn(blocks []Block) int {
+	m := 0
+	for _, b := range blocks {
+		m = max(m, idNumber(b.ID, "b_"))
+		m = max(m, maxBlockIDIn(b.Children))
 	}
-	n, err := strconv.Atoi(strings.TrimPrefix(id, "b_"))
-	return n, err == nil
+	return m
 }
 
 func rebuildOutline(doc *Document) {
