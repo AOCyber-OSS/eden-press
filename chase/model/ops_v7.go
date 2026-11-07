@@ -81,12 +81,15 @@ func EnsureListItemIDs(doc *Document) {
 	if doc == nil {
 		return
 	}
+	// Seeded once and counted up, as EnsureBlockIDs does: n items stay O(n).
+	next := maxListItemID(doc)
 	var walk func([]Block)
 	walk = func(blocks []Block) {
 		for i := range blocks {
 			for j := range blocks[i].Items {
 				if blocks[i].Items[j].ID == "" {
-					blocks[i].Items[j].ID = nextListItemID(doc)
+					next++
+					blocks[i].Items[j].ID = fmt.Sprintf("li_%d", next)
 				}
 				SyncListItemTextFromRuns(&blocks[i].Items[j])
 			}
@@ -98,7 +101,8 @@ func EnsureListItemIDs(doc *Document) {
 	}
 }
 
-func nextListItemID(doc *Document) string {
+// maxListItemID is the highest N among the document's li_N item ids (0 for none).
+func maxListItemID(doc *Document) int {
 	max := 0
 	var walk func([]Block)
 	walk = func(blocks []Block) {
@@ -117,7 +121,7 @@ func nextListItemID(doc *Document) string {
 	for _, sec := range doc.Sections {
 		walk(sec.Blocks)
 	}
-	return fmt.Sprintf("li_%d", max+1)
+	return max
 }
 
 func nextCommentID(doc *Document) string {
