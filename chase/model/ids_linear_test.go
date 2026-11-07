@@ -24,6 +24,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 )
@@ -43,6 +44,9 @@ import (
 //	   order or gaps the existing ones have; non-numeric ids are ignored
 //	L3 list items: the same rule with li_N, across lists and nested blocks
 //	L4 the work is linear: 4x the blocks takes well under 16x the time
+//	L5 insert_block numbers new children above the document, the inserted
+//	   block and any ids its children already carry: no duplicate
+//	L6 a negative b_N / li_N is not a number the rule counts
 
 // genBlocks builds n top-level blocks; every third is a toggle with two
 // children and every fifth a three-item list, so ids span nesting and items.
@@ -63,7 +67,7 @@ func genBlocks(n int) []Block {
 	return out
 }
 
-// oldOrderIDs is the depth-first order the old rule assigned ids in.
+// depthFirstIDs lists ids in the depth-first order the rule assigns them in.
 func depthFirstIDs(blocks []Block) []string {
 	var out []string
 	for _, b := range blocks {
@@ -144,12 +148,20 @@ func TestEnsureIDs_L4_WorkGrowsLinearly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing")
 	}
-	const n = 6000
-	timeEnsure(n / 4) // warm up
-	small, large := timeEnsure(n), timeEnsure(4*n)
-	if small < time.Millisecond {
-		small = time.Millisecond // a linear pass this small is noise; don't divide by it
+	// Median of five runs each, at sizes where one linear pass takes
+	// milliseconds, so a GC pause or a noisy runner moves one sample, not the
+	// verdict.
+	median := func(n int) time.Duration {
+		var d []time.Duration
+		for i := 0; i < 5; i++ {
+			d = append(d, timeEnsure(n))
+		}
+		sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
+		return d[2]
 	}
+	const n = 20000
+	timeEnsure(n) // warm up
+	small, large := median(n), median(4*n)
 	// Linear is ~4x; quadratic is ~16x. 8x leaves room for noise either way.
 	if ratio := float64(large) / float64(small); ratio > 8 {
 		t.Fatalf("4x the blocks took %.1fx the time (%v vs %v): id assignment is not linear", ratio, large, small)
@@ -158,6 +170,49 @@ func TestEnsureIDs_L4_WorkGrowsLinearly(t *testing.T) {
 
 func BenchmarkEnsureIDs20000Blocks(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		timeEnsure(20000)
+		b.StopTimer()
+		doc := NewDocument("")
+		doc.Sections[0].Blocks = genBlocks(20000)
+		b.StartTimer()
+		EnsureBlockIDs(doc)
+		EnsureListItemIDs(doc)
+	}
+}
+
+func TestInsertBlock_L5_ChildrenNumberedAboveEveryIDInPlay(t *testing.T) {
+	doc := NewDocument("")
+	doc.Sections[0].Blocks = []Block{{ID: "b_4", Kind: BlockParagraph, Text: "existing"}}
+	err := ApplyOps(doc, []Op{{Op: OpInsertBlock, SectionID: 1, Block: &Block{
+		ID: "b_5", Kind: BlockToggle, Text: "t",
+		Children: []Block{{Kind: BlockParagraph, Text: "new"}, {ID: "b_6", Kind: BlockParagraph, Text: "carried"}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, id := range depthFirstIDs(doc.Sections[0].Blocks) {
+		if seen[id] {
+			t.Fatalf("duplicate id %q: %v", id, depthFirstIDs(doc.Sections[0].Blocks))
+		}
+		seen[id] = true
+	}
+	if got := doc.Sections[0].Blocks[1].Children[0].ID; got != "b_7" {
+		t.Fatalf("new child id = %q, want b_7 (above b_4, b_5 and b_6)", got)
+	}
+}
+
+func TestEnsureIDs_L6_NegativeNumbersAreNotCounted(t *testing.T) {
+	doc := NewDocument("")
+	doc.Sections[0].Blocks = []Block{
+		{ID: "b_-9", Kind: BlockParagraph},
+		{Kind: BlockList, Items: []ListItem{{ID: "li_-3"}, {Text: "x"}}},
+	}
+	EnsureBlockIDs(doc)
+	EnsureListItemIDs(doc)
+	if got := doc.Sections[0].Blocks[1].ID; got != "b_1" {
+		t.Fatalf("block id = %q, want b_1", got)
+	}
+	if got := doc.Sections[0].Blocks[1].Items[1].ID; got != "li_1" {
+		t.Fatalf("item id = %q, want li_1", got)
 	}
 }
