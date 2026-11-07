@@ -25,7 +25,6 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -81,12 +80,15 @@ func EnsureListItemIDs(doc *Document) {
 	if doc == nil {
 		return
 	}
+	// Seeded once and counted up, as EnsureBlockIDs does: n items stay O(n).
+	next := maxListItemID(doc)
 	var walk func([]Block)
 	walk = func(blocks []Block) {
 		for i := range blocks {
 			for j := range blocks[i].Items {
 				if blocks[i].Items[j].ID == "" {
-					blocks[i].Items[j].ID = nextListItemID(doc)
+					next++
+					blocks[i].Items[j].ID = fmt.Sprintf("li_%d", next)
 				}
 				SyncListItemTextFromRuns(&blocks[i].Items[j])
 			}
@@ -98,18 +100,14 @@ func EnsureListItemIDs(doc *Document) {
 	}
 }
 
-func nextListItemID(doc *Document) string {
-	max := 0
+// maxListItemID is the highest N among the document's li_N item ids (0 for none).
+func maxListItemID(doc *Document) int {
+	m := 0
 	var walk func([]Block)
 	walk = func(blocks []Block) {
 		for _, b := range blocks {
 			for _, it := range b.Items {
-				if strings.HasPrefix(it.ID, "li_") {
-					n, err := strconv.Atoi(strings.TrimPrefix(it.ID, "li_"))
-					if err == nil && n > max {
-						max = n
-					}
-				}
+				m = max(m, idNumber(it.ID, "li_"))
 			}
 			walk(b.Children)
 		}
@@ -117,20 +115,15 @@ func nextListItemID(doc *Document) string {
 	for _, sec := range doc.Sections {
 		walk(sec.Blocks)
 	}
-	return fmt.Sprintf("li_%d", max+1)
+	return m
 }
 
 func nextCommentID(doc *Document) string {
-	max := 0
+	m := 0
 	for _, c := range doc.Comments {
-		if strings.HasPrefix(c.ID, "c_") {
-			n, err := strconv.Atoi(strings.TrimPrefix(c.ID, "c_"))
-			if err == nil && n > max {
-				max = n
-			}
-		}
+		m = max(m, idNumber(c.ID, "c_"))
 	}
-	return fmt.Sprintf("c_%d", max+1)
+	return fmt.Sprintf("c_%d", m+1)
 }
 
 func patchBlock(doc *Document, op Op) error {

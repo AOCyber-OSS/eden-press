@@ -24,7 +24,6 @@ package model
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -118,18 +117,25 @@ func EnsureBlockIDs(doc *Document) {
 	if doc.SchemaVersion == "" {
 		doc.SchemaVersion = SchemaVersion
 	}
+	next := maxBlockID(doc)
 	for si := range doc.Sections {
-		ensureBlockIDsSlice(&doc.Sections[si].Blocks, doc)
+		ensureBlockIDsSlice(&doc.Sections[si].Blocks, &next)
 	}
 }
 
-func ensureBlockIDsSlice(blocks *[]Block, doc *Document) {
+// ensureBlockIDsSlice gives every block without an id the next b_N, counting
+// up from *next. The caller seeds *next with the highest b_N in the document
+// once (maxBlockID): every id handed out here is one more than the last, so it
+// stays the maximum and the document never has to be walked again. That keeps
+// assigning n ids O(n); walking the document per id made it O(n^2).
+func ensureBlockIDsSlice(blocks *[]Block, next *int) {
 	for i := range *blocks {
 		if (*blocks)[i].ID == "" {
-			(*blocks)[i].ID = nextBlockID(doc)
+			*next++
+			(*blocks)[i].ID = fmt.Sprintf("b_%d", *next)
 		}
 		if len((*blocks)[i].Children) > 0 {
-			ensureBlockIDsSlice(&(*blocks)[i].Children, doc)
+			ensureBlockIDsSlice(&(*blocks)[i].Children, next)
 		}
 	}
 }
@@ -192,12 +198,17 @@ func insertBlock(doc *Document, op Op) error {
 	b := *op.Block
 	SyncTextFromRuns(&b)
 	syncTableCellRuns(&b)
+	// One walk of the document, plus the inserted subtree: the block is not in
+	// the document yet, so its own b_N and any its children carry count too,
+	// and a generated id never repeats one of them.
+	next := max(maxBlockID(doc), maxBlockIDIn([]Block{b}))
 	if b.ID == "" {
-		b.ID = nextBlockID(doc)
+		next++
+		b.ID = fmt.Sprintf("b_%d", next)
 	} else if findBlockPtr(doc, b.ID) != nil {
 		return fmt.Errorf("insert_block: duplicate block id %q", b.ID)
 	}
-	ensureBlockIDsSlice(&b.Children, doc)
+	ensureBlockIDsSlice(&b.Children, &next)
 
 	if op.ParentBlockID != "" {
 		parent := findBlockPtr(doc, op.ParentBlockID)
@@ -629,23 +640,26 @@ func isSyncSource(doc *Document, id string) bool {
 }
 
 func nextBlockID(doc *Document) string {
-	max := 0
-	var walk func([]Block)
-	walk = func(blocks []Block) {
-		for _, b := range blocks {
-			if strings.HasPrefix(b.ID, "b_") {
-				n, err := strconv.Atoi(strings.TrimPrefix(b.ID, "b_"))
-				if err == nil && n > max {
-					max = n
-				}
-			}
-			walk(b.Children)
-		}
-	}
+	return fmt.Sprintf("b_%d", maxBlockID(doc)+1)
+}
+
+// maxBlockID is the highest N among the document's b_N block ids (0 for none).
+func maxBlockID(doc *Document) int {
+	m := 0
 	for _, sec := range doc.Sections {
-		walk(sec.Blocks)
+		m = max(m, maxBlockIDIn(sec.Blocks))
 	}
-	return fmt.Sprintf("b_%d", max+1)
+	return m
+}
+
+// maxBlockIDIn is the highest N among the b_N ids in blocks and their children.
+func maxBlockIDIn(blocks []Block) int {
+	m := 0
+	for _, b := range blocks {
+		m = max(m, idNumber(b.ID, "b_"))
+		m = max(m, maxBlockIDIn(b.Children))
+	}
+	return m
 }
 
 func rebuildOutline(doc *Document) {
