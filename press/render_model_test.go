@@ -24,6 +24,7 @@ package press
 
 import (
 	"encoding/json"
+	"errors"
 	"html"
 	"reflect"
 	"regexp"
@@ -731,12 +732,20 @@ func TestRenderModelHostileDocuments(t *testing.T) {
 		t.Errorf("far sheet cell not handled: %s", out.HTML)
 	}
 
+	// Nesting as deep as the limit renders down to the leaf; one level more is
+	// refused with the typed error rather than rendered (eden-press#29: deep
+	// nesting made every byte API quadratic).
 	deep := &model.Block{Kind: model.BlockToggle, Text: "leaf"}
-	for i := 0; i < 400; i++ {
+	for i := 1; i < model.MaxNestingDepth; i++ {
 		deep = &model.Block{Kind: model.BlockToggle, Text: "t", Children: []model.Block{*deep}}
 	}
 	if out := mustRenderModel(t, docOf(nil, []model.Block{*deep}), Options{}); !strings.Contains(out.HTML, "leaf") {
 		t.Error("deeply nested toggles lost their leaf")
+	}
+	tooDeep := model.Block{Kind: model.BlockToggle, Text: "t", Children: []model.Block{*deep}}
+	var ne *model.NestingDepthError
+	if _, err := RenderModel(docOf(nil, []model.Block{tooDeep}), Options{}); !errors.As(err, &ne) {
+		t.Errorf("toggles nested %d deep: err = %v, want *model.NestingDepthError", model.MaxNestingDepth+1, err)
 	}
 }
 

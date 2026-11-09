@@ -131,14 +131,25 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	r.src = []byte(md[bodyStart:])
+	body, drops, at := limitLinePrefixes(md[bodyStart:], opts.Lenient)
+	if at >= 0 {
+		return nil, &UnrepresentableError{Offset: bodyStart + at, Construct: ConstructNestingDepth, Detail: fmt.Sprintf("more than %d container markers on one line", MaxNestingDepth)}
+	}
+	r.src = []byte(body)
 	r.base = bodyStart
+	for i := range drops {
+		drops[i] += bodyStart
+	}
+	r.trimAt = drops
 	root := mdEngine.Parser().Parse(text.NewReader(r.src))
 
 	doc := &Document{
 		SchemaVersion: SchemaVersion,
 		Meta:          meta,
 		Sections:      r.sections(root),
+	}
+	if r.err == nil {
+		r.limitNesting(doc)
 	}
 	if r.err != nil {
 		return nil, r.err
@@ -152,6 +163,56 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 	}
 	r.reconcileIDs(doc, opts.Prev)
 	return doc, nil
+}
+
+// limitNesting enforces MaxNestingDepth on the sections just read
+// (ConstructNestingDepth): strict mode refuses the first block or list item
+// past the limit, lenient mode flattens what is below it (flattenNesting).
+//
+// The check runs on the finished tree rather than during the walk, because a
+// quote's leading paragraphs become its own text, not children: the depth of
+// a block is only known once its container has been read.
+func (r *mdReader) limitNesting(doc *Document) {
+	for si := range doc.Sections {
+		p, _ := firstTooDeep(doc.Sections[si].Blocks, 1)
+		if p == nil {
+			continue
+		}
+		if r.lenient {
+			for sj := si; sj < len(doc.Sections); sj++ {
+				flattenNesting(doc.Sections[sj].Blocks, 1)
+			}
+			return
+		}
+		r.refuse(r.nestingOffset(si, p), ConstructNestingDepth, fmt.Sprintf("limit %d levels", MaxNestingDepth))
+		return
+	}
+}
+
+// nestingOffset is the byte offset, relative to r.src as refuse expects, at
+// which the block p names starts in section si (for a list item, its list).
+// Blocks only carry spans when they were asked for, so on this error path
+// alone the body is read again with spans on: the converters are
+// deterministic and map strict and lenient constructs alike, so the second
+// tree has the same shape and p finds the same block.
+func (r *mdReader) nestingOffset(si int, p *nestPath) int {
+	again := &mdReader{src: r.src, lenient: true, spans: true}
+	secs := again.sections(mdEngine.Parser().Parse(text.NewReader(again.src)))
+	if si >= len(secs) {
+		return 0
+	}
+	off := 0
+	bs := secs[si].Blocks
+	for _, step := range p.steps {
+		if step >= len(bs) {
+			break
+		}
+		if sp := bs[step].Span; sp != nil {
+			off = sp.Start // the deepest block on the path that has a span
+		}
+		bs = bs[step].Children
+	}
+	return off
 }
 
 // normalizeNewlines turns "\r\n" and "\r" into "\n". When track is set it also
@@ -239,6 +300,10 @@ type mdReader struct {
 
 	spans bool  // Spans were asked for
 	crAt  []int // see normalizeNewlines
+
+	// trimAt lists, for each byte limitLinePrefixes deleted from the body,
+	// its offset in the normalized input as read (base included); see orig.
+	trimAt []int
 }
 
 // refuse records the first strict-mode refusal. Callers go on to apply the
@@ -1409,6 +1474,9 @@ func (r *mdReader) localSpan(n ast.Node) (int, int, bool) {
 // normalizeNewlines took out before the position.
 func (r *mdReader) orig(off int) int {
 	p := r.base + off
+	// Undo the lenient prefix trim first (each deleted byte at or before p
+	// shifts it right by one), then the CRLF normalization.
+	p += sort.SearchInts(r.trimAt, p+1)
 	return p + sort.SearchInts(r.crAt, p)
 }
 

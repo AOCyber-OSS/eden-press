@@ -61,6 +61,11 @@ func applyOpsMutating(doc *Document, ops []Op) error {
 		doc.SchemaVersion = SchemaVersion
 	}
 	doc.SchemaVersion = SchemaVersion
+	// A document already past the nesting limit is refused before any op:
+	// every op below then only has to check what it adds (checkFits).
+	if err := ValidateNesting(doc); err != nil {
+		return fmt.Errorf("model.ApplyOps: %w", err)
+	}
 	EnsureBlockIDs(doc)
 	EnsureListItemIDs(doc)
 	for i, op := range ops {
@@ -133,7 +138,7 @@ func patchBlock(doc *Document, op Op) error {
 	if op.Block == nil {
 		return fmt.Errorf("patch_block: missing block patch")
 	}
-	ptr := findBlockPtr(doc, op.BlockID)
+	ptr, depth := findBlockDepth(doc, op.BlockID)
 	if ptr == nil {
 		return fmt.Errorf("patch_block: block %q not found", op.BlockID)
 	}
@@ -235,6 +240,9 @@ func patchBlock(doc *Document, op Op) error {
 		next.Children = p.Children
 	}
 	if err := validateEditableBlock(next); err != nil {
+		return err
+	}
+	if err := checkFits(&next, depth, "patch_block "+op.BlockID); err != nil {
 		return err
 	}
 	syncTableCellRuns(&next)

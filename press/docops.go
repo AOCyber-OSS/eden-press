@@ -35,12 +35,34 @@ import (
 	"go.aocyber.ai/eden-press/chase/model"
 )
 
+// The byte APIs below return compact JSON (json.Marshal). They used to indent
+// it, and indentation grows with depth, so a deeply nested document's output
+// grew with the square of its depth (eden-press#29). A caller that wants it
+// indented runs json.Indent on the result, as the CLI does.
+//
+// Every function here that decodes a stored document refuses one nested past
+// model.MaxNestingDepth with an error wrapping *model.NestingDepthError (see
+// decodeDocument), and every one that reads Markdown holds the same limit.
+
+// decodeDocument parses docJSON and refuses a document nested past
+// model.MaxNestingDepth. fn prefixes the error, as each caller did before.
+func decodeDocument(docJSON []byte, fn string) (*model.Document, error) {
+	var doc model.Document
+	if err := json.Unmarshal(docJSON, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", fn, err)
+	}
+	if err := model.ValidateNesting(&doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", fn, err)
+	}
+	return &doc, nil
+}
+
 // NewDocJSON returns a fresh empty docmodel page as JSON (create_page for
 // agents). Title is stored in model.meta.directives.title when non-empty.
 // The CLI imports only press/, so agents reach chase/model through these
 // byte-oriented helpers rather than the model types directly.
 func NewDocJSON(title string) ([]byte, error) {
-	return json.MarshalIndent(model.NewDocument(title), "", "  ")
+	return json.Marshal(model.NewDocument(title))
 }
 
 // ApplyOpsJSON applies an ops batch to a docmodel JSON document and returns
@@ -51,26 +73,26 @@ func ApplyOpsJSON(docJSON, opsJSON []byte) ([]byte, error) {
 }
 
 // ApplyOpsJSONOpts is ApplyOpsJSON with optional dry-run (validate without
-// mutating; on success returns the unchanged input document indented).
+// mutating; on success returns the unchanged input document, re-encoded).
 func ApplyOpsJSONOpts(docJSON, opsJSON []byte, dryRun bool) ([]byte, error) {
-	var doc model.Document
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return nil, fmt.Errorf("press.ApplyOpsJSON: parse document: %w", err)
+	doc, err := decodeDocument(docJSON, "press.ApplyOpsJSON: parse document")
+	if err != nil {
+		return nil, err
 	}
 	ops, err := parseOpsJSON(opsJSON)
 	if err != nil {
 		return nil, fmt.Errorf("press.ApplyOpsJSON: parse ops: %w", err)
 	}
-	if err := model.ApplyOpsWithOptions(&doc, ops, model.ApplyOpsOptions{DryRun: dryRun}); err != nil {
+	if err := model.ApplyOpsWithOptions(doc, ops, model.ApplyOpsOptions{DryRun: dryRun}); err != nil {
 		return nil, err
 	}
 	if dryRun {
 		// Re-parse original so the caller sees an unchanged document.
 		var orig model.Document
 		_ = json.Unmarshal(docJSON, &orig)
-		return json.MarshalIndent(&orig, "", "  ")
+		return json.Marshal(&orig)
 	}
-	return json.MarshalIndent(&doc, "", "  ")
+	return json.Marshal(doc)
 }
 
 // ImportMarkdownModelJSON renders md through press.Render and returns only
@@ -84,36 +106,41 @@ func ImportMarkdownModelJSON(md []byte, opts Options) ([]byte, error) {
 	if out.Model == nil {
 		return nil, fmt.Errorf("press.ImportMarkdownModelJSON: render returned nil model")
 	}
+	// press.Render keeps quotes flat but not list levels: a list nested past
+	// the limit is refused here, as a stored document would be.
+	if err := model.ValidateNesting(out.Model); err != nil {
+		return nil, fmt.Errorf("press.ImportMarkdownModelJSON: %w", err)
+	}
 	model.EnsureBlockIDs(out.Model)
 	model.EnsureListItemIDs(out.Model)
 	out.Model.SchemaVersion = model.SchemaVersion
-	return json.MarshalIndent(out.Model, "", "  ")
+	return json.Marshal(out.Model)
 }
 
-// GetDocJSON validates docJSON as a Document, ensures block ids, and returns
-// indented JSON.
+// GetDocJSON validates docJSON as a Document (including the nesting limit),
+// ensures block ids, and returns it as compact JSON.
 func GetDocJSON(docJSON []byte) ([]byte, error) {
-	var doc model.Document
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return nil, fmt.Errorf("press.GetDocJSON: %w", err)
+	doc, err := decodeDocument(docJSON, "press.GetDocJSON")
+	if err != nil {
+		return nil, err
 	}
 	if doc.SchemaVersion == "" {
 		doc.SchemaVersion = model.SchemaVersion
 	}
-	model.EnsureBlockIDs(&doc)
-	model.EnsureListItemIDs(&doc)
-	model.EnsureTextRunsInvariant(&doc)
-	return json.MarshalIndent(&doc, "", "  ")
+	model.EnsureBlockIDs(doc)
+	model.EnsureListItemIDs(doc)
+	model.EnsureTextRunsInvariant(doc)
+	return json.Marshal(doc)
 }
 
 // ExportMarkdownJSON converts a docmodel JSON document to Marp-compatible
 // Markdown bytes.
 func ExportMarkdownJSON(docJSON []byte) ([]byte, error) {
-	var doc model.Document
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return nil, fmt.Errorf("press.ExportMarkdownJSON: %w", err)
+	doc, err := decodeDocument(docJSON, "press.ExportMarkdownJSON")
+	if err != nil {
+		return nil, err
 	}
-	return []byte(model.ToMarkdown(&doc)), nil
+	return []byte(model.ToMarkdown(doc)), nil
 }
 
 // MarkdownImport selects how MarkdownToDocJSON reads Markdown.
@@ -146,9 +173,9 @@ type MarkdownImport struct {
 func MarkdownToDocJSON(md string, prevDoc []byte, opt MarkdownImport) ([]byte, error) {
 	var prev *model.Document
 	if len(bytes.TrimSpace(prevDoc)) > 0 {
-		prev = &model.Document{}
-		if err := json.Unmarshal(prevDoc, prev); err != nil {
-			return nil, fmt.Errorf("press.MarkdownToDocJSON: parse previous document: %w", err)
+		var err error
+		if prev, err = decodeDocument(prevDoc, "press.MarkdownToDocJSON: parse previous document"); err != nil {
+			return nil, err
 		}
 	}
 	doc, err := model.FromMarkdown(md, model.FromMarkdownOptions{Prev: prev, Spans: opt.Spans, Lenient: opt.Lenient})
@@ -157,7 +184,7 @@ func MarkdownToDocJSON(md string, prevDoc []byte, opt MarkdownImport) ([]byte, e
 	}
 	model.EnsureBlockIDs(doc)
 	model.EnsureListItemIDs(doc)
-	return json.MarshalIndent(doc, "", "  ")
+	return json.Marshal(doc)
 }
 
 // VerifyMarkdownRoundTripJSON reports whether a stored document survives being
@@ -171,10 +198,11 @@ func MarkdownToDocJSON(md string, prevDoc []byte, opt MarkdownImport) ([]byte, e
 // give it, so it is not blamed for ids it never had. It is an AODex migration's
 // own guard: the migration never compares documents itself.
 func VerifyMarkdownRoundTripJSON(docJSON []byte) error {
-	var stored model.Document
-	if err := json.Unmarshal(docJSON, &stored); err != nil {
-		return fmt.Errorf("press.VerifyMarkdownRoundTripJSON: parse document: %w", err)
+	doc, err := decodeDocument(docJSON, "press.VerifyMarkdownRoundTripJSON: parse document")
+	if err != nil {
+		return err
 	}
+	stored := *doc
 	if stored.SchemaVersion == "" {
 		stored.SchemaVersion = model.SchemaVersion
 	}
@@ -211,12 +239,12 @@ func VerifyMarkdownRoundTripJSON(docJSON []byte) error {
 // has ids, properties or comments; keep it in the view or re-attach it before
 // MarkdownToDocJSON, or the ids and comments are lost.
 func MarkdownSourceViewJSON(docJSON []byte) (md string, outline []model.OutlineEntry, err error) {
-	var doc model.Document
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return "", nil, fmt.Errorf("press.MarkdownSourceViewJSON: parse document: %w", err)
+	doc, err := decodeDocument(docJSON, "press.MarkdownSourceViewJSON: parse document")
+	if err != nil {
+		return "", nil, err
 	}
-	md = model.ToMarkdown(&doc)
-	back, err := model.FromMarkdown(md, model.FromMarkdownOptions{Spans: true, Prev: &doc})
+	md = model.ToMarkdown(doc)
+	back, err := model.FromMarkdown(md, model.FromMarkdownOptions{Spans: true, Prev: doc})
 	if err != nil {
 		return "", nil, fmt.Errorf("press.MarkdownSourceViewJSON: the Markdown written for the document is refused when read back: %w", err)
 	}
@@ -423,11 +451,11 @@ func describeJSON(v any) string {
 // use this path; Flutter clients should request JSON and paint with the
 // bind/eden_docs package instead.
 func ExportHTMLJSON(docJSON []byte) ([]byte, error) {
-	var doc model.Document
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return nil, fmt.Errorf("press.ExportHTMLJSON: %w", err)
+	doc, err := decodeDocument(docJSON, "press.ExportHTMLJSON")
+	if err != nil {
+		return nil, err
 	}
-	return []byte(AssembleDocsHTML(&doc)), nil
+	return []byte(AssembleDocsHTML(doc)), nil
 }
 
 // AssembleDocsHTML wraps model.ToHTML in a complete standalone document with

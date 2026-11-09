@@ -44,6 +44,8 @@ import (
 //	N3  lenient FromMarkdown of '>'x4900 returns quickly, no deeper than the
 //	    limit, and keeps the text
 //	N4  lenient flattening keeps every nested block's text, in document order
+//	    (directive containers reach the tree flattening; quote lines past the
+//	    limit are trimmed before the parse and keep their text in order)
 //	N5  nested lists: strict refuses an item past the limit; lenient lowers its
 //	    Level so the item's depth is the limit
 //	N6  ValidateNesting: depth MaxNestingDepth is fine, one more is a
@@ -157,12 +159,14 @@ func TestNesting_N3_LenientDeepQuotesAreCheapAndKeepTheText(t *testing.T) {
 }
 
 func TestNesting_N4_LenientFlatteningKeepsEveryBlockInOrder(t *testing.T) {
+	// Directive containers: their fences are not line-prefix markers, so the
+	// depth reaches the tree-level flattening (limitNesting) intact.
 	const n = MaxNestingDepth + 8
-	var md strings.Builder
-	for k := 1; k <= n; k++ {
-		fmt.Fprintf(&md, "%s l%d\n%s\n", strings.Repeat(">", k), k, strings.Repeat(">", k))
+	chain := Block{Kind: BlockToggle, Text: fmt.Sprintf("l%d", n)}
+	for k := n - 1; k >= 1; k-- {
+		chain = Block{Kind: BlockToggle, Text: fmt.Sprintf("l%d", k), Children: []Block{chain}}
 	}
-	doc, err := FromMarkdown(md.String(), FromMarkdownOptions{Lenient: true})
+	doc, err := FromMarkdown(ToMarkdown(docWith(chain)), FromMarkdownOptions{Lenient: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +181,27 @@ func TestNesting_N4_LenientFlatteningKeepsEveryBlockInOrder(t *testing.T) {
 		if want := fmt.Sprintf("l%d", k+1); txt != want {
 			t.Fatalf("block %d text = %q, want %q (all: %v)", k, txt, want, got)
 		}
+	}
+
+	// Quote markers past the limit on one line are trimmed before the parse
+	// (limitLinePrefixes): the deeper lines' text lands in the deepest quote,
+	// still all there and in order.
+	var md strings.Builder
+	for k := 1; k <= n; k++ {
+		fmt.Fprintf(&md, "%s l%d\n%s\n", strings.Repeat(">", k), k, strings.Repeat(">", k))
+	}
+	doc, err = FromMarkdown(md.String(), FromMarkdownOptions{Lenient: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(texts(doc.Sections[0].Blocks), " ")
+	at := 0
+	for k := 1; k <= n; k++ {
+		i := strings.Index(all[at:], fmt.Sprintf("l%d", k))
+		if i < 0 {
+			t.Fatalf("l%d missing or out of order in %q", k, all)
+		}
+		at += i
 	}
 }
 
