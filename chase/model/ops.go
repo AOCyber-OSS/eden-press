@@ -145,18 +145,46 @@ func ApplyOps(doc *Document, ops []Op) error {
 	return ApplyOpsWithOptions(doc, ops, ApplyOpsOptions{})
 }
 
-func applyOne(doc *Document, op Op) error {
+// opBatch holds the id counters of one ApplyOps batch. They are seeded from the
+// document once, before the first op, and only count up from there, so an op
+// that needs a fresh id never walks the document for the highest one in use.
+// Walking it per op made a batch of k inserts O(k^2) (eden-press#30).
+//
+// Invariant: nextBlock is at least every b_N in the document, and nextComment
+// at least every c_N among its comments. Every op that brings ids into the
+// document (insert_block, update_block, patch_block with children, add_comment)
+// raises the counter past the ids it brought, so the invariant holds after it.
+// The counters never go down, so a block or comment deleted earlier in the
+// batch never has its id handed out again within the batch.
+type opBatch struct {
+	nextBlock   int
+	nextComment int
+}
+
+// newOpBatch seeds the counters with one walk of the blocks and one scan of the
+// comments.
+func newOpBatch(doc *Document) *opBatch {
+	return &opBatch{nextBlock: maxBlockID(doc), nextComment: maxCommentID(doc)}
+}
+
+// noteBlockIDs raises the block counter past every b_N in blocks (and their
+// children): the cost is the size of the payload, never of the document.
+func (b *opBatch) noteBlockIDs(blocks []Block) {
+	b.nextBlock = max(b.nextBlock, maxBlockIDIn(blocks))
+}
+
+func applyOne(doc *Document, op Op, batch *opBatch) error {
 	switch op.Op {
 	case OpInsertBlock:
-		return insertBlock(doc, op)
+		return insertBlock(doc, op, batch)
 	case OpUpdateBlock:
-		return updateBlock(doc, op)
+		return updateBlock(doc, op, batch)
 	case OpDeleteBlock:
 		return deleteBlock(doc, op)
 	case OpMoveBlock:
 		return moveBlock(doc, op)
 	case OpPatchBlock:
-		return patchBlock(doc, op)
+		return patchBlock(doc, op, batch)
 	case OpReplaceText:
 		return replaceText(doc, op)
 	case OpInsertText:
@@ -178,7 +206,7 @@ func applyOne(doc *Document, op Op) error {
 	case OpSetPropertyValue:
 		return setPropertyValue(doc, op)
 	case OpAddComment:
-		return addComment(doc, op)
+		return addComment(doc, op, batch)
 	case OpResolveComment:
 		return resolveComment(doc, op)
 	case OpApplySuggestion:
@@ -188,7 +216,7 @@ func applyOne(doc *Document, op Op) error {
 	}
 }
 
-func insertBlock(doc *Document, op Op) error {
+func insertBlock(doc *Document, op Op, batch *opBatch) error {
 	if op.Block == nil {
 		return fmt.Errorf("insert_block: missing block")
 	}
@@ -198,15 +226,17 @@ func insertBlock(doc *Document, op Op) error {
 	b := *op.Block
 	SyncTextFromRuns(&b)
 	syncTableCellRuns(&b)
-	// One walk of the document, plus the inserted subtree: the block is not in
-	// the document yet, so its own b_N and any its children carry count too,
-	// and a generated id never repeats one of them.
-	next := max(maxBlockID(doc), maxBlockIDIn([]Block{b}))
+	// The batch counter already covers the document; the inserted subtree is
+	// not in the document yet, so its own b_N and any its children carry are
+	// counted here (a walk of the payload only), and a generated id never
+	// repeats one of them.
+	if b.ID != "" && findBlockPtr(doc, b.ID) != nil {
+		return fmt.Errorf("insert_block: duplicate block id %q", b.ID)
+	}
+	next := max(batch.nextBlock, maxBlockIDIn([]Block{b}))
 	if b.ID == "" {
 		next++
 		b.ID = fmt.Sprintf("b_%d", next)
-	} else if findBlockPtr(doc, b.ID) != nil {
-		return fmt.Errorf("insert_block: duplicate block id %q", b.ID)
 	}
 	ensureBlockIDsSlice(&b.Children, &next)
 
@@ -218,13 +248,23 @@ func insertBlock(doc *Document, op Op) error {
 		if parent.Kind == BlockSynced {
 			return fmt.Errorf("insert_block: cannot nest under synced block")
 		}
-		return insertIntoSlice(&parent.Children, b, op.Index)
+		return batch.placed(next, insertIntoSlice(&parent.Children, b, op.Index))
 	}
 	si, err := sectionIndex(doc, op.SectionID)
 	if err != nil {
 		return err
 	}
-	return insertIntoSlice(&doc.Sections[si].Blocks, b, op.Index)
+	return batch.placed(next, insertIntoSlice(&doc.Sections[si].Blocks, b, op.Index))
+}
+
+// placed records next as the block counter once an insert has succeeded, and
+// passes err through. A refused insert leaves the counter alone: none of the
+// ids it would have assigned reached the document.
+func (b *opBatch) placed(next int, err error) error {
+	if err == nil {
+		b.nextBlock = next
+	}
+	return err
 }
 
 func insertIntoSlice(blocks *[]Block, b Block, index *int) error {
@@ -244,7 +284,7 @@ func insertIntoSlice(blocks *[]Block, b Block, index *int) error {
 	return nil
 }
 
-func updateBlock(doc *Document, op Op) error {
+func updateBlock(doc *Document, op Op, batch *opBatch) error {
 	if op.BlockID == "" {
 		return fmt.Errorf("update_block: missing blockId")
 	}
@@ -272,6 +312,10 @@ func updateBlock(doc *Document, op Op) error {
 	// Preserve children unless the update payload supplies them.
 	if b.Children == nil {
 		b.Children = ptr.Children
+	} else {
+		// New children may carry their own b_N; a later insert in this batch
+		// must number above them.
+		batch.noteBlockIDs(b.Children)
 	}
 	*ptr = b
 	return nil
@@ -637,10 +681,6 @@ func isSyncSource(doc *Document, id string) bool {
 		}
 	}
 	return false
-}
-
-func nextBlockID(doc *Document) string {
-	return fmt.Sprintf("b_%d", maxBlockID(doc)+1)
 }
 
 // idScanObserver, when set, is told about every whole-document id scan ("block"

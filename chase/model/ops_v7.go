@@ -63,8 +63,10 @@ func applyOpsMutating(doc *Document, ops []Op) error {
 	doc.SchemaVersion = SchemaVersion
 	EnsureBlockIDs(doc)
 	EnsureListItemIDs(doc)
+	// One seed per batch: the ops below only count up from it (see opBatch).
+	batch := newOpBatch(doc)
 	for i, op := range ops {
-		if err := applyOne(doc, op); err != nil {
+		if err := applyOne(doc, op, batch); err != nil {
 			return fmt.Errorf("model.ApplyOps: op[%d]: %w", i, err)
 		}
 	}
@@ -118,11 +120,7 @@ func maxListItemID(doc *Document) int {
 	return m
 }
 
-func nextCommentID(doc *Document) string {
-	return fmt.Sprintf("c_%d", maxCommentID(doc)+1)
-}
-
-func patchBlock(doc *Document, op Op) error {
+func patchBlock(doc *Document, op Op, batch *opBatch) error {
 	if op.BlockID == "" {
 		return fmt.Errorf("patch_block: missing blockId")
 	}
@@ -234,6 +232,10 @@ func patchBlock(doc *Document, op Op) error {
 		return err
 	}
 	syncTableCellRuns(&next)
+	if p.Children != nil {
+		// Patched-in children may carry their own b_N (see opBatch).
+		batch.noteBlockIDs(next.Children)
+	}
 	*ptr = next
 	return nil
 }
@@ -392,7 +394,7 @@ func validatePropertyType(t PropertyType) error {
 	}
 }
 
-func addComment(doc *Document, op Op) error {
+func addComment(doc *Document, op Op, batch *opBatch) error {
 	if op.Comment == nil {
 		return fmt.Errorf("add_comment: missing comment")
 	}
@@ -404,7 +406,10 @@ func addComment(doc *Document, op Op) error {
 		return fmt.Errorf("add_comment: block %q not found", c.BlockID)
 	}
 	if c.ID == "" {
-		c.ID = nextCommentID(doc)
+		batch.nextComment++
+		c.ID = fmt.Sprintf("c_%d", batch.nextComment)
+	} else {
+		batch.nextComment = max(batch.nextComment, idNumber(c.ID, "c_"))
 	}
 	doc.Comments = append(doc.Comments, c)
 	return nil
