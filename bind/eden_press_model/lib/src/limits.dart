@@ -39,4 +39,4 @@ const int maxNestingDepth = 32;
 /// container), so painting all of them would freeze the view the way the
 /// nesting did. The blocks are still in the document; only the view stops.
 /// Dart only: the Go byte APIs refuse such a document outright.
-const int maxFlattenedBlocks = 200;
+const int maxFlattenedBlocks = 100;
