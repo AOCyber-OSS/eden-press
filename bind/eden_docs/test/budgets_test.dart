@@ -36,6 +36,12 @@
 //   B6 a 400 KB code block pumps in under 1 s as plain text, not highlighted
 //   B7 a small table, short code and simple math render as before (no
 //      "Show all", highlighted, typeset)
+//   B8 the cost of a table is rows x columns: 100x50 is within each budget
+//      alone but not in cells, so it takes the budgeted path
+//   B9 short TeX nested past maxMathBraceDepth shows its source
+//   B10 TeX that defines a macro shows its source (a short macro can expand
+//       into millions of glyphs)
+//   B11 cutting long code never splits a surrogate pair
 
 import 'package:eden_docs/eden_docs.dart';
 import 'package:eden_press_model/eden_press_model.dart';
@@ -199,5 +205,46 @@ void main() {
     expect(find.textContaining('Show all'), findsNothing);
     expect(find.byType(HighlightView), findsOneWidget);
     expect(find.byType(Math), findsOneWidget);
+  });
+
+  testWidgets('B8 a 100x50 table takes the budgeted path', (tester) async {
+    await timedPump(tester, docOf([tableBlock(100, 50)]));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Show all 100 rows'), findsOneWidget);
+    expect(
+      find.byType(Text).evaluate().length,
+      lessThan(maxTableCellsPainted + 200),
+    );
+  });
+
+  testWidgets('B9 short TeX nested too deep shows its source', (tester) async {
+    final tex = nestedFrac(maxMathBraceDepth + 1);
+    expect(tex.length, lessThan(maxMathTexLength));
+    await timedPump(tester, docOf([mathBlock(tex)]));
+    expect(tester.takeException(), isNull);
+    expect(find.text(tex), findsOneWidget);
+    expect(find.byType(Math), findsNothing);
+  });
+
+  testWidgets('B10 TeX defining a macro shows its source', (tester) async {
+    const tex = r'\newcommand\a[1]{#1#1#1}\a{\a{\a{x}}}';
+    await timedPump(tester, docOf([mathBlock(tex)]));
+    expect(tester.takeException(), isNull);
+    expect(find.text(tex), findsOneWidget);
+    expect(find.byType(Math), findsNothing);
+  });
+
+  testWidgets('B11 cutting long code keeps surrogate pairs whole', (
+    tester,
+  ) async {
+    // An emoji (two UTF-16 code units) straddling the cut.
+    final code = '${'a' * (maxPlainCodeLength - 1)}\u{1F600}${'b' * 10}';
+    await timedPump(tester, docOf([codeBlock(code)]));
+    expect(tester.takeException(), isNull);
+    final shown = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data ?? '')
+        .firstWhere((d) => d.startsWith('aaa'));
+    expect(shown.codeUnits.last, isNot(inInclusiveRange(0xD800, 0xDBFF)));
   });
 }

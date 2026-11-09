@@ -33,6 +33,11 @@
 /// "Show all N rows", which pages the rest through a lazily built list.
 const int maxTableRowsPainted = 100;
 
+/// Table cells painted inline (rows x columns): the cost of a table is its
+/// cell count, so a table within the row and column budgets can still be over
+/// this one (100 x 50 is 5000 cells).
+const int maxTableCellsPainted = 2000;
+
 /// Table columns painted. Wider tables paint this many, in fixed-width cells
 /// that scroll horizontally, and say how many columns are not shown.
 const int maxTableColumnsPainted = 50;
