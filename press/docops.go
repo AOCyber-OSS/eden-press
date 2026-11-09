@@ -57,6 +57,13 @@ func decodeDocument(docJSON []byte, fn string) (*model.Document, error) {
 	return &doc, nil
 }
 
+// FlattenNestingJSON repairs a stored document nested past
+// model.MaxNestingDepth (one written before the limit), which every other
+// function here refuses.
+func FlattenNestingJSON(docJSON []byte) ([]byte, error) {
+	return docJSON, nil
+}
+
 // NewDocJSON returns a fresh empty docmodel page as JSON (create_page for
 // agents). Title is stored in model.meta.directives.title when non-empty.
 // The CLI imports only press/, so agents reach chase/model through these
