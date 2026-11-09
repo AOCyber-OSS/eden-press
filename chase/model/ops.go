@@ -643,8 +643,28 @@ func nextBlockID(doc *Document) string {
 	return fmt.Sprintf("b_%d", maxBlockID(doc)+1)
 }
 
+// idScanObserver, when set, is told about every whole-document id scan ("block"
+// or "comment"). Tests set it to prove an ops batch scans a constant number of
+// times however many ops it holds; it is nil, and costs one nil check, otherwise.
+var idScanObserver func(kind string)
+
+// maxCommentID is the highest N among the document's c_N comment ids (0 for none).
+func maxCommentID(doc *Document) int {
+	if idScanObserver != nil {
+		idScanObserver("comment")
+	}
+	m := 0
+	for _, c := range doc.Comments {
+		m = max(m, idNumber(c.ID, "c_"))
+	}
+	return m
+}
+
 // maxBlockID is the highest N among the document's b_N block ids (0 for none).
 func maxBlockID(doc *Document) int {
+	if idScanObserver != nil {
+		idScanObserver("block")
+	}
 	m := 0
 	for _, sec := range doc.Sections {
 		m = max(m, maxBlockIDIn(sec.Blocks))

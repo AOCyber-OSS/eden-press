@@ -119,11 +119,7 @@ func maxListItemID(doc *Document) int {
 }
 
 func nextCommentID(doc *Document) string {
-	m := 0
-	for _, c := range doc.Comments {
-		m = max(m, idNumber(c.ID, "c_"))
-	}
-	return fmt.Sprintf("c_%d", m+1)
+	return fmt.Sprintf("c_%d", maxCommentID(doc)+1)
 }
 
 func patchBlock(doc *Document, op Op) error {
