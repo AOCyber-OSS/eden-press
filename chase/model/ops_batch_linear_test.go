@@ -48,6 +48,12 @@ import (
 //	B7 an add_comment carrying c_N: later comments number above it
 //	B8 100k inserts finish in under 2 s (skipped with -short)
 //	B9 dry run assigns the same ids as a real run and leaves the input alone
+//	B10 id-less children brought in by update_block / patch_block are numbered
+//	    from the batch counter too: a deleted id is not handed out again
+//	B11 a comment still anchored on a deleted block's id keeps that id out of
+//	    later batches (the codec's floor rule), so the comment never
+//	    re-attaches to a new block
+//	B12 applying ops never writes ids into the caller's op payloads
 
 // paragraphInserts builds k insert_block ops for plain paragraphs without ids,
 // all appended to section 1: the batch AODex's block editor sends when a model
@@ -255,5 +261,54 @@ func BenchmarkInsertBlockBatch16000(b *testing.B) {
 		if err := ApplyOps(doc, ops); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestOpsBatch_B10_ChildrenOfUpdateAndPatchUseTheBatchCounter(t *testing.T) {
+	for _, kind := range []OpKind{OpUpdateBlock, OpPatchBlock} {
+		t.Run(string(kind), func(t *testing.T) {
+			doc := NewDocument("")
+			doc.Sections[0].Blocks = []Block{{ID: "b_1", Kind: BlockToggle, Text: "t"}, {ID: "b_2", Kind: BlockParagraph}}
+			err := ApplyOps(doc, []Op{
+				{Op: OpDeleteBlock, BlockID: "b_2"},
+				{Op: kind, BlockID: "b_1", Block: &Block{Kind: BlockToggle, Text: "t", Children: []Block{{Kind: BlockParagraph, Text: "new"}}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := doc.Sections[0].Blocks[0].Children[0].ID; got != "b_3" {
+				t.Fatalf("child after deleting b_2 got %q, want b_3", got)
+			}
+		})
+	}
+}
+
+func TestOpsBatch_B11_OrphanedCommentAnchorIsNotReused(t *testing.T) {
+	doc := NewDocument("")
+	doc.Sections[0].Blocks = []Block{{ID: "b_1", Kind: BlockParagraph}, {ID: "b_2", Kind: BlockParagraph}}
+	doc.Comments = []Comment{{ID: "c_1", BlockID: "b_2", Body: "on b_2"}}
+	if err := ApplyOps(doc, []Op{{Op: OpDeleteBlock, BlockID: "b_2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyOps(doc, paragraphInserts(1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Sections[0].Blocks[1].ID; got != "b_3" {
+		t.Fatalf("insert after b_2 was deleted got %q, want b_3: comment c_1 would re-attach", got)
+	}
+}
+
+func TestOpsBatch_B12_OpPayloadsAreNotWrittenTo(t *testing.T) {
+	ops := []Op{{Op: OpInsertBlock, SectionID: 1, Block: &Block{Kind: BlockToggle, Text: "t", Children: []Block{
+		{Kind: BlockParagraph, Text: "c", Children: nil},
+	}}}}
+	if err := ApplyOpsWithOptions(NewDocument(""), ops, ApplyOpsOptions{DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyOps(NewDocument(""), ops); err != nil {
+		t.Fatal(err)
+	}
+	if id := ops[0].Block.Children[0].ID; id != "" {
+		t.Fatalf("the op's child now carries id %q: applying ops wrote into the caller's payload", id)
 	}
 }
