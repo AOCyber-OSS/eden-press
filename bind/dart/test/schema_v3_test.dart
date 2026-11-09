@@ -50,14 +50,14 @@ Output _doc(List<Map<String, dynamic>> blocks) => Output.fromJson({
 void main() {
   test('Case 1: a table block parses its headers, rows and aligns', () {
     final out = _doc([
-        {
-          'kind': 'table',
-          'headers': ['Metric', 'Q3'],
-          'rows': [
-            ['p95 latency', '550ms'],
-          ],
-          'aligns': ['left', 'right'],
-        },
+      {
+        'kind': 'table',
+        'headers': ['Metric', 'Q3'],
+        'rows': [
+          ['p95 latency', '550ms'],
+        ],
+        'aligns': ['left', 'right'],
+      },
     ]);
     final block = out.model.sections.single.blocks.single;
     expect(block.kind, BlockKind.table);
@@ -70,12 +70,12 @@ void main() {
 
   test('Case 2: an image block parses src, alt text and title', () {
     final out = _doc([
-        {
-          'kind': 'image',
-          'src': 'chart.png',
-          'text': 'Q3 chart',
-          'title': 'Quarterly',
-        },
+      {
+        'kind': 'image',
+        'src': 'chart.png',
+        'text': 'Q3 chart',
+        'title': 'Quarterly',
+      },
     ]);
     final block = out.model.sections.single.blocks.single;
     expect(block.kind, BlockKind.image);
@@ -86,8 +86,8 @@ void main() {
 
   test('Case 3: a quote block is distinguishable from a paragraph', () {
     final out = _doc([
-        {'kind': 'quote', 'text': 'Synthesized from the sync.'},
-        {'kind': 'paragraph', 'text': 'Ordinary prose.'},
+      {'kind': 'quote', 'text': 'Synthesized from the sync.'},
+      {'kind': 'paragraph', 'text': 'Ordinary prose.'},
     ]);
     expect(out.model.sections.single.blocks.map((b) => b.kind), [
       BlockKind.quote,
@@ -99,13 +99,13 @@ void main() {
     tester,
   ) async {
     final out = _doc([
-        {
-          'kind': 'table',
-          'headers': ['Metric', 'Q3'],
-          'rows': [
-            ['p95 latency', '550ms'],
-          ],
-        },
+      {
+        'kind': 'table',
+        'headers': ['Metric', 'Q3'],
+        'rows': [
+          ['p95 latency', '550ms'],
+        ],
+      },
     ]);
     await tester.pumpWidget(
       MaterialApp(home: Scaffold(body: EdenPressView(out))),
@@ -126,7 +126,7 @@ void main() {
     // so the alt text is what must survive — silently rendering nothing would
     // lose the content entirely.
     final out = _doc([
-        {'kind': 'image', 'src': 'chart.png', 'text': 'Q3 chart'},
+      {'kind': 'image', 'src': 'chart.png', 'text': 'Q3 chart'},
     ]);
     await tester.pumpWidget(
       MaterialApp(home: Scaffold(body: EdenPressView(out))),
@@ -136,7 +136,7 @@ void main() {
 
   test('Case 6: an unrecognized future kind still degrades to its text', () {
     final out = _doc([
-        {'kind': 'some-future-kind', 'text': 'still visible'},
+      {'kind': 'some-future-kind', 'text': 'still visible'},
     ]);
     final block = out.model.sections.single.blocks.single;
     expect(block.kind, BlockKind.unknown);
@@ -179,7 +179,10 @@ void main() {
         'text': 'Ship',
         'checked': true,
         'runs': [
-          {'text': 'Ship', 'marks': ['bold']},
+          {
+            'text': 'Ship',
+            'marks': ['bold'],
+          },
         ],
       },
       {

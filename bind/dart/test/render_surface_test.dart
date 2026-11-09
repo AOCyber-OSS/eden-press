@@ -118,35 +118,31 @@ void main() {
     },
   );
 
-  test(
-    'Case 4: pubspec.yaml declares no html/dom-parsing/js/webview dependency',
-    () {
-      final pubspecFile = File('pubspec.yaml');
-      expect(
-        pubspecFile.existsSync(),
-        isTrue,
-        reason: 'run tests from bind/dart/',
-      );
+  test('Case 4: pubspec.yaml declares no html/dom-parsing/js/webview dependency', () {
+    final pubspecFile = File('pubspec.yaml');
+    expect(
+      pubspecFile.existsSync(),
+      isTrue,
+      reason: 'run tests from bind/dart/',
+    );
 
-      final doc = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
-      final deps = <String>{
-        ...(doc['dependencies'] as YamlMap? ?? YamlMap()).keys.cast<String>(),
-        ...(doc['dev_dependencies'] as YamlMap? ?? YamlMap()).keys
-            .cast<String>(),
-      };
+    final doc = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
+    final deps = <String>{
+      ...(doc['dependencies'] as YamlMap? ?? YamlMap()).keys.cast<String>(),
+      ...(doc['dev_dependencies'] as YamlMap? ?? YamlMap()).keys.cast<String>(),
+    };
 
-      const forbiddenSubstrings = ['html', 'webview', 'dom', 'js'];
-      for (final dep in deps) {
-        final lower = dep.toLowerCase();
-        for (final forbidden in forbiddenSubstrings) {
-          expect(
-            lower.contains(forbidden),
-            isFalse,
-            reason:
-                'dependency "$dep" looks like an HTML/DOM/JS/webview package -- forbidden by DART-04',
-          );
-        }
+    const forbiddenSubstrings = ['html', 'webview', 'dom', 'js'];
+    for (final dep in deps) {
+      final lower = dep.toLowerCase();
+      for (final forbidden in forbiddenSubstrings) {
+        expect(
+          lower.contains(forbidden),
+          isFalse,
+          reason:
+              'dependency "$dep" looks like an HTML/DOM/JS/webview package -- forbidden by DART-04',
+        );
       }
-    },
-  );
+    }
+  });
 }

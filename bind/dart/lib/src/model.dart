@@ -105,10 +105,9 @@ class RenderResponse {
     final outputJson = json['output'];
     return RenderResponse(
       envelopeVersion: json['envelopeVersion'] as String? ?? '',
-      output:
-          outputJson is Map<String, dynamic>
-              ? Output.fromJson(outputJson)
-              : null,
+      output: outputJson is Map<String, dynamic>
+          ? Output.fromJson(outputJson)
+          : null,
       error: json['error'] as String?,
     );
   }
@@ -138,23 +137,20 @@ class Output {
     return Output(
       html: json['HTML'] as String? ?? '',
       css: json['CSS'] as String? ?? '',
-      model:
-          modelJson is Map<String, dynamic>
-              ? ModelDocument.fromJson(modelJson)
-              : const ModelDocument(
-                schemaVersion: '',
-                meta: Meta(directives: {}),
-                sections: [],
-                outline: [],
-              ),
-      meta:
-          metaJson is Map<String, dynamic>
-              ? Meta.fromJson(metaJson)
-              : const Meta(directives: {}),
-      comments:
-          commentsJson is List
-              ? commentsJson.map((e) => e as String).toList()
-              : const <String>[],
+      model: modelJson is Map<String, dynamic>
+          ? ModelDocument.fromJson(modelJson)
+          : const ModelDocument(
+              schemaVersion: '',
+              meta: Meta(directives: {}),
+              sections: [],
+              outline: [],
+            ),
+      meta: metaJson is Map<String, dynamic>
+          ? Meta.fromJson(metaJson)
+          : const Meta(directives: {}),
+      comments: commentsJson is List
+          ? commentsJson.map((e) => e as String).toList()
+          : const <String>[],
     );
   }
 }

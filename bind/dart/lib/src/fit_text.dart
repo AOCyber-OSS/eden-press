@@ -72,7 +72,10 @@ double computeFitFontSize(
 
   bool fits(double fontSize) {
     final painter = TextPainter(
-      text: TextSpan(text: text, style: style.copyWith(fontSize: fontSize)),
+      text: TextSpan(
+        text: text,
+        style: style.copyWith(fontSize: fontSize),
+      ),
       textDirection: TextDirection.ltr,
       maxLines: null,
     )..layout(maxWidth: maxWidth);
@@ -112,8 +115,13 @@ class FitText extends StatelessWidget {
   /// [style] carries no font size) so the shrink-only ceiling is the
   /// AUTHORED size of the block being rendered -- e.g. a heading's level
   /// style -- not an unrelated arbitrary maximum.
-  FitText(this.text, {super.key, required this.style, double? maxFontSize, this.minFontSize = 8})
-    : maxFontSize = maxFontSize ?? style.fontSize ?? 96;
+  FitText(
+    this.text, {
+    super.key,
+    required this.style,
+    double? maxFontSize,
+    this.minFontSize = 8,
+  }) : maxFontSize = maxFontSize ?? style.fontSize ?? 96;
 
   /// The raw text to fit -- from `Block.text` (the schema-v2 model), never
   /// `Output.html`.
