@@ -147,10 +147,15 @@ func Policy() *bluemonday.Policy {
 		"movablelimits", "minsize", "maxsize", "linethickness",
 		"rowspacing", "columnspacing", "columnalign", "rowlines",
 		"depth", "voffset",
-		// notation is menclose's box style ("box"); mathcolor is \color's
-		// colour, a plain value bluemonday passes through as text.
-		"notation", "mathcolor",
+		// \middle's spacing and \\'s line break (presentation only).
+		"lspace", "rspace", "linebreak",
 	).OnElements(mathElements...)
+	// Two attributes carry values the author chooses, so they are pinned to
+	// the shapes the converter writes: menclose's notation is a word list
+	// ("box"), and mstyle's mathcolor is \color's argument, a colour name or
+	// a hex colour, never free text.
+	p.AllowAttrs("notation").Matching(regexp.MustCompile(`^[a-z]+( [a-z]+)*$`)).OnElements("menclose")
+	p.AllowAttrs("mathcolor").Matching(regexp.MustCompile(`^(#[0-9A-Fa-f]{3,8}|[A-Za-z]+)$`)).OnElements("mstyle")
 	// width/height are shared with <img>/<foreignObject> above; allow them
 	// on the MathML elements too (real attrs emitted by the fork for
 	// sized glyphs/tables).

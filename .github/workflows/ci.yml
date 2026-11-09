@@ -67,8 +67,7 @@ jobs:
         # eden-press's own replace directives do not apply, and fails if the
         # graph pulls the unpatched upstream latex2mathml or \sqrt[n] loses its
         # <mroot>.
-        working-directory: conformance/consumer
-        run: go vet ./... && go test ./...
+        run: make consumer-test
 
       - name: Install addlicense
         run: go install github.com/google/addlicense@latest

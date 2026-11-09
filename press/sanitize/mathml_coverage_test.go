@@ -24,6 +24,7 @@ package sanitize
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	l2m "go.aocyber.ai/eden-press/internal/latex2mathml"
@@ -38,8 +39,11 @@ import (
 // Test list:
 //
 //	M1 for TeX covering each converter tag with no allowlist entry (msqrt,
-//	   mroot, mphantom, menclose, mathcolor), every start tag and attribute
-//	   name in the converter's output survives Sanitize
+//	   mroot, mphantom, menclose, mathcolor, \middle's lspace/rspace, \\'s
+//	   linebreak), every start tag and attribute name in the converter's
+//	   output survives Sanitize
+//	M2 mathcolor and notation keep only the value shapes the converter
+//	   writes: free text in \color{...} is dropped
 //
 // The names come from the converter output itself, so a tag the converter
 // starts emitting later is caught by adding its TeX here, never by
@@ -65,6 +69,7 @@ func names(html string) map[string]bool {
 func TestSanitize_M1_KeepsEveryConverterTagAndAttribute(t *testing.T) {
 	for _, tex := range []string{
 		`\sqrt{x}`, `\sqrt[3]{x}`, `\phantom{x}`, `\boxed{x}`, `\color{red}{x}`,
+		`\color{#ff8800}{x}`, `\left( x \middle| y \right)`, `a \\ b`,
 	} {
 		raw := l2m.Convert(tex, "http://www.w3.org/1998/Math/MathML", "inline", 0)
 		kept := names(Sanitize(raw))
@@ -72,6 +77,24 @@ func TestSanitize_M1_KeepsEveryConverterTagAndAttribute(t *testing.T) {
 			if !kept[n] {
 				t.Errorf("%s: Sanitize dropped %q\nconverter: %s\nsanitized: %s", tex, n, raw, Sanitize(raw))
 			}
+		}
+	}
+}
+
+func TestSanitize_M2_AuthorChosenMathValuesArePinned(t *testing.T) {
+	for _, c := range []struct{ in, want, gone string }{
+		{`<math><mstyle mathcolor="red"><mi>x</mi></mstyle></math>`, `mathcolor="red"`, ""},
+		{`<math><mstyle mathcolor="#ff8800"><mi>x</mi></mstyle></math>`, `mathcolor="#ff8800"`, ""},
+		{`<math><mstyle mathcolor="red; x:y"><mi>x</mi></mstyle></math>`, "", "mathcolor"},
+		{`<math><menclose notation="box"><mi>x</mi></menclose></math>`, `notation="box"`, ""},
+		{`<math><mi notation="box">x</mi></math>`, "", "notation"},
+	} {
+		out := Sanitize(c.in)
+		if c.want != "" && !strings.Contains(out, c.want) {
+			t.Errorf("Sanitize(%s) = %s, want %s kept", c.in, out, c.want)
+		}
+		if c.gone != "" && strings.Contains(out, c.gone) {
+			t.Errorf("Sanitize(%s) = %s, want %s dropped", c.in, out, c.gone)
 		}
 	}
 }

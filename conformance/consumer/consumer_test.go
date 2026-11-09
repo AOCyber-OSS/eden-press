@@ -24,6 +24,8 @@ package consumer
 
 import (
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,10 +39,12 @@ import (
 //	C1 the consumer's module graph holds no git.sr.ht/~mekyt/latex2mathml
 //	   (the unpatched upstream a replace-directive fork leaves consumers with)
 //	C2 \sqrt[3]{x} rendered through press keeps its radicand and index in an
-//	   <mroot> (the 08-02 fix the upstream converter lacks)
+//	   <mroot>, radicand first (the 08-02 fix the upstream converter lacks)
 
 func TestC1_ModuleGraphHasNoUpstreamLatex2mathml(t *testing.T) {
-	out, err := exec.Command("go", "mod", "graph").CombinedOutput()
+	// The go of the toolchain running this test, not whichever is first on
+	// PATH: the graph must be the one this build resolved.
+	out, err := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "mod", "graph").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go mod graph: %v\n%s", err, out)
 	}
@@ -63,8 +67,11 @@ func TestC2_SqrtIndexKeepsRadicandForConsumers(t *testing.T) {
 	if j := strings.Index(root, "</mroot>"); j >= 0 {
 		root = root[:j]
 	}
-	if !strings.Contains(root, "<mi>x</mi>") || !strings.Contains(root, "<mn>3</mn>") {
-		t.Fatalf(`\sqrt[3]{x}: <mroot> lost its radicand or index: %s`, root)
+	// MathML <mroot> is [radicand, index]: x first, then 3. Swapped, it reads
+	// as the x-th root of 3.
+	x, three := strings.Index(root, "<mi>x</mi>"), strings.Index(root, "<mn>3</mn>")
+	if x < 0 || three < 0 || x > three {
+		t.Fatalf(`\sqrt[3]{x}: <mroot> lost its radicand or index, or swapped them: %s`, root)
 	}
 }
 

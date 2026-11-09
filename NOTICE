@@ -78,7 +78,7 @@ License: MIT
   - Provenance: FORKED in-repo (Objective 8, 08-01). The pinned upstream module
     (git.sr.ht/~mekyt/latex2mathml @ v0.0.0-20231214134936-808832af73fc) is
     vendored into internal/latex2mathml/ with its MIT LICENSE (Copyright (c)
-    2023 mekyt) preserved unmodified. Since v0.5.2 it is a plain package of the
+    2023 mekyt) preserved unmodified. Since the release after v0.5.1 it is a plain package of the
     eden-press module (go.aocyber.ai/eden-press/internal/latex2mathml, no own
     go.mod), imported directly by press/math: the earlier `replace` directive
     applied only inside eden-press, so consumers built the unpatched upstream
