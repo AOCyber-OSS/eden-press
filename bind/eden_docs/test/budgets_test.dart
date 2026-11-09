@@ -25,7 +25,8 @@
 // process loads fonts and caches), and bounded at one second.
 //
 // Test list:
-//   B1 a 20000x20 table pumps in under 1 s; its first rows are painted and
+//   B1 a 20000x20 table costs about what a table at the row budget costs
+//      (and under 3 s); its first rows are painted and
 //      "Show all 20000 rows" is offered
 //   B2 "Show all" pages the rows lazily: the last row is not built until
 //      scrolled to
@@ -120,10 +121,22 @@ Future<int> timedPump(WidgetTester tester, ModelDocument doc) async {
 }
 
 void main() {
-  testWidgets('B1 a 20000x20 table pumps in under a second', (tester) async {
+  testWidgets('B1 a 20000x20 table costs what a table at the budget costs', (
+    tester,
+  ) async {
+    // A table exactly at the row budget (eager path) is the baseline: a
+    // 20000-row table paints the same 100 rows, so it should cost about the
+    // same, on any runner. A fixed one-second bound flaked on a slow CI
+    // runner (1177 ms) with no code change in the painted path. The ceiling
+    // is for the unbounded case, which took tens of seconds.
+    // Pumped twice: the first table pump pays one-time text-layout warm-up.
+    final budgetDoc = docOf([tableBlock(maxTableRowsPainted, 20)]);
+    await timedPump(tester, budgetDoc);
+    final atBudget = await timedPump(tester, budgetDoc);
     final ms = await timedPump(tester, docOf([tableBlock(20000, 20)]));
     expect(tester.takeException(), isNull);
-    expect(ms, lessThan(1000));
+    expect(ms, lessThan(2 * atBudget + 500));
+    expect(ms, lessThan(3000));
     expect(find.text('r0c0'), findsOneWidget);
     expect(find.text('Show all 20000 rows'), findsOneWidget);
     expect(find.text('r${maxTableRowsPainted}c0'), findsNothing);
