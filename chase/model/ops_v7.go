@@ -61,16 +61,17 @@ func applyOpsMutating(doc *Document, ops []Op) error {
 		doc.SchemaVersion = SchemaVersion
 	}
 	doc.SchemaVersion = SchemaVersion
-	EnsureBlockIDs(doc)
-	EnsureListItemIDs(doc)
-	// One seed per batch: the ops below only count up from it (see opBatch).
+	// One seed per batch, which also numbers the input's id-less blocks: the
+	// ops below, and the numbering after them, only count up from it (see
+	// opBatch).
 	batch := newOpBatch(doc)
+	EnsureListItemIDs(doc)
 	for i, op := range ops {
 		if err := applyOne(doc, op, batch); err != nil {
 			return fmt.Errorf("model.ApplyOps: op[%d]: %w", i, err)
 		}
 	}
-	EnsureBlockIDs(doc)
+	batch.assignMissing(doc)
 	EnsureListItemIDs(doc)
 	EnsureTextRunsInvariant(doc)
 	rebuildOutline(doc)

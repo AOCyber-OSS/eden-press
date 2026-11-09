@@ -162,9 +162,48 @@ type opBatch struct {
 }
 
 // newOpBatch seeds the counters with one walk of the blocks and one scan of the
-// comments.
+// comments, and gives every block of doc that lacks an id one from the block
+// counter. The block seed also counts the b_N a comment is anchored on, as the
+// codec does (codec_ids.go): a comment left on a deleted block keeps that id
+// out of use, so it never re-attaches to a new block.
 func newOpBatch(doc *Document) *opBatch {
-	return &opBatch{nextBlock: maxBlockID(doc), nextComment: maxCommentID(doc)}
+	b := &opBatch{nextBlock: maxBlockID(doc)}
+	if idScanObserver != nil {
+		idScanObserver("comment")
+	}
+	for _, c := range doc.Comments {
+		b.nextBlock = max(b.nextBlock, idNumber(c.BlockID, "b_"))
+		b.nextComment = max(b.nextComment, idNumber(c.ID, "c_"))
+	}
+	b.assignMissing(doc)
+	return b
+}
+
+// assignMissing gives every block of doc without an id the next b_N from the
+// batch counter. applyOpsMutating runs it before the first op and after the
+// last, so children an update_block or patch_block brought in without ids are
+// numbered from the same counter as inserts, never from a fresh seed that
+// could hand out an id deleted earlier in the batch.
+func (b *opBatch) assignMissing(doc *Document) {
+	for si := range doc.Sections {
+		ensureBlockIDsSlice(&doc.Sections[si].Blocks, &b.nextBlock)
+	}
+}
+
+// cloneBlocks deep-copies the Children tree of bs, so ids assigned to an
+// inserted block's subtree are written to the document's copy, never to the
+// caller's op payload (which a dry run must leave as it was, and which a
+// caller may apply again).
+func cloneBlocks(bs []Block) []Block {
+	if bs == nil {
+		return nil
+	}
+	out := make([]Block, len(bs))
+	for i := range bs {
+		out[i] = bs[i]
+		out[i].Children = cloneBlocks(bs[i].Children)
+	}
+	return out
 }
 
 // noteBlockIDs raises the block counter past every b_N in blocks (and their
@@ -233,12 +272,15 @@ func insertBlock(doc *Document, op Op, batch *opBatch) error {
 	if b.ID != "" && findBlockPtr(doc, b.ID) != nil {
 		return fmt.Errorf("insert_block: duplicate block id %q", b.ID)
 	}
-	next := max(batch.nextBlock, maxBlockIDIn([]Block{b}))
+	// A batch stops at its first failing op, so the counter can move before
+	// the insert is placed: no later op sees it if the insert is refused.
+	batch.noteBlockIDs([]Block{b})
 	if b.ID == "" {
-		next++
-		b.ID = fmt.Sprintf("b_%d", next)
+		batch.nextBlock++
+		b.ID = fmt.Sprintf("b_%d", batch.nextBlock)
 	}
-	ensureBlockIDsSlice(&b.Children, &next)
+	b.Children = cloneBlocks(b.Children)
+	ensureBlockIDsSlice(&b.Children, &batch.nextBlock)
 
 	if op.ParentBlockID != "" {
 		parent := findBlockPtr(doc, op.ParentBlockID)
@@ -248,23 +290,13 @@ func insertBlock(doc *Document, op Op, batch *opBatch) error {
 		if parent.Kind == BlockSynced {
 			return fmt.Errorf("insert_block: cannot nest under synced block")
 		}
-		return batch.placed(next, insertIntoSlice(&parent.Children, b, op.Index))
+		return insertIntoSlice(&parent.Children, b, op.Index)
 	}
 	si, err := sectionIndex(doc, op.SectionID)
 	if err != nil {
 		return err
 	}
-	return batch.placed(next, insertIntoSlice(&doc.Sections[si].Blocks, b, op.Index))
-}
-
-// placed records next as the block counter once an insert has succeeded, and
-// passes err through. A refused insert leaves the counter alone: none of the
-// ids it would have assigned reached the document.
-func (b *opBatch) placed(next int, err error) error {
-	if err == nil {
-		b.nextBlock = next
-	}
-	return err
+	return insertIntoSlice(&doc.Sections[si].Blocks, b, op.Index)
 }
 
 func insertIntoSlice(blocks *[]Block, b Block, index *int) error {
@@ -684,21 +716,10 @@ func isSyncSource(doc *Document, id string) bool {
 }
 
 // idScanObserver, when set, is told about every whole-document id scan ("block"
-// or "comment"). Tests set it to prove an ops batch scans a constant number of
+// or "comment"). It is a plain variable, not synchronised: only tests set it,
+// and none of them runs in parallel with another ApplyOps. Tests set it to prove an ops batch scans a constant number of
 // times however many ops it holds; it is nil, and costs one nil check, otherwise.
 var idScanObserver func(kind string)
-
-// maxCommentID is the highest N among the document's c_N comment ids (0 for none).
-func maxCommentID(doc *Document) int {
-	if idScanObserver != nil {
-		idScanObserver("comment")
-	}
-	m := 0
-	for _, c := range doc.Comments {
-		m = max(m, idNumber(c.ID, "c_"))
-	}
-	return m
-}
 
 // maxBlockID is the highest N among the document's b_N block ids (0 for none).
 func maxBlockID(doc *Document) int {
