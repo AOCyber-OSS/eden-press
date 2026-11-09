@@ -129,3 +129,48 @@ func TestNesting_N17_SpansAfterATrimmedLineSliceTheInput(t *testing.T) {
 		t.Fatalf("last block %+v: span does not slice %q out of the input", last, "after")
 	}
 }
+
+// Review findings on #37 (/code-review): the lexical pre-parse scan disagreed
+// with goldmark, so it could be bypassed or could corrupt content.
+//
+//	N18 a fence the scan thought was open (inside a list item, inside HTML)
+//	    must not let a deep line through unbounded
+//	N19 fenced code inside a quote keeps a 40-'>' code line byte for byte
+//	N20 a thematic break inside a quote is a divider, not 40 list markers
+
+func TestNesting_N18_NoFenceDesyncBypass(t *testing.T) {
+	deep := strings.Repeat("- ", 12000) + "x\n"
+	for _, prefix := range []string{"- a\n  ```\nb\n\n", "<div>\n```\n</div>\n\n"} {
+		bounded(t, 200*time.Millisecond, func() {
+			if _, err := FromMarkdown(prefix+deep, FromMarkdownOptions{Lenient: true}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestNesting_N19_CodeInsideAQuoteIsKept(t *testing.T) {
+	line := strings.Repeat(">", 40) + " code"
+	md := "> ```\n> " + line + "\n> ```\n"
+	for _, lenient := range []bool{false, true} {
+		doc, err := FromMarkdown(md, FromMarkdownOptions{Lenient: lenient})
+		if err != nil {
+			t.Fatalf("lenient=%v: %v", lenient, err)
+		}
+		q := doc.Sections[0].Blocks[0]
+		if len(q.Children) != 1 || q.Children[0].Kind != BlockCode || q.Children[0].Text != line {
+			t.Fatalf("lenient=%v: quote = %+v, want one code child %q", lenient, q, line)
+		}
+	}
+}
+
+func TestNesting_N20_ThematicBreakInsideAQuote(t *testing.T) {
+	doc, err := FromMarkdown("> a\n>\n> "+strings.Repeat("- ", 40)+"\n", FromMarkdownOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := doc.Sections[0].Blocks[0]
+	if len(q.Children) != 1 || q.Children[0].Kind != BlockDivider {
+		t.Fatalf("quote = %+v, want text a and one divider child", q)
+	}
+}

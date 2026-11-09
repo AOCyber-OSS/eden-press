@@ -57,6 +57,22 @@ func decodeDocument(docJSON []byte, fn string) (*model.Document, error) {
 	return &doc, nil
 }
 
+// FlattenNestingJSON repairs a stored document nested past
+// model.MaxNestingDepth (one written before the limit), which every other
+// function here refuses: model.FlattenNesting moves the blocks below the
+// deepest allowed container into it, in document order, and lowers list item
+// levels, so no block is dropped. Ids are kept, so comments stay anchored. It
+// is the one function here that decodes a document without the limit; the
+// walk is linear, and the compact output is linear in the input.
+func FlattenNestingJSON(docJSON []byte) ([]byte, error) {
+	var doc model.Document
+	if err := json.Unmarshal(docJSON, &doc); err != nil {
+		return nil, fmt.Errorf("press.FlattenNestingJSON: %w", err)
+	}
+	model.FlattenNesting(&doc)
+	return json.Marshal(&doc)
+}
+
 // NewDocJSON returns a fresh empty docmodel page as JSON (create_page for
 // agents). Title is stored in model.meta.directives.title when non-empty.
 // The CLI imports only press/, so agents reach chase/model through these

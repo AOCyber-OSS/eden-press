@@ -46,8 +46,8 @@ import (
 //	   an UnrepresentableError naming nesting-depth
 //	P4 byte-API output grows linearly with depth (compact JSON: the bytes per
 //	   level do not grow with the level)
-//	P5 ImportMarkdownModelJSON (the press.Render path) refuses a list nested
-//	   past the limit
+//	P5 ImportMarkdownModelJSON (the press.Render path) returns a list nested
+//	   past the limit within the limit, its deepest text kept
 
 // chainJSON is a one-section document whose blocks nest depth deep: depth-1
 // quotes, each the only child of the one above, and a divider at the bottom.
@@ -165,15 +165,24 @@ func TestNesting_P4_ByteAPIOutputGrowsLinearlyWithDepth(t *testing.T) {
 	}
 }
 
-func TestNesting_P5_ImportMarkdownModelJSONRefusesDeepLists(t *testing.T) {
+func TestNesting_P5_ImportMarkdownModelJSONStaysWithinTheLimit(t *testing.T) {
 	var md strings.Builder
-	for k := 0; k <= model.MaxNestingDepth; k++ {
+	for k := 0; k <= model.MaxNestingDepth+4; k++ {
 		fmt.Fprintf(&md, "%s- i%d\n", strings.Repeat("  ", k), k)
 	}
-	_, err := ImportMarkdownModelJSON([]byte(md.String()), Options{})
-	var ne *model.NestingDepthError
-	if !errors.As(err, &ne) {
-		t.Fatalf("err = %v, want *model.NestingDepthError", err)
+	out, err := ImportMarkdownModelJSON([]byte(md.String()), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc model.Document
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.ValidateNesting(&doc); err != nil {
+		t.Fatalf("the press.Render import came back past the limit: %v", err)
+	}
+	if !strings.Contains(string(out), fmt.Sprintf("i%d", model.MaxNestingDepth+4)) {
+		t.Fatal("the deepest item's text was lost")
 	}
 }
 
@@ -194,5 +203,37 @@ func BenchmarkGetDocJSONDepth(b *testing.B) {
 			}
 			b.ReportMetric(float64(n), "bytes")
 		})
+	}
+}
+
+// Review findings on #37:
+//
+//	P6 ImportMarkdownModelJSON (press.Render's goldmark) is bounded too: a
+//	   one-line deep list returns quickly
+//	P7 FlattenNestingJSON repairs a stored document from before the limit:
+//	   the result passes every entry point and keeps every block's text
+
+func TestNesting_P6_RenderPathParseIsBounded(t *testing.T) {
+	md := strings.Repeat("- ", 12000) + "x"
+	start := time.Now()
+	_, _ = ImportMarkdownModelJSON([]byte(md), Options{})
+	if d := time.Since(start); !testing.Short() && d > 500*time.Millisecond {
+		t.Fatalf("ImportMarkdownModelJSON of 12000 list markers took %v", d)
+	}
+}
+
+func TestNesting_P7_FlattenNestingJSONRepairsAStoredDocument(t *testing.T) {
+	in := chainJSON(t, model.MaxNestingDepth+8)
+	out, err := FlattenNestingJSON(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GetDocJSON(out); err != nil {
+		t.Fatalf("repaired document is still refused: %v", err)
+	}
+	for n := 1; n < model.MaxNestingDepth+8; n++ {
+		if !strings.Contains(string(out), fmt.Sprintf(`"l%d"`, n)) {
+			t.Fatalf("l%d lost in repair", n)
+		}
 	}
 }
