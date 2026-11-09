@@ -286,23 +286,15 @@ Widget buildDocBlock(
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: const Color(0xFFE0E0E0)),
         ),
-        child: HighlightView(
-          block.text,
-          languageId: block.language.isEmpty ? 'plaintext' : block.language,
-          theme: githubTheme,
-          textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-        ),
+        child: _code(block),
       );
     case BlockKind.math:
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Math.tex(
-          block.text,
-          mathStyle: block.display ? MathStyle.display : MathStyle.text,
-        ),
+        child: _math(block),
       );
     case BlockKind.table:
-      return _table(block);
+      return _BudgetedTable(block);
     case BlockKind.image:
       return _imageCard(
         caption: block.text.isEmpty ? block.src : block.text,
@@ -346,54 +338,260 @@ Widget buildDocBlock(
   }
 }
 
-Widget _table(Block block) {
-  final columns = block.headers.isNotEmpty
-      ? block.headers.length
-      : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
-  if (columns == 0) return const SizedBox.shrink();
+const _codeStyle = TextStyle(fontFamily: 'monospace', fontSize: 13);
 
-  // [runs] is the row's slice of headerRuns / rowRuns, or null for a plain row.
-  // It is indexed by the row's own cells (a ragged row has fewer than
-  // [columns]), never by the header width.
-  TableRow row(
-    List<String> cells,
-    List<List<TextRun>?>? runs, {
-    required bool header,
-  }) => TableRow(
-    children: List<Widget>.generate(columns, (i) {
-      final text = i < cells.length ? cells[i] : '';
-      final style = header
-          ? const TextStyle(fontWeight: FontWeight.w600)
-          : null;
-      final cellRuns = runs != null && i < cells.length && i < runs.length
-          ? runs[i]
-          : null;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: cellRuns == null || cellRuns.isEmpty
-            ? Text(text, style: style)
-            : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
-      );
-    }),
-  );
-
-  return Container(
-    margin: const EdgeInsets.symmetric(vertical: 8),
-    child: Table(
-      border: TableBorder.all(color: const Color(0xFFDADCE0), width: 0.5),
-      children: [
-        if (block.headers.isNotEmpty)
-          row(block.headers, block.headerRuns, header: true),
-        for (var r = 0; r < block.rows.length; r++)
-          row(
-            block.rows[r],
-            r < block.rowRuns.length ? block.rowRuns[r] : null,
-            header: false,
-          ),
-      ],
-    ),
+/// A code block: highlighted up to [maxHighlightedCodeLength], plain
+/// monospace text above it (flutter_highlighting took 123 s on 400 KB), and
+/// cut at [maxPlainCodeLength] with a count of what is not shown, since one
+/// huge paragraph is itself slow to lay out (eden-press#32).
+Widget _code(Block block) {
+  final text = block.text;
+  if (text.length <= maxHighlightedCodeLength) {
+    return HighlightView(
+      text,
+      languageId: block.language.isEmpty ? 'plaintext' : block.language,
+      theme: githubTheme,
+      textStyle: _codeStyle,
+    );
+  }
+  if (text.length <= maxPlainCodeLength) return Text(text, style: _codeStyle);
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(text.substring(0, maxPlainCodeLength), style: _codeStyle),
+      _budgetNote(
+        '${text.length - maxPlainCodeLength} more characters are not shown.',
+      ),
+    ],
   );
 }
+
+/// A math block: typeset by flutter_math_fork when the TeX is within
+/// [maxMathTexLength] and [maxMathBraceDepth], otherwise shown as its TeX
+/// source, as it is when the TeX does not parse. 3000 nested \frac overflowed
+/// the stack inside the typesetter, so the budget is checked before it runs
+/// (eden-press#32).
+Widget _math(Block block) {
+  final tex = block.text;
+  if (tex.length > maxMathTexLength || braceDepth(tex) > maxMathBraceDepth) {
+    return _texSource(tex);
+  }
+  return Math.tex(
+    tex,
+    mathStyle: block.display ? MathStyle.display : MathStyle.text,
+    onErrorFallback: (_) => _texSource(tex),
+  );
+}
+
+Widget _texSource(String tex) => Text(tex, style: _codeStyle);
+
+/// The deepest `{` nesting in [tex], ignoring escaped braces (`\{`). It stops
+/// counting once past [maxMathBraceDepth]; the walk is linear either way.
+int braceDepth(String tex) {
+  var depth = 0;
+  var deepest = 0;
+  for (var i = 0; i < tex.length; i++) {
+    final c = tex.codeUnitAt(i);
+    if (c == 0x5C) {
+      i++; // skip the escaped character
+    } else if (c == 0x7B) {
+      depth++;
+      if (depth > deepest) deepest = depth;
+      if (deepest > maxMathBraceDepth) return deepest;
+    } else if (c == 0x7D && depth > 0) {
+      depth--;
+    }
+  }
+  return deepest;
+}
+
+Widget _budgetNote(String text) => Padding(
+  padding: const EdgeInsets.only(top: 6),
+  child: Text(
+    text,
+    style: const TextStyle(fontSize: 13, color: Color(0xFF5F6368)),
+  ),
+);
+
+/// A table block. Within [maxTableRowsPainted] rows and
+/// [maxTableColumnsPainted] columns it is the plain Table it always was.
+/// Past either budget (eden-press#32: a 20000x20 table never finished one
+/// frame, and 5000 columns took 9.8 s) it paints at most that many columns,
+/// in fixed-width cells that scroll horizontally, and at most that many
+/// rows, with "Show all N rows" switching to a list that builds rows only as
+/// they scroll into view.
+class _BudgetedTable extends StatefulWidget {
+  const _BudgetedTable(this.block);
+
+  final Block block;
+
+  @override
+  State<_BudgetedTable> createState() => _BudgetedTableState();
+}
+
+class _BudgetedTableState extends State<_BudgetedTable> {
+  bool _showAll = false;
+
+  static const double _cellWidth = 160;
+  static const double _allRowsHeight = 480;
+
+  @override
+  Widget build(BuildContext context) {
+    final block = widget.block;
+    final columns = block.headers.isNotEmpty
+        ? block.headers.length
+        : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
+    if (columns == 0) return const SizedBox.shrink();
+    final shownColumns = columns > maxTableColumnsPainted
+        ? maxTableColumnsPainted
+        : columns;
+    final overBudget =
+        columns > maxTableColumnsPainted ||
+        block.rows.length > maxTableRowsPainted;
+    if (!overBudget) {
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: Table(
+          border: _tableBorder,
+          children: [
+            if (block.headers.isNotEmpty)
+              _tableRow(block.headers, block.headerRuns, columns, header: true),
+            for (var r = 0; r < block.rows.length; r++)
+              _tableRow(block.rows[r], _rowRuns(block, r), columns),
+          ],
+        ),
+      );
+    }
+
+    final width = _cellWidth * shownColumns;
+    final rowCount = block.rows.length;
+    final Widget body;
+    if (_showAll) {
+      body = SizedBox(
+        width: width,
+        height: _allRowsHeight,
+        child: ListView.builder(
+          key: const Key('eden-docs-table-rows'),
+          itemCount: rowCount,
+          itemExtent: 32,
+          itemBuilder: (context, r) =>
+              _fixedRow(block.rows[r], _rowRuns(block, r), shownColumns),
+        ),
+      );
+    } else {
+      final shownRows = rowCount > maxTableRowsPainted
+          ? maxTableRowsPainted
+          : rowCount;
+      body = Table(
+        border: _tableBorder,
+        defaultColumnWidth: const FixedColumnWidth(_cellWidth),
+        children: [
+          for (var r = 0; r < shownRows; r++)
+            _tableRow(block.rows[r], _rowRuns(block, r), shownColumns),
+        ],
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (block.headers.isNotEmpty)
+                  Table(
+                    border: _tableBorder,
+                    defaultColumnWidth: const FixedColumnWidth(_cellWidth),
+                    children: [
+                      _tableRow(
+                        block.headers,
+                        block.headerRuns,
+                        shownColumns,
+                        header: true,
+                      ),
+                    ],
+                  ),
+                body,
+              ],
+            ),
+          ),
+          if (columns > shownColumns)
+            _budgetNote(
+              '${columns - shownColumns} more columns are not shown '
+              '($shownColumns of $columns).',
+            ),
+          if (!_showAll && rowCount > maxTableRowsPainted)
+            TextButton(
+              onPressed: () => setState(() => _showAll = true),
+              child: Text('Show all $rowCount rows'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+final _tableBorder = TableBorder.all(
+  color: const Color(0xFFDADCE0),
+  width: 0.5,
+);
+
+/// Row [r]'s slice of the table's rowRuns, or null for a plain row.
+List<List<TextRun>?>? _rowRuns(Block block, int r) =>
+    r < block.rowRuns.length ? block.rowRuns[r] : null;
+
+/// One table cell. [runs] is the row's slice of headerRuns / rowRuns, or null
+/// for a plain row; it is indexed by the row's own cells (a ragged row has
+/// fewer than the table's columns), never by the header width.
+Widget _tableCell(
+  List<String> cells,
+  List<List<TextRun>?>? runs,
+  int i, {
+  bool header = false,
+}) {
+  final text = i < cells.length ? cells[i] : '';
+  final style = header ? const TextStyle(fontWeight: FontWeight.w600) : null;
+  final cellRuns = runs != null && i < cells.length && i < runs.length
+      ? runs[i]
+      : null;
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    child: cellRuns == null || cellRuns.isEmpty
+        ? Text(text, style: style)
+        : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
+  );
+}
+
+TableRow _tableRow(
+  List<String> cells,
+  List<List<TextRun>?>? runs,
+  int columns, {
+  bool header = false,
+}) => TableRow(
+  children: List<Widget>.generate(
+    columns,
+    (i) => _tableCell(cells, runs, i, header: header),
+  ),
+);
+
+/// A row of the lazy "Show all" list: the same cells as [_tableRow], in
+/// fixed-width boxes so the columns line up without a Table.
+Widget _fixedRow(List<String> cells, List<List<TextRun>?>? runs, int columns) =>
+    Row(
+      children: [
+        for (var i = 0; i < columns; i++)
+          Container(
+            width: _BudgetedTableState._cellWidth,
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFDADCE0), width: 0.5),
+            ),
+            child: _tableCell(cells, runs, i),
+          ),
+      ],
+    );
 
 Widget _sheetEmbed(Block block) {
   final embed = block.sheetEmbed ?? const <String, dynamic>{};

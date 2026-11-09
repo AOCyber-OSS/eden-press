@@ -125,16 +125,23 @@ void main() {
 
   testWidgets('B2 Show all pages the rows lazily', (tester) async {
     await timedPump(tester, docOf([tableBlock(20000, 20)]));
-    await tester.tap(find.text('Show all 20000 rows'));
+    final showAll = find.text('Show all 20000 rows');
+    await tester.ensureVisible(showAll);
+    await tester.pump();
+    await tester.tap(showAll);
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('r0c0'), findsOneWidget);
+    expect(find.text('Show all 20000 rows'), findsNothing);
     expect(find.text('r19999c0'), findsNothing);
-    await tester.scrollUntilVisible(
-      find.text('r19999c0'),
-      200000,
-      scrollable: find.byKey(const Key('eden-docs-table-rows')),
+    // Jump the row list to its end: the last row is built only now.
+    final rows = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const Key('eden-docs-table-rows')),
+        matching: find.byType(Scrollable),
+      ),
     );
+    rows.position.jumpTo(rows.position.maxScrollExtent);
+    await tester.pump();
     expect(find.text('r19999c0'), findsOneWidget);
   });
 
