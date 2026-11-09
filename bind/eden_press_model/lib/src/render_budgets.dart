@@ -52,7 +52,10 @@ const int maxMathTexLength = 2048;
 const int maxMathBraceDepth = 32;
 
 /// Code longer than this is shown as plain monospace text, not highlighted.
-const int maxHighlightedCodeLength = 20000;
+/// flutter_highlighting runs on the build path and re-runs on every rebuild:
+/// 10000 characters of JavaScript took 0.7-1.2 s and 20000 took 2.5-3.1 s
+/// (JIT), so the budget keeps a highlight to a fraction of a frame budget.
+const int maxHighlightedCodeLength = 2000;
 
 /// Plain code text painted. Longer code shows this much and says how many
 /// characters are not shown: one 400 KB paragraph is itself slow to lay out.
