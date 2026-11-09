@@ -151,6 +151,15 @@ const (
 	// end of its container. Lenient: it runs to the end of the container.
 	ConstructDirectiveUnclosed = "directive-unclosed"
 
+	// ConstructNestingDepth is a block nested deeper than MaxNestingDepth
+	// (quotes, todos and directives inside one another), or a list item whose
+	// depth (its list's depth plus its Level) is. Offset is where the first
+	// block past the limit starts. Lenient: every block below the deepest
+	// allowed container becomes that container's child, in document order (the
+	// tree below the limit is flattened, nothing is dropped), and a list item's
+	// Level is lowered to the deepest allowed.
+	ConstructNestingDepth = "nesting-depth"
+
 	// ConstructUnsupported is a Markdown node this codec version does not
 	// read at all. Lenient: it is skipped.
 	ConstructUnsupported = "unsupported"
