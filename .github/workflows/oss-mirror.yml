@@ -54,6 +54,27 @@ jobs:
           # a literal, not expanded here: git runs it as a shell function and its shell expands $1 and $TOKEN
           HELPER: '!f() { test "$1" = get || exit 0; while IFS= read -r l && test -n "$l"; do :; done; echo username=x-access-token; echo "password=$TOKEN"; }; f'
         run: |
+          # A tag-triggered run: actions/checkout first fetches +refs/tags/*, which brings the annotated tag, then
+          # re-fetches the triggering ref as +<sha>:refs/tags/<name>, which rewrites refs/tags/<name> to point at the
+          # commit directly. Pushed as is, the public copy gets a lightweight tag, and every later run (which holds the
+          # annotated one) is refused with "already exists" (eden-press#27). The tag object from the first fetch is
+          # still in the object store, so restore the ref to it before pushing. No network and no credential: the
+          # object is found locally by its "tag <name>" and "object <sha>" header lines.
+          if test "$GITHUB_REF_TYPE" = tag; then
+            tagobj=$(git cat-file --batch-all-objects --batch-check='%(objectname) %(objecttype)' \
+              | awk '$2 == "tag" { print $1 }' \
+              | while read -r o; do
+                  if git cat-file tag "$o" | sed '/^$/q' | grep -qx "tag $GITHUB_REF_NAME" &&
+                     git cat-file tag "$o" | sed '/^$/q' | grep -qx "object $GITHUB_SHA"; then echo "$o"; fi
+                done | head -n 1)
+            if test -n "$tagobj"; then
+              git update-ref "refs/tags/$GITHUB_REF_NAME" "$tagobj"
+            else
+              # A lightweight tag pushed here has no tag object; that is the only case this branch is right for.
+              echo "::warning::no annotated tag object for $GITHUB_REF_NAME at $GITHUB_SHA; pushing it as a lightweight tag"
+            fi
+            echo "refs/tags/$GITHUB_REF_NAME is a $(git cat-file -t "refs/tags/$GITHUB_REF_NAME")"
+          fi
           git config --local --replace-all credential.helper ''
           git config --local --add credential.helper "$HELPER"
           # the default branch comes from its remote-tracking ref: a tag-triggered run checks out the tag, not the branch
