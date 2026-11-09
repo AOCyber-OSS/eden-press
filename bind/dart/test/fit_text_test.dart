@@ -51,73 +51,64 @@ const _longHeading =
 
 void main() {
   group('computeFitFontSize', () {
-    test(
-      'Case 1: text that already fits at maxFontSize returns maxFontSize '
-      '(shrink-only, never upscales)',
-      () {
-        const style = TextStyle();
-        final fitted = computeFitFontSize(
-          'Hi',
-          const BoxConstraints(maxWidth: 400, maxHeight: 200),
-          style: style,
-          maxFontSize: 24,
-          minFontSize: 8,
-        );
-        expect(fitted, 24.0);
-      },
-    );
+    test('Case 1: text that already fits at maxFontSize returns maxFontSize '
+        '(shrink-only, never upscales)', () {
+      const style = TextStyle();
+      final fitted = computeFitFontSize(
+        'Hi',
+        const BoxConstraints(maxWidth: 400, maxHeight: 200),
+        style: style,
+        maxFontSize: 24,
+        minFontSize: 8,
+      );
+      expect(fitted, 24.0);
+    });
 
-    test(
-      'Case 2: a long heading in narrow constraints returns < maxFontSize '
-      'and does not overflow (height/width both within bounds)',
-      () {
-        const style = TextStyle();
-        const constraints = BoxConstraints(maxWidth: 120, maxHeight: 100);
+    test('Case 2: a long heading in narrow constraints returns < maxFontSize '
+        'and does not overflow (height/width both within bounds)', () {
+      const style = TextStyle();
+      const constraints = BoxConstraints(maxWidth: 120, maxHeight: 100);
 
-        final fitted = computeFitFontSize(
-          _longHeading,
-          constraints,
-          style: style,
-          maxFontSize: 48,
-          minFontSize: 8,
-        );
-        expect(fitted, lessThan(48.0));
+      final fitted = computeFitFontSize(
+        _longHeading,
+        constraints,
+        style: style,
+        maxFontSize: 48,
+        minFontSize: 8,
+      );
+      expect(fitted, lessThan(48.0));
 
-        final tp = TextPainter(
-          text: TextSpan(
-            text: _longHeading,
-            style: style.copyWith(fontSize: fitted),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout(maxWidth: constraints.maxWidth);
-        expect(tp.height, lessThanOrEqualTo(constraints.maxHeight));
-        expect(tp.width, lessThanOrEqualTo(constraints.maxWidth));
-        expect(tp.didExceedMaxLines, isFalse);
-      },
-    );
+      final tp = TextPainter(
+        text: TextSpan(
+          text: _longHeading,
+          style: style.copyWith(fontSize: fitted),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: constraints.maxWidth);
+      expect(tp.height, lessThanOrEqualTo(constraints.maxHeight));
+      expect(tp.width, lessThanOrEqualTo(constraints.maxWidth));
+      expect(tp.didExceedMaxLines, isFalse);
+    });
 
-    test(
-      'Case 3: monotonic -- a wider constraint fits >= a narrower '
-      "constraint's fitted size, for the same text",
-      () {
-        const style = TextStyle();
-        final narrow = computeFitFontSize(
-          _longHeading,
-          const BoxConstraints(maxWidth: 100, maxHeight: 200),
-          style: style,
-          maxFontSize: 48,
-          minFontSize: 8,
-        );
-        final wide = computeFitFontSize(
-          _longHeading,
-          const BoxConstraints(maxWidth: 400, maxHeight: 200),
-          style: style,
-          maxFontSize: 48,
-          minFontSize: 8,
-        );
-        expect(wide, greaterThanOrEqualTo(narrow));
-      },
-    );
+    test('Case 3: monotonic -- a wider constraint fits >= a narrower '
+        "constraint's fitted size, for the same text", () {
+      const style = TextStyle();
+      final narrow = computeFitFontSize(
+        _longHeading,
+        const BoxConstraints(maxWidth: 100, maxHeight: 200),
+        style: style,
+        maxFontSize: 48,
+        minFontSize: 8,
+      );
+      final wide = computeFitFontSize(
+        _longHeading,
+        const BoxConstraints(maxWidth: 400, maxHeight: 200),
+        style: style,
+        maxFontSize: 48,
+        minFontSize: 8,
+      );
+      expect(wide, greaterThanOrEqualTo(narrow));
+    });
   });
 
   group('FitText widget', () {
@@ -154,34 +145,27 @@ void main() {
   });
 
   group('JS-free assertion (DART-04 extended to auto-fit)', () {
-    test(
-      'Case 5: fit_text.dart and render_surface.dart import no JS-interop / '
-      'web-only-package / embedded-browser-surface dependency',
-      () {
-        const forbidden = ['dart:js', 'package:web', 'webview'];
-        for (final relativePath in [
-          'lib/src/fit_text.dart',
-          'lib/src/render_surface.dart',
-        ]) {
-          final file = File(relativePath);
+    test('Case 5: fit_text.dart and render_surface.dart import no JS-interop / '
+        'web-only-package / embedded-browser-surface dependency', () {
+      const forbidden = ['dart:js', 'package:web', 'webview'];
+      for (final relativePath in [
+        'lib/src/fit_text.dart',
+        'lib/src/render_surface.dart',
+      ]) {
+        final file = File(relativePath);
+        expect(file.existsSync(), isTrue, reason: 'run tests from bind/dart/');
+        final source = file.readAsStringSync();
+        for (final needle in forbidden) {
           expect(
-            file.existsSync(),
-            isTrue,
-            reason: 'run tests from bind/dart/',
+            source.contains(needle),
+            isFalse,
+            reason:
+                '$relativePath must not reference "$needle" anywhere -- '
+                'forbidden by the DART-04 JS-free contract extended to '
+                'auto-fit',
           );
-          final source = file.readAsStringSync();
-          for (final needle in forbidden) {
-            expect(
-              source.contains(needle),
-              isFalse,
-              reason:
-                  '$relativePath must not reference "$needle" anywhere -- '
-                  'forbidden by the DART-04 JS-free contract extended to '
-                  'auto-fit',
-            );
-          }
         }
-      },
-    );
+      }
+    });
   });
 }

@@ -186,7 +186,9 @@ class EdenPressView extends StatelessWidget {
           padding: const EdgeInsets.all(8),
           color: const Color(0xFFF5F5F5),
           child: Text(
-            block.icon.isEmpty ? _plain(block) : '${block.icon} ${_plain(block)}',
+            block.icon.isEmpty
+                ? _plain(block)
+                : '${block.icon} ${_plain(block)}',
           ),
         );
       case BlockKind.divider:
@@ -203,10 +205,15 @@ class EdenPressView extends StatelessWidget {
           style: const TextStyle(fontStyle: FontStyle.italic),
         );
       case BlockKind.figure:
-        final alt = block.text.isNotEmpty ? block.text : (block.title.isNotEmpty ? block.title : 'figure');
+        final alt = block.text.isNotEmpty
+            ? block.text
+            : (block.title.isNotEmpty ? block.title : 'figure');
         return Text(
           '[$alt]',
-          style: const TextStyle(fontStyle: FontStyle.italic, color: Color(0xFF757575)),
+          style: const TextStyle(
+            fontStyle: FontStyle.italic,
+            color: Color(0xFF757575),
+          ),
         );
       case BlockKind.paragraph:
       case BlockKind.unknown:
@@ -229,10 +236,9 @@ class EdenPressView extends StatelessWidget {
   /// that every row has equal length, and chase/model deliberately reports
   /// rows exactly as authored, so normalizing is the consumer's job.
   Widget _buildTable(Block block) {
-    final int columns =
-        block.headers.isNotEmpty
-            ? block.headers.length
-            : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
+    final int columns = block.headers.isNotEmpty
+        ? block.headers.length
+        : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
     if (columns == 0) {
       return const SizedBox.shrink();
     }
