@@ -25,6 +25,8 @@ package model
 import (
 	"fmt"
 	"strings"
+
+	"go.aocyber.ai/eden-press/chase/markdown"
 )
 
 // MaxNestingDepth is the deepest a block may nest: a section's own blocks are
@@ -37,7 +39,10 @@ import (
 // "> > > ..." became hundreds of MB of indented JSON, and the Flutter renderer
 // hung on the nested layout. 32 is far deeper than any document a person
 // writes and shallow enough that every later step stays linear.
-const MaxNestingDepth = 32
+//
+// It is defined as markdown.MaxContainerNesting, the bound on goldmark's own
+// parse, so the parse and the model can never disagree on the number.
+const MaxNestingDepth = markdown.MaxContainerNesting
 
 // NestingDepthError reports a decoded document, or the result of an op, that
 // nests past MaxNestingDepth.
@@ -170,6 +175,20 @@ func findBlockDepth(doc *Document, id string) (*Block, int) {
 		}
 	}
 	return nil, 0
+}
+
+// FlattenNesting rewrites d so ValidateNesting accepts it, with lenient
+// FromMarkdown's mapping (flattenNesting): blocks below the deepest allowed
+// container become its children in document order, and list item levels are
+// lowered. No block is dropped. It is the repair for a stored document from
+// before the limit, which the press byte APIs otherwise refuse.
+func FlattenNesting(d *Document) {
+	if d == nil {
+		return
+	}
+	for si := range d.Sections {
+		flattenNesting(d.Sections[si].Blocks, 1)
+	}
 }
 
 // flattenNesting is lenient FromMarkdown's mapping for ConstructNestingDepth.

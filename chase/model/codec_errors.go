@@ -154,10 +154,13 @@ const (
 	// ConstructNestingDepth is a block nested deeper than MaxNestingDepth
 	// (quotes, todos and directives inside one another), or a list item whose
 	// depth (its list's depth plus its Level) is. Offset is where the first
-	// block past the limit starts. Lenient: every block below the deepest
-	// allowed container becomes that container's child, in document order (the
-	// tree below the limit is flattened, nothing is dropped), and a list item's
-	// Level is lowered to the deepest allowed.
+	// block past the limit starts. Lenient: a quote or list marker past the
+	// limit is not opened at all (the parse is bounded there, see
+	// markdown.MaxContainerNesting), so it and the rest of its line read as
+	// text of the deepest open block; anything still deeper (directive
+	// containers) is flattened: every block below the deepest allowed
+	// container becomes that container's child, in document order, and a list
+	// item's Level is lowered to the deepest allowed. No text is dropped.
 	ConstructNestingDepth = "nesting-depth"
 
 	// ConstructUnsupported is a Markdown node this codec version does not

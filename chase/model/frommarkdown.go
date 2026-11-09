@@ -45,6 +45,8 @@ import (
 	"github.com/yuin/goldmark/util"
 
 	"go.aocyber.ai/eden-press/chase/directive"
+
+	"go.aocyber.ai/eden-press/chase/markdown"
 )
 
 // FromMarkdownOptions configures FromMarkdown.
@@ -131,17 +133,15 @@ func FromMarkdown(md string, opts FromMarkdownOptions) (*Document, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	body, drops, at := limitLinePrefixes(md[bodyStart:], opts.Lenient)
-	if at >= 0 {
-		return nil, &UnrepresentableError{Offset: bodyStart + at, Construct: ConstructNestingDepth, Detail: fmt.Sprintf("more than %d container markers on one line", MaxNestingDepth)}
-	}
-	r.src = []byte(body)
+	r.src = []byte(md[bodyStart:])
 	r.base = bodyStart
-	for i := range drops {
-		drops[i] += bodyStart
+	pc := parser.NewContext()
+	root := mdEngine.Parser().Parse(text.NewReader(r.src), parser.WithContext(pc))
+	if at, ok := pc.Get(markdown.NestingLimitKey).(int); ok {
+		// The parse declined a container past the limit; its marker and the
+		// rest of the line were read as text (lenient's mapping).
+		r.refuse(at, ConstructNestingDepth, fmt.Sprintf("more than %d nested quotes or list items", MaxNestingDepth))
 	}
-	r.trimAt = drops
-	root := mdEngine.Parser().Parse(text.NewReader(r.src))
 
 	doc := &Document{
 		SchemaVersion: SchemaVersion,
@@ -264,7 +264,10 @@ var mdEngine = goldmark.New(
 // a change to go.mod.
 func newCodecParser() parser.Parser {
 	var blocks []util.PrioritizedValue
-	for _, pv := range parser.DefaultBlockParsers() {
+	// The container parsers are bounded at MaxNestingDepth (see
+	// markdown.NestingLimitedBlockParsers): goldmark's parse is otherwise
+	// quadratic in the containers one line opens.
+	for _, pv := range markdown.NestingLimitedBlockParsers() {
 		if bp, ok := pv.Value.(parser.BlockParser); ok && bytes.IndexByte(bp.Trigger(), '`') >= 0 {
 			pv.Value = &guardedFence{bp}
 		}
@@ -300,10 +303,6 @@ type mdReader struct {
 
 	spans bool  // Spans were asked for
 	crAt  []int // see normalizeNewlines
-
-	// trimAt lists, for each byte limitLinePrefixes deleted from the body,
-	// its offset in the normalized input as read (base included); see orig.
-	trimAt []int
 }
 
 // refuse records the first strict-mode refusal. Callers go on to apply the
@@ -1474,9 +1473,6 @@ func (r *mdReader) localSpan(n ast.Node) (int, int, bool) {
 // normalizeNewlines took out before the position.
 func (r *mdReader) orig(off int) int {
 	p := r.base + off
-	// Undo the lenient prefix trim first (each deleted byte at or before p
-	// shifts it right by one), then the CRLF normalization.
-	p += sort.SearchInts(r.trimAt, p+1)
 	return p + sort.SearchInts(r.crAt, p)
 }
 

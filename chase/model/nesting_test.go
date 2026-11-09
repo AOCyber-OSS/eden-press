@@ -46,8 +46,8 @@ import (
 //	N4  lenient flattening keeps every nested block's text, in document order
 //	    (directive containers reach the tree flattening; quote lines past the
 //	    limit are trimmed before the parse and keep their text in order)
-//	N5  nested lists: strict refuses an item past the limit; lenient lowers its
-//	    Level so the item's depth is the limit
+//	N5  nested lists: strict refuses an item past the limit; lenient reads its
+//	    marker as text of the item above, so the depth is the limit
 //	N6  ValidateNesting: depth MaxNestingDepth is fine, one more is a
 //	    *NestingDepthError naming the path; list levels count
 //	N7  ValidateNesting on a 4900-deep document stops at the limit (fast)
@@ -216,9 +216,11 @@ func TestNesting_N5_NestedListLevelsCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The parse opens no list item past the limit, so the deepest line reads
+	// as text of the item above it: one item fewer, no text lost.
 	items := doc.Sections[0].Blocks[0].Items
-	if len(items) != MaxNestingDepth+1 {
-		t.Fatalf("%d items, want %d", len(items), MaxNestingDepth+1)
+	if len(items) != MaxNestingDepth || !strings.Contains(items[len(items)-1].Text, fmt.Sprintf("i%d", MaxNestingDepth)) {
+		t.Fatalf("items = %+v, want %d, the last holding i%d", items, MaxNestingDepth, MaxNestingDepth)
 	}
 	if got := maxDepth(doc); got != MaxNestingDepth {
 		t.Fatalf("depth = %d, want %d", got, MaxNestingDepth)

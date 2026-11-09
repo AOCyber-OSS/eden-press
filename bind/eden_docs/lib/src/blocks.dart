@@ -70,8 +70,8 @@ import 'rich_text.dart';
 Widget _hiddenBlocks(int hidden) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 6),
   child: Text(
-    '$hidden more blocks nested deeper than $maxNestingDepth levels are not '
-    'shown here.',
+    '$hidden more blocks are not shown here: this part of the document is '
+    'nested $maxNestingDepth levels deep.',
     style: const TextStyle(fontSize: 13, color: Color(0xFF5F6368)),
   ),
 );
@@ -84,11 +84,16 @@ Widget buildDocBlock(
   required int depth,
   required Widget Function(Block) nest,
 }) {
-  final painted = paintedChildren(block, depth);
-  final children = [
-    for (final child in painted.blocks) nest(child),
-    if (painted.hidden > 0) _hiddenBlocks(painted.hidden),
-  ];
+  // Built only by the container kinds below (quote, todo, callout, toggle);
+  // the other kinds never paint children.
+  List<Widget> children() {
+    final painted = paintedChildren(block, depth);
+    return [
+      for (final child in painted.blocks) nest(child),
+      if (painted.hidden > 0) _hiddenBlocks(painted.hidden),
+    ];
+  }
+
   switch (block.kind) {
     case BlockKind.heading:
       return Padding(
@@ -123,7 +128,7 @@ Widget buildDocBlock(
                 ),
               ),
             ),
-            ...children,
+            ...children(),
           ],
         ),
       );
@@ -212,7 +217,7 @@ Widget buildDocBlock(
               padding: const EdgeInsets.only(left: 30),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: children,
+                children: children(),
               ),
             ),
           ],
@@ -248,7 +253,7 @@ Widget buildDocBlock(
                       ),
                     ),
                   ),
-                  ...children,
+                  ...children(),
                 ],
               ),
             ),
@@ -268,7 +273,7 @@ Widget buildDocBlock(
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
-          children: children,
+          children: children(),
         ),
       );
     case BlockKind.divider:
