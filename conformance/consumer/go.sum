@@ -1,7 +1,5 @@
 codeberg.org/go-latex/latex v0.3.0 h1:LKTaDHFbEC2PH1sh0sYv6PZ1pzs/g2aoeV1HItWj/bg=
 codeberg.org/go-latex/latex v0.3.0/go.mod h1:8ETijTpK2bFtwRAXLXe1RZJrYxnc5pibibZfQBj+Lk4=
-git.sr.ht/~mekyt/latex2mathml v0.0.0-20231214134936-808832af73fc h1:Yy9H2uH0njy/owOBGyTJ0f4zESzXh0uI/RNgiDO5sEg=
-git.sr.ht/~mekyt/latex2mathml v0.0.0-20231214134936-808832af73fc/go.mod h1:nqCw5t3X5/awtU/3GdvlDY7IZbDkiNLbcf/yvegFjyc=
 git.sr.ht/~sbinet/gg v0.7.0 h1:YmNf7YKd7diDMTPm86hZa1EM3pbkOyD/zzjl0LZUdNM=
 git.sr.ht/~sbinet/gg v0.7.0/go.mod h1:VYeli15tpMM4EvqlivlVbbyvWZlOU+EZn4XZmfBGUdM=
 github.com/alecthomas/chroma/v2 v2.2.0/go.mod h1:vf4zrexSH54oEjJ7EdB65tGNHmH3pGZmVkgTP5RHvAs=

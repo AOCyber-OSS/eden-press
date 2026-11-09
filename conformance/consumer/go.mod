@@ -11,7 +11,6 @@ require go.aocyber.ai/eden-press v0.0.0
 
 require (
 	codeberg.org/go-latex/latex v0.3.0 // indirect
-	git.sr.ht/~mekyt/latex2mathml v0.0.0-20231214134936-808832af73fc // indirect
 	git.sr.ht/~sbinet/gg v0.7.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect

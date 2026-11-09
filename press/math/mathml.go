@@ -23,10 +23,15 @@
 package math
 
 import (
-	l2m "git.sr.ht/~mekyt/latex2mathml"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/util"
+
+	// The patched in-repo fork of git.sr.ht/~mekyt/latex2mathml. It is a
+	// package of this module, not a module behind a replace directive, because
+	// Go ignores a dependency's replace directives: consumers would build the
+	// unpatched upstream (eden-press#31).
+	l2m "go.aocyber.ai/eden-press/internal/latex2mathml"
 )
 
 // mathMLNamespace is the MathML namespace latex2mathml stamps onto every <math>

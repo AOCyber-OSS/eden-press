@@ -77,8 +77,8 @@ jobs:
         # provisioning, 05-02) — a font binary, not Eden Press source, so it is
         # excluded the same way conformance/corpus/cases/** is. internal/latex2mathml/**
         # is the in-repo fork of git.sr.ht/~mekyt/latex2mathml (Objective 8, 08-01) —
-        # verbatim third-party MIT (Copyright (c) 2023 mekyt), redirected via a go.mod
-        # replace; it carries mekyt's OWN LICENSE, not Eden's header, so it is excluded
+        # third-party MIT (Copyright (c) 2023 mekyt), a package of this module since #31;
+        # it carries mekyt's OWN LICENSE, not Eden's header, so it is excluded
         # the same way themes/** and convert/chrome/fonts/** are (see NOTICE). Everything
         # else must have the MIT header.
         # Flutter create scaffolds under bind/**/example/{linux,web} are
