@@ -61,6 +61,15 @@ jobs:
         # 155.0.8059.40 and on Chrome 155 for macOS.
         run: go test -p 2 -skip '^TestEndToEndP(DFAndPNG|NGWithoutInlineSVGFlag)$' ./...
 
+      - name: Test as a consumer module (eden-press#31)
+        # conformance/consumer has its own go.mod, so `go test ./...` above
+        # skips it. It builds eden-press the way a downstream module does, where
+        # eden-press's own replace directives do not apply, and fails if the
+        # graph pulls the unpatched upstream latex2mathml or \sqrt[n] loses its
+        # <mroot>.
+        working-directory: conformance/consumer
+        run: go vet ./... && go test ./...
+
       - name: Install addlicense
         run: go install github.com/google/addlicense@latest
 
