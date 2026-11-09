@@ -27,9 +27,10 @@ import "strings"
 // limitLinePrefixes bounds, before goldmark sees the body, how many container
 // markers (block quote '>' and list markers "-", "*", "+", "1." / "1)") one
 // line may open. goldmark re-reads a line's offset for every block it opens on
-// it, so its parse is quadratic in the markers on one line: '- 'x19600 took
-// 10 s, and AODex accepts 400 KB of Markdown (eden-press#29). The tree-level
-// limit (limitNesting) runs after the parse and cannot prevent that.
+// it, so its parse is quadratic in the markers on one line: twenty thousand
+// "- " took 10 s, and AODex accepts 400 KB of Markdown (eden-press#29). The
+// tree-level limit (limitNesting) runs after the parse and cannot prevent
+// that.
 //
 // For each line whose leading container prefix holds more than MaxNestingDepth
 // markers:
