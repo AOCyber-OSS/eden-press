@@ -17,7 +17,8 @@ Packages: `bind/` (dart, wasm, capi bindings), `chase/`, `press/`, `profiles/`, 
 ```bash
 go build ./...
 go vet ./...
-go test ./...          # includes conformance/...
+go test ./...          # includes conformance/... except conformance/consumer
+make consumer-test     # conformance/consumer: eden-press as a downstream module sees it
 make check-no-chromedp
 make check-cli-imports
 ```

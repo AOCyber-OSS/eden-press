@@ -46,3 +46,7 @@ Thumbs.db
 
 # Local/manual UI demos (not part of the library surface)
 /scratch/
+
+# make consumer-test's scratch module file (eden-press#31)
+/conformance/consumer/scratch.mod
+/conformance/consumer/scratch.sum

@@ -1,5 +1,10 @@
 # latex2mathml
 
+> **eden-press fork.** This copy is the package
+> `go.aocyber.ai/eden-press/internal/latex2mathml`, patched for eden-press
+> (see NOTICE). Import it only from inside eden-press; importing the upstream
+> path below gives the unpatched converter (eden-press#31).
+
 This libary convert latex formula to mathml string and depend only 
 on [etree](https://github.com/neruyzo/etree).
 

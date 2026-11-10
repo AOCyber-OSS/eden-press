@@ -29,8 +29,19 @@ build:
 vet:
 	go vet ./...
 
-test:
+test: consumer-test
 	go test ./...
+
+# conformance/consumer is its own module (eden-press#31), so `go test ./...`
+# above does not reach it. It resolves eden-press's dependencies as a real
+# consumer would (-mod=mod) into a scratch copy of its go.mod (-modfile,
+# gitignored), so there is no second hand-kept go.sum and the checked-in
+# go.mod is never edited.
+CONSUMER_MODFILE := $(CURDIR)/conformance/consumer/scratch.mod
+consumer-test:
+	cp conformance/consumer/go.mod $(CONSUMER_MODFILE)
+	cd conformance/consumer && GOFLAGS="-mod=mod -modfile=$(CONSUMER_MODFILE)" go vet ./...
+	cd conformance/consumer && GOFLAGS="-mod=mod -modfile=$(CONSUMER_MODFILE)" go test -count=1 ./...
 
 # check-no-chromedp enforces API-02: the public render path (press/) and
 # everything it composes (chase/, profiles/) must carry NO chromedp dependency.
