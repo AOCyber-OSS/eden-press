@@ -91,5 +91,10 @@ class EdenDocsView extends StatelessWidget {
     );
   }
 
-  Widget _block(Block block) => buildDocBlock(block, nest: _block);
+  /// Paints [block] at [depth]; its children are painted one level deeper.
+  Widget _block(Block block, [int depth = 1]) => buildDocBlock(
+    block,
+    depth: depth,
+    nest: (child) => _block(child, depth + 1),
+  );
 }

@@ -20,6 +20,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import 'dart:math' show max;
+
 import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlighting/flutter_highlighting.dart';
@@ -29,8 +31,69 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'rich_text.dart';
 
-/// Paints one schema-v7 [Block] as a document widget (never a JSON dump).
-Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
+/// The children EdenDocsView paints under [block], which sits at [depth] (a
+/// section's own blocks are at depth 1), and how many blocks of its subtree it
+/// leaves out.
+///
+/// A stored document can nest deeper than [maxNestingDepth] (one written
+/// before the Go side enforced the limit, eden-press#29), and every level used
+/// to add a Column, Container and Padding: depth 2000 took 91 s per pump. So
+/// the view nests no deeper than the limit. A block at depth
+/// `maxNestingDepth - 1` paints the blocks of its subtree as one flat run of
+/// children, in document order, and a block at the limit paints no children
+/// of its own (they are already in that run). The run sits in one container
+/// and is laid out in one frame, so it stops after [maxFlattenedBlocks] and
+/// [hidden] counts the rest. The walk is iterative: a 4900-deep chain costs
+/// no stack.
+({List<Block> blocks, int hidden}) paintedChildren(Block block, int depth) {
+  if (depth >= maxNestingDepth) return (blocks: const <Block>[], hidden: 0);
+  if (depth < maxNestingDepth - 1 ||
+      !block.children.any((c) => c.children.isNotEmpty)) {
+    return (blocks: block.children, hidden: 0);
+  }
+  final flat = <Block>[];
+  var hidden = 0;
+  final stack = <Block>[...block.children.reversed];
+  while (stack.isNotEmpty) {
+    final b = stack.removeLast();
+    if (flat.length < maxFlattenedBlocks) {
+      flat.add(b);
+    } else {
+      hidden++;
+    }
+    stack.addAll(b.children.reversed);
+  }
+  return (blocks: flat, hidden: hidden);
+}
+
+/// The line that stands for the blocks [paintedChildren] left out.
+Widget _hiddenBlocks(int hidden) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 6),
+  child: Text(
+    '$hidden more blocks are not shown here: this part of the document is '
+    'nested $maxNestingDepth levels deep.',
+    style: const TextStyle(fontSize: 13, color: Color(0xFF5F6368)),
+  ),
+);
+
+/// Paints one schema-v7 [Block], which sits at [depth], as a document widget
+/// (never a JSON dump). [nest] paints a child one level deeper; children come
+/// from [paintedChildren], which keeps the view within [maxNestingDepth].
+Widget buildDocBlock(
+  Block block, {
+  required int depth,
+  required Widget Function(Block) nest,
+}) {
+  // Built only by the container kinds below (quote, todo, callout, toggle);
+  // the other kinds never paint children.
+  List<Widget> children() {
+    final painted = paintedChildren(block, depth);
+    return [
+      for (final child in painted.blocks) nest(child),
+      if (painted.hidden > 0) _hiddenBlocks(painted.hidden),
+    ];
+  }
+
   switch (block.kind) {
     case BlockKind.heading:
       return Padding(
@@ -65,7 +128,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
                 ),
               ),
             ),
-            for (final child in block.children) nest(child),
+            ...children(),
           ],
         ),
       );
@@ -78,7 +141,16 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
             for (var i = 0; i < block.items.length; i++)
               Padding(
                 padding: EdgeInsets.only(
-                  left: 8.0 + 16.0 * block.items[i].level,
+                  // An item's depth is its list's depth plus its level, so
+                  // the indent stops growing at maxNestingDepth (a level of
+                  // 4900 would otherwise push the text 78k px off screen).
+                  left:
+                      8.0 +
+                      16.0 *
+                          block.items[i].level.clamp(
+                            0,
+                            max(0, maxNestingDepth - depth),
+                          ),
                   bottom: 4,
                 ),
                 child: Row(
@@ -145,7 +217,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
               padding: const EdgeInsets.only(left: 30),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [for (final child in block.children) nest(child)],
+                children: children(),
               ),
             ),
           ],
@@ -181,7 +253,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
                       ),
                     ),
                   ),
-                  for (final child in block.children) nest(child),
+                  ...children(),
                 ],
               ),
             ),
@@ -201,7 +273,7 @@ Widget buildDocBlock(Block block, {required Widget Function(Block) nest}) {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
-          children: [for (final child in block.children) nest(child)],
+          children: children(),
         ),
       );
     case BlockKind.divider:

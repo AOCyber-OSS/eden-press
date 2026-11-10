@@ -61,6 +61,10 @@ import (
 // configuration without duplicating it.
 func NewEngine(extra ...goldmark.Option) goldmark.Markdown {
 	opts := append([]goldmark.Option{
+		// goldmark's parser with the container parsers bounded
+		// (MaxContainerNesting): its parse is otherwise quadratic in the
+		// containers one line opens (eden-press#29).
+		goldmark.WithParser(NewNestingLimitedParser()),
 		goldmark.WithExtensions(extension.GFM, New()),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(ghtml.WithUnsafe(), ghtml.WithHardWraps()),

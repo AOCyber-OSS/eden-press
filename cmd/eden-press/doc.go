@@ -23,6 +23,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,7 +107,7 @@ func newDocCreateCmd() *cobra.Command {
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
-			return writeDocOutputBytes(cmd, raw)
+			return writeDocJSONOutput(cmd, raw)
 		},
 	}
 	cmd.Flags().String("title", "", "optional page title stored in meta.directives.title")
@@ -128,7 +129,7 @@ func newDocGetCmd() *cobra.Command {
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
-			return writeDocOutputBytes(cmd, raw)
+			return writeDocJSONOutput(cmd, raw)
 		},
 	}
 	cmd.Flags().StringP("output", "o", "", `output file path; "" writes to stdout`)
@@ -158,7 +159,7 @@ func newDocApplyCmd() *cobra.Command {
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
-			return writeDocOutputBytes(cmd, out)
+			return writeDocJSONOutput(cmd, out)
 		},
 	}
 	cmd.Flags().String("ops", "", "path to ops JSON (array or {\"ops\":[...]})")
@@ -185,7 +186,7 @@ func newDocImportCmd() *cobra.Command {
 			if err != nil {
 				return docFail(cmd, exitRender, err)
 			}
-			return writeDocOutputBytes(cmd, raw)
+			return writeDocJSONOutput(cmd, raw)
 		},
 	}
 	cmd.Flags().StringP("output", "o", "", `output file path; "" writes to stdout`)
@@ -201,6 +202,17 @@ func readPathOrStdin(cmd *cobra.Command, arg string) ([]byte, error) {
 		return nil, fmt.Errorf("read %q: %w", arg, err)
 	}
 	return b, nil
+}
+
+// writeDocJSONOutput writes a docmodel JSON result indented. press returns
+// compact JSON (eden-press#29); the CLI keeps printing it as it always has,
+// and the nesting limit press enforces keeps the indentation bounded.
+func writeDocJSONOutput(cmd *cobra.Command, raw []byte) error {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return fmt.Errorf("indent output: %w", err)
+	}
+	return writeDocOutputBytes(cmd, buf.Bytes())
 }
 
 func writeDocOutputBytes(cmd *cobra.Command, raw []byte) error {

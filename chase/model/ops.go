@@ -283,17 +283,23 @@ func insertBlock(doc *Document, op Op, batch *opBatch) error {
 	ensureBlockIDsSlice(&b.Children, &batch.nextBlock)
 
 	if op.ParentBlockID != "" {
-		parent := findBlockPtr(doc, op.ParentBlockID)
+		parent, depth := findBlockDepth(doc, op.ParentBlockID)
 		if parent == nil {
 			return fmt.Errorf("insert_block: parent %q not found", op.ParentBlockID)
 		}
 		if parent.Kind == BlockSynced {
 			return fmt.Errorf("insert_block: cannot nest under synced block")
 		}
+		if err := checkFits(&b, depth+1, "insert_block under "+op.ParentBlockID); err != nil {
+			return err
+		}
 		return insertIntoSlice(&parent.Children, b, op.Index)
 	}
 	si, err := sectionIndex(doc, op.SectionID)
 	if err != nil {
+		return err
+	}
+	if err := checkFits(&b, 1, fmt.Sprintf("insert_block in section %d", op.SectionID)); err != nil {
 		return err
 	}
 	return insertIntoSlice(&doc.Sections[si].Blocks, b, op.Index)
@@ -326,7 +332,7 @@ func updateBlock(doc *Document, op Op, batch *opBatch) error {
 	if err := validateEditableBlock(*op.Block); err != nil {
 		return err
 	}
-	ptr := findBlockPtr(doc, op.BlockID)
+	ptr, depth := findBlockDepth(doc, op.BlockID)
 	if ptr == nil {
 		return fmt.Errorf("update_block: block %q not found", op.BlockID)
 	}
@@ -348,6 +354,9 @@ func updateBlock(doc *Document, op Op, batch *opBatch) error {
 		// New children may carry their own b_N; a later insert in this batch
 		// must number above them.
 		batch.noteBlockIDs(b.Children)
+	}
+	if err := checkFits(&b, depth, "update_block "+op.BlockID); err != nil {
+		return err
 	}
 	*ptr = b
 	return nil
@@ -379,6 +388,16 @@ func moveBlock(doc *Document, op Op) error {
 		if op.ParentBlockID == op.BlockID || isAncestor(doc, op.BlockID, op.ParentBlockID) {
 			return fmt.Errorf("move_block: would create a cycle")
 		}
+		// Checked before the block is removed, so a refused move changes
+		// nothing. The parent is not inside the moved block (no cycle), so
+		// removing the block does not change the parent's depth.
+		if parent, depth := findBlockDepth(doc, op.ParentBlockID); parent != nil {
+			if err := checkFits(&moved, depth+1, "move_block "+op.BlockID+" under "+op.ParentBlockID); err != nil {
+				return err
+			}
+		}
+	} else if err := checkFits(&moved, 1, "move_block "+op.BlockID); err != nil {
+		return err
 	}
 	if !removeBlock(doc, op.BlockID) {
 		return fmt.Errorf("move_block: block %q not found", op.BlockID)

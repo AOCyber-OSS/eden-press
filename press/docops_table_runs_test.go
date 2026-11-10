@@ -55,7 +55,9 @@ func styledTableDocJSON(t *testing.T) []byte {
 		}}},
 		Outline: []model.OutlineEntry{},
 	}
-	raw, err := json.MarshalIndent(&d, "", "  ")
+	// Compact, as the byte APIs write it (eden-press#29), so "unchanged" can be
+	// compared byte for byte.
+	raw, err := json.Marshal(&d)
 	if err != nil {
 		t.Fatal(err)
 	}

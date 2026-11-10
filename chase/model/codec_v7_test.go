@@ -729,8 +729,10 @@ func TestCodecSectionLayerIsStableOnGarbage(t *testing.T) {
 // TestCodecV7DeepNestingIsLinear: a long chain of untitled toggles (each one looks
 // at its first child to decide whether that child would read as its title)
 // renders and reads back in a moment, with the fence one longer at every level.
+// The chain is as deep as the nesting limit allows (eden-press#29): depth
+// toggles and the paragraph inside the innermost.
 func TestCodecV7DeepNestingIsLinear(t *testing.T) {
-	const depth = 60
+	const depth = MaxNestingDepth - 1
 	inner := Block{Kind: BlockToggle, Children: []Block{fxPara("core")}}
 	for i := 1; i < depth; i++ {
 		inner = Block{Kind: BlockToggle, Children: []Block{inner}}

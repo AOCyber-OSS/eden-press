@@ -118,6 +118,11 @@ func RenderModelJSON(docJSON []byte, opts Options) (Output, error) {
 // renderModel validates d IN PLACE (the callers hand it a private copy) and
 // renders it.
 func renderModel(d *model.Document, opts Options) (Output, error) {
+	// Both RenderModel and RenderModelJSON come through here, so one check
+	// holds the nesting limit (eden-press#29) for both.
+	if err := model.ValidateNesting(d); err != nil {
+		return Output{}, fmt.Errorf("press: RenderModel: %w", err)
+	}
 	if d.SchemaVersion == "" {
 		d.SchemaVersion = model.SchemaVersion
 	}

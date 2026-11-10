@@ -33,4 +33,5 @@
 /// which re-exports this library.
 library;
 
+export 'src/limits.dart';
 export 'src/model.dart';
