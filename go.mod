@@ -4,7 +4,6 @@ go 1.27.3
 
 require (
 	codeberg.org/go-latex/latex v0.3.0
-	git.sr.ht/~mekyt/latex2mathml v0.0.0-20231214134936-808832af73fc
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
@@ -17,6 +16,7 @@ require (
 	github.com/knadh/koanf/providers/posflag v1.0.1
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/microcosm-cc/bluemonday v1.0.27
+	github.com/neruyzo/etree v0.0.0-20230816193247-70b7b06b18ad
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/tdewolff/parse/v2 v2.8.13
@@ -42,7 +42,6 @@ require (
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	github.com/neruyzo/etree v0.0.0-20230816193247-70b7b06b18ad // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
@@ -50,12 +49,3 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )
-
-// Objective 8 (math-fidelity hardening): latex2mathml is vendored in-repo as a
-// fork at ./internal/latex2mathml so the five converter root-causes (\sqrt[n]
-// radicand loss, big-operator limit stacking, binom/pmatrix fence, aligned→mtable,
-// mathvariant→codepoint) can be patched (08-02/08-03). The vendored module keeps
-// its own module path (git.sr.ht/~mekyt/latex2mathml), so press/math import sites
-// are unchanged — this replace directive is the sole fork seam. Its MIT license
-// (Copyright (c) 2023 mekyt) is preserved verbatim; see NOTICE.
-replace git.sr.ht/~mekyt/latex2mathml => ./internal/latex2mathml

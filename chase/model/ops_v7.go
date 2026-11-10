@@ -66,14 +66,17 @@ func applyOpsMutating(doc *Document, ops []Op) error {
 	if err := ValidateNesting(doc); err != nil {
 		return fmt.Errorf("model.ApplyOps: %w", err)
 	}
-	EnsureBlockIDs(doc)
+	// One seed per batch, which also numbers the input's id-less blocks: the
+	// ops below, and the numbering after them, only count up from it (see
+	// opBatch).
+	batch := newOpBatch(doc)
 	EnsureListItemIDs(doc)
 	for i, op := range ops {
-		if err := applyOne(doc, op); err != nil {
+		if err := applyOne(doc, op, batch); err != nil {
 			return fmt.Errorf("model.ApplyOps: op[%d]: %w", i, err)
 		}
 	}
-	EnsureBlockIDs(doc)
+	batch.assignMissing(doc)
 	EnsureListItemIDs(doc)
 	EnsureTextRunsInvariant(doc)
 	rebuildOutline(doc)
@@ -123,15 +126,7 @@ func maxListItemID(doc *Document) int {
 	return m
 }
 
-func nextCommentID(doc *Document) string {
-	m := 0
-	for _, c := range doc.Comments {
-		m = max(m, idNumber(c.ID, "c_"))
-	}
-	return fmt.Sprintf("c_%d", m+1)
-}
-
-func patchBlock(doc *Document, op Op) error {
+func patchBlock(doc *Document, op Op, batch *opBatch) error {
 	if op.BlockID == "" {
 		return fmt.Errorf("patch_block: missing blockId")
 	}
@@ -246,6 +241,10 @@ func patchBlock(doc *Document, op Op) error {
 		return err
 	}
 	syncTableCellRuns(&next)
+	if p.Children != nil {
+		// Patched-in children may carry their own b_N (see opBatch).
+		batch.noteBlockIDs(next.Children)
+	}
 	*ptr = next
 	return nil
 }
@@ -404,7 +403,7 @@ func validatePropertyType(t PropertyType) error {
 	}
 }
 
-func addComment(doc *Document, op Op) error {
+func addComment(doc *Document, op Op, batch *opBatch) error {
 	if op.Comment == nil {
 		return fmt.Errorf("add_comment: missing comment")
 	}
@@ -416,7 +415,10 @@ func addComment(doc *Document, op Op) error {
 		return fmt.Errorf("add_comment: block %q not found", c.BlockID)
 	}
 	if c.ID == "" {
-		c.ID = nextCommentID(doc)
+		batch.nextComment++
+		c.ID = fmt.Sprintf("c_%d", batch.nextComment)
+	} else {
+		batch.nextComment = max(batch.nextComment, idNumber(c.ID, "c_"))
 	}
 	doc.Comments = append(doc.Comments, c)
 	return nil

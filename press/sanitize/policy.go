@@ -120,13 +120,19 @@ func Policy() *bluemonday.Policy {
 	// part of goldmark-emoji's literal Twemoji <img> template.
 	p.AllowAttrs("src", "alt", "draggable").OnElements("img")
 
-	// MathML (03-06): the real element/attribute set emitted by
-	// git.sr.ht/~mekyt/latex2mathml's Convert(), grounded against that
-	// fork's converter.go/commands.go rather than assumed.
+	// MathML (03-06): the real element/attribute set emitted by the
+	// internal/latex2mathml fork's Convert(), grounded against its
+	// converter.go/commands.go rather than assumed.
+	// mathml_coverage_test.go derives the names from the converter's own
+	// output: msqrt/mroot (\sqrt, \sqrt[n]), mphantom and menclose (\boxed)
+	// were missing until eden-press#31, so every radical lost its root sign.
+	// All four are presentation-only layout elements with no URL or script
+	// attributes.
 	mathElements := []string{
 		"math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "mstyle",
 		"mpadded", "mtr", "mtd", "mtable",
 		"msub", "msup", "msubsup", "mfrac", "mover", "munder", "munderover",
+		"msqrt", "mroot", "mphantom", "menclose",
 	}
 	p.AllowElements(mathElements...)
 	// Most MathML leaf elements (<mi>x</mi>, <mo>+</mo>, <mn>1</mn>,
@@ -141,7 +147,15 @@ func Policy() *bluemonday.Policy {
 		"movablelimits", "minsize", "maxsize", "linethickness",
 		"rowspacing", "columnspacing", "columnalign", "rowlines",
 		"depth", "voffset",
+		// \middle's spacing and \\'s line break (presentation only).
+		"lspace", "rspace", "linebreak",
 	).OnElements(mathElements...)
+	// Two attributes carry values the author chooses, so they are pinned to
+	// the shapes the converter writes: menclose's notation is a word list
+	// ("box"), and mstyle's mathcolor is \color's argument, a colour name or
+	// a hex colour, never free text.
+	p.AllowAttrs("notation").Matching(regexp.MustCompile(`^[a-z]+( [a-z]+)*$`)).OnElements("menclose")
+	p.AllowAttrs("mathcolor").Matching(regexp.MustCompile(`^(#[0-9A-Fa-f]{3,8}|[A-Za-z]+)$`)).OnElements("mstyle")
 	// width/height are shared with <img>/<foreignObject> above; allow them
 	// on the MathML elements too (real attrs emitted by the fork for
 	// sized glyphs/tables).
