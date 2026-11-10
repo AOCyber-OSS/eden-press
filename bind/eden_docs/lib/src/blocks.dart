@@ -20,7 +20,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 
 import 'package:eden_press_model/eden_press_model.dart';
 import 'package:flutter/material.dart';
@@ -67,13 +67,9 @@ import 'rich_text.dart';
 }
 
 /// The line that stands for the blocks [paintedChildren] left out.
-Widget _hiddenBlocks(int hidden) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 6),
-  child: Text(
-    '$hidden more blocks are not shown here: this part of the document is '
-    'nested $maxNestingDepth levels deep.',
-    style: const TextStyle(fontSize: 13, color: Color(0xFF5F6368)),
-  ),
+Widget _hiddenBlocks(int hidden) => _budgetNote(
+  '$hidden more blocks are not shown here: this part of the document is '
+  'nested $maxNestingDepth levels deep.',
 );
 
 /// Paints one schema-v7 [Block], which sits at [depth], as a document widget
@@ -291,23 +287,17 @@ Widget buildDocBlock(
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: const Color(0xFFE0E0E0)),
         ),
-        child: HighlightView(
-          block.text,
-          languageId: block.language.isEmpty ? 'plaintext' : block.language,
-          theme: githubTheme,
-          textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-        ),
+        child: _code(block),
       );
     case BlockKind.math:
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Math.tex(
-          block.text,
-          mathStyle: block.display ? MathStyle.display : MathStyle.text,
-        ),
+        child: _math(block),
       );
     case BlockKind.table:
-      return _table(block);
+      // Keyed by the block, so "Show all" state never carries over to a
+      // different table painted at the same place.
+      return _BudgetedTable(block, key: ObjectKey(block));
     case BlockKind.image:
       return _imageCard(
         caption: block.text.isEmpty ? block.src : block.text,
@@ -351,54 +341,294 @@ Widget buildDocBlock(
   }
 }
 
-Widget _table(Block block) {
-  final columns = block.headers.isNotEmpty
-      ? block.headers.length
-      : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
-  if (columns == 0) return const SizedBox.shrink();
+const _codeStyle = TextStyle(fontFamily: 'monospace', fontSize: 13);
 
-  // [runs] is the row's slice of headerRuns / rowRuns, or null for a plain row.
-  // It is indexed by the row's own cells (a ragged row has fewer than
-  // [columns]), never by the header width.
-  TableRow row(
-    List<String> cells,
-    List<List<TextRun>?>? runs, {
-    required bool header,
-  }) => TableRow(
-    children: List<Widget>.generate(columns, (i) {
-      final text = i < cells.length ? cells[i] : '';
-      final style = header
-          ? const TextStyle(fontWeight: FontWeight.w600)
-          : null;
-      final cellRuns = runs != null && i < cells.length && i < runs.length
-          ? runs[i]
-          : null;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: cellRuns == null || cellRuns.isEmpty
-            ? Text(text, style: style)
-            : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
-      );
-    }),
-  );
-
-  return Container(
-    margin: const EdgeInsets.symmetric(vertical: 8),
-    child: Table(
-      border: TableBorder.all(color: const Color(0xFFDADCE0), width: 0.5),
-      children: [
-        if (block.headers.isNotEmpty)
-          row(block.headers, block.headerRuns, header: true),
-        for (var r = 0; r < block.rows.length; r++)
-          row(
-            block.rows[r],
-            r < block.rowRuns.length ? block.rowRuns[r] : null,
-            header: false,
-          ),
-      ],
-    ),
+/// A code block: highlighted up to [maxHighlightedCodeLength], plain
+/// monospace text above it (flutter_highlighting took 123 s on 400 KB), and
+/// cut at [maxPlainCodeLength] with a count of what is not shown, since one
+/// huge paragraph is itself slow to lay out (eden-press#32).
+Widget _code(Block block) {
+  final text = block.text;
+  if (text.length <= maxHighlightedCodeLength) {
+    return HighlightView(
+      text,
+      languageId: block.language.isEmpty ? 'plaintext' : block.language,
+      theme: githubTheme,
+      textStyle: _codeStyle,
+    );
+  }
+  if (text.length <= maxPlainCodeLength) return Text(text, style: _codeStyle);
+  // Never end on the first half of a surrogate pair: the text would not be
+  // well-formed UTF-16 and would not paint.
+  var cut = maxPlainCodeLength;
+  final last = text.codeUnitAt(cut - 1);
+  if (last >= 0xD800 && last <= 0xDBFF) cut--;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(text.substring(0, cut), style: _codeStyle),
+      _budgetNote('${text.length - cut} more characters are not shown.'),
+    ],
   );
 }
+
+/// A math block: typeset by flutter_math_fork when the TeX is within
+/// [maxMathTexLength] and [maxMathBraceDepth], otherwise shown as its TeX
+/// source, as it is when the TeX does not parse. 3000 nested \frac overflowed
+/// the stack inside the typesetter, so the budget is checked before it runs
+/// (eden-press#32).
+Widget _math(Block block) {
+  final tex = block.text;
+  if (tex.length > maxMathTexLength ||
+      braceDepth(tex) > maxMathBraceDepth ||
+      definesMacro(tex)) {
+    return _texSource(tex);
+  }
+  return Math.tex(
+    tex,
+    mathStyle: block.display ? MathStyle.display : MathStyle.text,
+    onErrorFallback: (_) => _texSource(tex),
+  );
+}
+
+Widget _texSource(String tex) => Text(tex, style: _codeStyle);
+
+/// Whether [tex] defines a macro (`\newcommand`, `\renewcommand`, `\def`) or
+/// uses a macro parameter (`#`). The length and depth budgets measure the
+/// source, and a short macro can expand into millions of glyphs, so such TeX
+/// is shown as source rather than typeset.
+bool definesMacro(String tex) =>
+    tex.contains('#') ||
+    tex.contains(r'\newcommand') ||
+    tex.contains(r'\renewcommand') ||
+    tex.contains(r'\def');
+
+/// The deepest `{` nesting in [tex], ignoring escaped braces (`\{`). It stops
+/// counting once past [maxMathBraceDepth]; the walk is linear either way.
+int braceDepth(String tex) {
+  var depth = 0;
+  var deepest = 0;
+  for (var i = 0; i < tex.length; i++) {
+    final c = tex.codeUnitAt(i);
+    if (c == 0x5C) {
+      i++; // skip the escaped character
+    } else if (c == 0x7B) {
+      depth++;
+      if (depth > deepest) deepest = depth;
+      if (deepest > maxMathBraceDepth) return deepest;
+    } else if (c == 0x7D && depth > 0) {
+      depth--;
+    }
+  }
+  return deepest;
+}
+
+Widget _budgetNote(String text) => Padding(
+  padding: const EdgeInsets.only(top: 6),
+  child: Text(
+    text,
+    style: const TextStyle(fontSize: 13, color: Color(0xFF5F6368)),
+  ),
+);
+
+/// A table block. Within [maxTableRowsPainted] rows,
+/// [maxTableColumnsPainted] columns and [maxTableCellsPainted] cells it is the
+/// plain Table it always was.
+/// Past either budget (eden-press#32: a 20000x20 table never finished one
+/// frame, and 5000 columns took 9.8 s) it paints at most that many columns,
+/// in fixed-width cells that scroll horizontally, and at most that many
+/// rows, with "Show all N rows" switching to a list that builds rows only as
+/// they scroll into view.
+class _BudgetedTable extends StatefulWidget {
+  const _BudgetedTable(this.block, {super.key});
+
+  final Block block;
+
+  @override
+  State<_BudgetedTable> createState() => _BudgetedTableState();
+}
+
+class _BudgetedTableState extends State<_BudgetedTable> {
+  bool _showAll = false;
+
+  static const double _cellWidth = 160;
+  static const double _rowExtent = 32;
+  static const double _allRowsHeight = 480;
+
+  @override
+  Widget build(BuildContext context) {
+    final block = widget.block;
+    final columns = block.headers.isNotEmpty
+        ? block.headers.length
+        : block.rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
+    if (columns == 0) return const SizedBox.shrink();
+    final shownColumns = min(columns, maxTableColumnsPainted);
+    // The cost is rows x columns, so the cell budget can bind before either
+    // of the others (100 x 50 is within both and is 5000 cells).
+    final rowBudget = min(
+      maxTableRowsPainted,
+      max(1, maxTableCellsPainted ~/ shownColumns),
+    );
+    final overBudget =
+        columns > maxTableColumnsPainted || block.rows.length > rowBudget;
+    if (!overBudget) {
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: Table(
+          border: _tableBorder,
+          children: [
+            if (block.headers.isNotEmpty)
+              _tableRow(block.headers, block.headerRuns, columns, header: true),
+            for (var r = 0; r < block.rows.length; r++)
+              _tableRow(block.rows[r], _rowRuns(block, r), columns),
+          ],
+        ),
+      );
+    }
+
+    final width = _cellWidth * shownColumns;
+    final rowCount = block.rows.length;
+    final Widget body;
+    if (_showAll) {
+      body = SizedBox(
+        width: width,
+        height: _allRowsHeight,
+        child: ListView.builder(
+          key: const Key('eden-docs-table-rows'),
+          itemCount: rowCount,
+          // A fixed extent is what makes a jump to row 19999 cheap: without
+          // it the list lays out every row before the target. Each cell is
+          // therefore one line, cut with an ellipsis (_fixedRow), never
+          // clipped into its neighbour.
+          itemExtent: _rowExtent,
+          itemBuilder: (context, r) => _fixedRow(block.rows[r], shownColumns),
+        ),
+      );
+    } else {
+      final shownRows = min(rowCount, rowBudget);
+      body = Table(
+        border: _tableBorder,
+        defaultColumnWidth: const FixedColumnWidth(_cellWidth),
+        children: [
+          for (var r = 0; r < shownRows; r++)
+            _tableRow(block.rows[r], _rowRuns(block, r), shownColumns),
+        ],
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (block.headers.isNotEmpty)
+                  Table(
+                    border: _tableBorder,
+                    defaultColumnWidth: const FixedColumnWidth(_cellWidth),
+                    children: [
+                      _tableRow(
+                        block.headers,
+                        block.headerRuns,
+                        shownColumns,
+                        header: true,
+                      ),
+                    ],
+                  ),
+                body,
+              ],
+            ),
+          ),
+          if (columns > shownColumns)
+            _budgetNote(
+              '${columns - shownColumns} more columns are not shown '
+              '($shownColumns of $columns).',
+            ),
+          if (!_showAll && rowCount > rowBudget)
+            TextButton(
+              onPressed: () => setState(() => _showAll = true),
+              child: Text('Show all $rowCount rows'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+const _tableRule = BorderSide(color: Color(0xFFDADCE0), width: 0.5);
+
+final _tableBorder = TableBorder.all(
+  color: _tableRule.color,
+  width: _tableRule.width,
+);
+
+/// Row [r]'s slice of the table's rowRuns, or null for a plain row.
+List<List<TextRun>?>? _rowRuns(Block block, int r) =>
+    r < block.rowRuns.length ? block.rowRuns[r] : null;
+
+/// One table cell. [runs] is the row's slice of headerRuns / rowRuns, or null
+/// for a plain row; it is indexed by the row's own cells (a ragged row has
+/// fewer than the table's columns), never by the header width.
+Widget _tableCell(
+  List<String> cells,
+  List<List<TextRun>?>? runs,
+  int i, {
+  bool header = false,
+}) {
+  final text = i < cells.length ? cells[i] : '';
+  final style = header ? const TextStyle(fontWeight: FontWeight.w600) : null;
+  final cellRuns = runs != null && i < cells.length && i < runs.length
+      ? runs[i]
+      : null;
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    child: cellRuns == null || cellRuns.isEmpty
+        ? Text(text, style: style)
+        : Text.rich(richSpanForRuns(cellRuns, text, style: style)),
+  );
+}
+
+TableRow _tableRow(
+  List<String> cells,
+  List<List<TextRun>?>? runs,
+  int columns, {
+  bool header = false,
+}) => TableRow(
+  children: List<Widget>.generate(
+    columns,
+    (i) => _tableCell(cells, runs, i, header: header),
+  ),
+);
+
+/// A row of the lazy "Show all" list: the row's plain cell text, in
+/// fixed-width boxes so the columns line up without a Table.
+/// Every row is _rowExtent tall (the list's itemExtent), so each cell is one
+/// line, ending in an ellipsis when it is longer; the full text stays in the
+/// document and in the collapsed table. All cells stretch to the row height,
+/// so the borders line up.
+Widget _fixedRow(List<String> cells, int columns) => Row(
+  crossAxisAlignment: CrossAxisAlignment.stretch,
+  children: [
+    for (var i = 0; i < columns; i++)
+      Container(
+        width: _BudgetedTableState._cellWidth,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        alignment: Alignment.centerLeft,
+        decoration: const BoxDecoration(
+          border: Border.fromBorderSide(_tableRule),
+        ),
+        child: Text(
+          i < cells.length ? cells[i] : '',
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+  ],
+);
 
 Widget _sheetEmbed(Block block) {
   final embed = block.sheetEmbed ?? const <String, dynamic>{};
