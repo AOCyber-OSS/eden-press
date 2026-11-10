@@ -77,10 +77,12 @@ License: MIT
     project the pre-math-objective placeholder URL cited — URL corrected here.
   - Provenance: FORKED in-repo (Objective 8, 08-01). The pinned upstream module
     (git.sr.ht/~mekyt/latex2mathml @ v0.0.0-20231214134936-808832af73fc) is
-    vendored VERBATIM into internal/latex2mathml/ — its own module path and MIT
-    LICENSE (Copyright (c) 2023 mekyt) preserved unmodified — and redirected via
-    a single `replace git.sr.ht/~mekyt/latex2mathml => ./internal/latex2mathml`
-    directive in the root go.mod, so press/math import sites are unchanged.
+    vendored into internal/latex2mathml/ with its MIT LICENSE (Copyright (c)
+    2023 mekyt) preserved unmodified. Since the release after v0.5.1 it is a plain package of the
+    eden-press module (go.aocyber.ai/eden-press/internal/latex2mathml, no own
+    go.mod), imported directly by press/math: the earlier `replace` directive
+    applied only inside eden-press, so consumers built the unpatched upstream
+    (eden-press#31). conformance/consumer checks that from outside the module.
     Objective 8 PATCHES this in-repo copy (08-02/08-03) to fix five converter
     root-causes (\sqrt[n] radicand loss, big-operator limit stacking,
     binom/pmatrix fence, aligned->mtable, mathvariant->codepoint). MIT permits
