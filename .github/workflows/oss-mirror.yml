@@ -45,6 +45,13 @@ jobs:
           repositories: eden-press
       - uses: actions/checkout@v5
         with:
+          # An explicit ref, never the triggering one (eden-press#27). With no ref, checkout pins the triggering
+          # commit: on a tag run it re-fetches +<sha>:refs/tags/<name> after +refs/tags/*, replacing the annotated
+          # tag with a lightweight one, which the push below then created on the public copy (and every later run
+          # was refused with "already exists"). Given a ref, checkout tests nothing against a commit, so the
+          # all-history fetch (+refs/heads/*, +refs/tags/*) is the only one and every tag arrives as it is here.
+          # The push takes the branch from refs/remotes/origin/main either way.
+          ref: main
           fetch-depth: 0
           persist-credentials: false
       - name: push the default branch and the tags
@@ -54,8 +61,23 @@ jobs:
           # a literal, not expanded here: git runs it as a shell function and its shell expands $1 and $TOKEN
           HELPER: '!f() { test "$1" = get || exit 0; while IFS= read -r l && test -n "$l"; do :; done; echo username=x-access-token; echo "password=$TOKEN"; }; f'
         run: |
+          # The triggering tag must be what it is here: same commit, same kind (annotated stays annotated).
+          if test "$GITHUB_REF_TYPE" = tag; then
+            test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA" ||
+              { echo "::error::refs/tags/$GITHUB_REF_NAME no longer points at $GITHUB_SHA"; exit 1; }
+            echo "refs/tags/$GITHUB_REF_NAME is a $(git cat-file -t "refs/tags/$GITHUB_REF_NAME") object"
+          fi
           git config --local --replace-all credential.helper ''
           git config --local --add credential.helper "$HELPER"
-          # the default branch comes from its remote-tracking ref: a tag-triggered run checks out the tag, not the branch
-          git push "${{ github.server_url }}/$OWNER/eden-press.git" \
-            "refs/remotes/origin/main:refs/heads/main" 'refs/tags/*:refs/tags/*'
+          # the default branch comes from its remote-tracking ref, as the all-history fetch left it
+          if ! out=$(git push "${{ github.server_url }}/$OWNER/eden-press.git" \
+            "refs/remotes/origin/main:refs/heads/main" 'refs/tags/*:refs/tags/*' 2>&1); then
+            printf '%s\n' "$out"
+            # Nothing here forces a tag, so a tag that differs on the public copy fails every run until it is fixed
+            # there once, by hand (eden-press#27: v0.5.0 was pushed lightweight before this file pinned the ref).
+            if printf '%s\n' "$out" | grep -q 'already exists'; then
+              echo "::error::a tag on the public copy differs from this repository's; an operator must force-update it there once (see eden-press#27)"
+            fi
+            exit 1
+          fi
+          printf '%s\n' "$out"
