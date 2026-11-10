@@ -17,12 +17,13 @@ Packages: `bind/` (dart, wasm, capi bindings), `chase/`, `press/`, `profiles/`, 
 ```bash
 go build ./...
 go vet ./...
-go test ./...          # includes conformance/...
+go test ./...          # includes conformance/... except conformance/consumer
+make consumer-test     # conformance/consumer: eden-press as a downstream module sees it
 make check-no-chromedp
 make check-cli-imports
 ```
 
-CI: `ci.yml` (build/vet/test/license-header), `dart-native.yml`, `upstream-drift.yml` (auto-files an
+CI: `ci.yml` (build/vet/test/license-header), `dart.yml` (format/analyze/test for bind/eden_press_model, bind/eden_docs, bind/dart; analyze-only, errors only, for bind/eden_ui), `dart-native.yml`, `upstream-drift.yml` (auto-files an
 issue when upstream Marp releases exceed the pins in `UPSTREAM-VERSIONS.txt`; current pins:
 marpit v3.2.2, marp-core v4.4.0, marp-cli v4.5.0).
 

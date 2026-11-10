@@ -26,9 +26,11 @@
 # chase/model/dart_golden_test.go writes the fixture the Dart model tests read:
 # a Go-side model change can break them.
 #
-# bind/eden_ui is not in the matrix yet: on main it is not dart-format clean
-# and `flutter analyze` reports 11 issues, so adding it would make this job red
-# on its first run. It needs its own cleanup change first.
+# bind/eden_ui depends on bind/dart and bind/eden_docs, so it is analyzed too,
+# to catch a change in those packages that breaks it. Only for errors for now:
+# on main it is not dart-format clean, has 10 info and 1 warning analyzer
+# issues, and its spreadsheet_perf_test fails, so format, warnings and tests
+# for it wait for its own cleanup change.
 name: Dart
 
 on:
@@ -40,6 +42,11 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to a pull request cancels the Flutter jobs of the older one.
+concurrency:
+  group: dart-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -84,3 +91,24 @@ jobs:
 
       - name: Test
         run: ${{ matrix.tool }} test
+
+  eden_ui:
+    name: eden_ui (analyze, errors only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: bind/eden_ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze (errors only)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
