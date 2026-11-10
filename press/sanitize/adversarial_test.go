@@ -72,8 +72,8 @@ func TestPreserveStrikethrough(t *testing.T) {
 	}
 }
 
-// TestPreserveMathML covers 03-06/03-08: git.sr.ht/~mekyt/latex2mathml's
-// Convert() output shape.
+// TestPreserveMathML covers 03-06/03-08: the output shape of Convert() in
+// internal/latex2mathml (eden-press's fork of git.sr.ht/~mekyt/latex2mathml).
 func TestPreserveMathML(t *testing.T) {
 	in := `<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow></math>`
 	out := Policy().Sanitize(in)
