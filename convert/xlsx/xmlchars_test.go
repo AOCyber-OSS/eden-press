@@ -152,3 +152,43 @@ func TestXMLIllegal_X6_WorkbookRejectsIllegalSheetName(t *testing.T) {
 		t.Error("RenameSheet accepted a name with U+0000")
 	}
 }
+
+func TestXMLIllegal_X2_FormulaCell(t *testing.T) {
+	w := NewWorkbook("t")
+	s, err := w.AddSheet("Plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(0, 0, "=SUM(A2:A3)"+illegalXML+"&\"x\""); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := w.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := assertStrictParts(t, pkg)
+	if !strings.Contains(parts["xl/worksheets/sheet1.xml"], "<f>SUM(A2:A3)&amp;&quot;x&quot;</f>") {
+		t.Errorf("formula:\n%s", parts["xl/worksheets/sheet1.xml"])
+	}
+}
+
+func TestXMLIllegal_X7_TabLFCRPreserved(t *testing.T) {
+	doc := illegalTableDoc("", []string{"h"}, [][]string{{"a\tb\nc\rd" + illegalXML}})
+	pkg, err := ToXLSX(doc, Options{Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := assertStrictParts(t, pkg)
+	if !strings.Contains(parts["xl/worksheets/sheet1.xml"], ">a\tb\nc\rd</t>") {
+		t.Errorf("tab/LF/CR not preserved:\n%q", parts["xl/worksheets/sheet1.xml"])
+	}
+}
+
+func TestXMLIllegal_X8_CellOnlyIllegal(t *testing.T) {
+	doc := illegalTableDoc("", []string{"h", illegalXML}, [][]string{{illegalXML, "x"}})
+	pkg, err := ToXLSX(doc, Options{Title: illegalXML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStrictParts(t, pkg)
+}
