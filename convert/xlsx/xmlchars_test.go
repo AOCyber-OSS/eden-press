@@ -192,3 +192,58 @@ func TestXMLIllegal_X8_CellOnlyIllegal(t *testing.T) {
 	}
 	assertStrictParts(t, pkg)
 }
+
+// X9: a snapshot stored before #39 may carry a sheet name with an
+// XML-illegal character. Loading it must not fail -- that would make the
+// user's workbook unopenable. The name is cleaned like sheetName() cleans a
+// heading: illegal runes dropped, empty falls back to SheetN, a collision
+// gets a " (k)" suffix, and named ranges follow the rename.
+func TestXMLIllegal_X9_ParseWorkbookCleansLegacySheetNames(t *testing.T) {
+	sheets := func(schema string) string {
+		cells := `"cells":[{"r":0,"c":0,"v":"x"}]`
+		if schema == "eden-press.workbook/v1" {
+			cells = `"rows":[{"cells":[{"r":0,"c":0,"v":"x"}]}]`
+		}
+		return `[` +
+			`{"name":"Plan\u000b",` + cells + `},` +
+			`{"name":"\u0000\u000b￿",` + cells + `},` +
+			`{"name":"Plan",` + cells + `}]`
+	}
+	for _, schema := range []string{"eden-press.workbook/v1", "eden-press.workbook/v2", "eden-press.workbook/v3"} {
+		t.Run(schema, func(t *testing.T) {
+			js := `{"schema":"` + schema + `","title":"t\u000c","sheets":` + sheets(schema) +
+				`,"namedRanges":[{"id":"n1","name":"r","sheet":"Plan\u000b","r0":0,"r1":0,"c0":0,"c1":0}]}`
+			wb, err := ParseWorkbook([]byte(js))
+			if err != nil {
+				t.Fatalf("legacy snapshot no longer loads: %v", err)
+			}
+			got := strings.Join(wb.SheetNames(), "|")
+			if want := "Plan (2)|Sheet2|Plan"; got != want {
+				t.Errorf("sheet names = %q, want %q", got, want)
+			}
+			if wb.namedRanges[0].Sheet != "Plan (2)" {
+				t.Errorf("named range sheet = %q, want it to follow the rename", wb.namedRanges[0].Sheet)
+			}
+			if v, _ := wb.sheets[0].Get(0, 0); v != "x" {
+				t.Errorf("cell lost: %q", v)
+			}
+			pkg, err := wb.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertStrictParts(t, pkg)
+			// And the cleaned workbook round-trips through JSON unchanged.
+			again, err := wb.MarshalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wb2, err := ParseWorkbook(again)
+			if err != nil {
+				t.Fatalf("re-parse: %v", err)
+			}
+			if got2 := strings.Join(wb2.SheetNames(), "|"); got2 != got {
+				t.Errorf("round-trip names = %q, want %q", got2, got)
+			}
+		})
+	}
+}
