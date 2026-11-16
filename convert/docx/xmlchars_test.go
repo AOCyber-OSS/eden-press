@@ -70,3 +70,81 @@ func TestXMLIllegal_D1_ParagraphAndHeadingRuns(t *testing.T) {
 		}
 	}
 }
+
+func mustDOCX(t *testing.T, doc *model.Document, title string) map[string]string {
+	t.Helper()
+	pkg, err := ToDOCX(doc, Options{Title: title})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return xmltexttest.AssertStrictParts(t, pkg)
+}
+
+func TestXMLIllegal_D2_TableCells(t *testing.T) {
+	parts := mustDOCX(t, docOf(model.Block{
+		Kind:    model.BlockTable,
+		Headers: []string{"Ven" + illegalXML + "dor", "Price"},
+		Rows:    [][]string{{"North" + illegalXML + "gate", "1\x0c200"}},
+	}), "t")
+	body := parts["word/document.xml"]
+	for _, want := range []string{">Vendor<", ">Northgate<", ">1200<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("document.xml lost %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestXMLIllegal_D3_CodeKeepsTabLFCR(t *testing.T) {
+	parts := mustDOCX(t, docOf(model.Block{
+		Kind: model.BlockCode,
+		Text: "func f() {\n\treturn\x1b[0m 1\r\n}" + illegalXML,
+	}), "t")
+	body := parts["word/document.xml"]
+	for _, want := range []string{"\treturn[0m 1\r</w:t>", "<w:br/>", ">}</w:t>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("document.xml lost %q:\n%q", want, body)
+		}
+	}
+}
+
+func TestXMLIllegal_D4_CoreTitle(t *testing.T) {
+	parts := mustDOCX(t, docOf(model.Block{Kind: model.BlockParagraph, Text: "x"}), "Q3"+illegalXML+" & review")
+	if !strings.Contains(parts["docProps/core.xml"], "<dc:title>Q3 &amp; review</dc:title>") {
+		t.Errorf("core.xml title:\n%s", parts["docProps/core.xml"])
+	}
+}
+
+func TestXMLIllegal_D5_LinkAndCaptionText(t *testing.T) {
+	parts := mustDOCX(t, docOf(
+		model.Block{Kind: model.BlockFile, Name: "spec" + illegalXML + ".pdf", Src: "https://x.test/a?b=1\x00&c=2"},
+		model.Block{Kind: model.BlockImage, Text: "chart" + illegalXML, Src: "img\x0b.png"},
+		model.Block{Kind: model.BlockFigure, Text: "fig" + illegalXML, Src: "f.svg"},
+	), "t")
+	body := parts["word/document.xml"]
+	for _, want := range []string{"[spec.pdf](https://x.test/a?b=1&amp;c=2)", "[chart: img.png]", "[fig: f.svg]"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("document.xml lost %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestXMLIllegal_D6_ParagraphOnlyIllegal(t *testing.T) {
+	mustDOCX(t, docOf(
+		model.Block{Kind: model.BlockHeading, Level: 1, Text: illegalXML},
+		model.Block{Kind: model.BlockParagraph, Text: illegalXML},
+	), illegalXML)
+}
+
+func TestXMLIllegal_D7_ListQuoteMath(t *testing.T) {
+	parts := mustDOCX(t, docOf(
+		model.Block{Kind: model.BlockList, Items: []model.ListItem{{Text: "one" + illegalXML}, {Text: "two\x0b", Level: 1}}},
+		model.Block{Kind: model.BlockQuote, Text: "said" + illegalXML + "\nthen"},
+		model.Block{Kind: model.BlockMath, Text: `\frac{a}{b}` + illegalXML},
+	), "t")
+	body := parts["word/document.xml"]
+	for _, want := range []string{">one<", ">two<", ">said<", ">then<", `>\frac{a}{b}<`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("document.xml lost %q:\n%s", want, body)
+		}
+	}
+}
