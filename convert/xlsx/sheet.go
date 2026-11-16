@@ -486,13 +486,17 @@ func sheetName(sec model.Section, index int) string {
 	if raw == "" {
 		return fmt.Sprintf("Sheet%d", index)
 	}
+	// Drop XML-illegal characters first: strings.Map would turn invalid
+	// UTF-8 into a visible U+FFFD, and dedupeSheetNames must compare the
+	// names as they will be written, or two that differ only by an illegal
+	// character collide in the workbook.
 	cleaned := strings.Map(func(r rune) rune {
 		switch r {
 		case ':', '\\', '/', '?', '*', '[', ']':
 			return -1
 		}
 		return r
-	}, raw)
+	}, xmltext.Clean(raw))
 	cleaned = strings.TrimSpace(cleaned)
 	if cleaned == "" {
 		return fmt.Sprintf("Sheet%d", index)
