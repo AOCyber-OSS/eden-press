@@ -28,19 +28,16 @@ import (
 	"strings"
 
 	"go.aocyber.ai/eden-press/chase/model"
+	"go.aocyber.ai/eden-press/internal/xmltext"
 )
 
-// escapeXML escapes the five XML metacharacters. Cell text is untrusted (an
-// AODex document is LLM-written from a user's conversation); a single
-// unescaped "&" makes Excel report the workbook as corrupt.
+// escapeXML makes text safe for a worksheet or workbook part. Cell text is
+// untrusted (an AODex document is LLM-written from a user's conversation); a
+// single unescaped "&", or one XML-illegal control character, makes Excel
+// report the workbook as corrupt. Every user string goes through here, so the
+// filtering lives in xmltext, not at the call sites.
 func escapeXML(s string) string {
-	return strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		`"`, "&quot;",
-		"'", "&apos;",
-	).Replace(s)
+	return xmltext.Escape(s)
 }
 
 // columnRef converts a 0-based column index to its spreadsheet letters
@@ -489,13 +486,17 @@ func sheetName(sec model.Section, index int) string {
 	if raw == "" {
 		return fmt.Sprintf("Sheet%d", index)
 	}
+	// Drop XML-illegal characters first: strings.Map would turn invalid
+	// UTF-8 into a visible U+FFFD, and dedupeSheetNames must compare the
+	// names as they will be written, or two that differ only by an illegal
+	// character collide in the workbook.
 	cleaned := strings.Map(func(r rune) rune {
 		switch r {
 		case ':', '\\', '/', '?', '*', '[', ']':
 			return -1
 		}
 		return r
-	}, raw)
+	}, xmltext.Clean(raw))
 	cleaned = strings.TrimSpace(cleaned)
 	if cleaned == "" {
 		return fmt.Sprintf("Sheet%d", index)

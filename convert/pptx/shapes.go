@@ -34,6 +34,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strings"
+
+	"go.aocyber.ai/eden-press/internal/xmltext"
 )
 
 // bulletGlyph is the U+2022 BULLET emitted in an unordered list paragraph's
@@ -126,12 +128,14 @@ type groupShape struct {
 // escapeXML returns s with every XML metacharacter escaped via
 // xml.EscapeText, so the result is safe both as element content (<a:t>…</a:t>)
 // and inside a double-quoted attribute value. This is the ONE escaping seam
-// all user-supplied text funnels through.
+// all user-supplied text funnels through. XML-illegal characters are dropped
+// first (xmltext.Clean), matching the xlsx and docx writers; on its own
+// EscapeText would turn each into a visible U+FFFD (eden-press#39).
 func escapeXML(s string) string {
 	var b strings.Builder
 	// xml.EscapeText only errors if the writer errors; strings.Builder never
 	// does, so the error is unreachable here.
-	_ = xml.EscapeText(&b, []byte(s))
+	_ = xml.EscapeText(&b, []byte(xmltext.Clean(s)))
 	return b.String()
 }
 

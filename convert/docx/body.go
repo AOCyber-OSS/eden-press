@@ -27,25 +27,21 @@ import (
 	"strings"
 
 	"go.aocyber.ai/eden-press/chase/model"
+	"go.aocyber.ai/eden-press/internal/xmltext"
 )
 
-// escapeXML escapes the five XML metacharacters in user-supplied text. Every
+// escapeXML makes user-supplied text safe for a WordprocessingML part. Every
 // string that reaches document.xml passes through here: document titles and
 // body text are untrusted input (an AODex document is written by an LLM from a
-// user's conversation), and an unescaped "&" alone is enough to make Word
-// reject the whole package as corrupt.
+// user's conversation), and an unescaped "&", or one XML-illegal control
+// character, is enough to make Word reject the whole package as corrupt. The
+// filtering lives in xmltext so no call site can bypass it.
 //
 // encoding/xml's EscapeText is deliberately not used: it also escapes newlines
 // and tabs as character references, which would corrupt the code-block runs
 // that rely on literal whitespace under xml:space="preserve".
 func escapeXML(s string) string {
-	return strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		`"`, "&quot;",
-		"'", "&apos;",
-	).Replace(s)
+	return xmltext.Escape(s)
 }
 
 // runXML renders one <w:r> text run. preserve keeps significant leading and
