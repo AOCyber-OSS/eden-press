@@ -41,75 +41,16 @@ package xlsx
 // headers/footers, or user text in docProps/app.xml.
 
 import (
-	"archive/zip"
-	"bytes"
-	"encoding/xml"
-	"io"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"go.aocyber.ai/eden-press/chase/model"
+	"go.aocyber.ai/eden-press/internal/xmltext/xmltexttest"
 )
 
-// illegalXML is one of every XML-1.0-illegal class: NUL, other C0 controls,
-// vertical tab, form feed, ESC (ANSI colour), U+FFFE, U+FFFF, and a UTF-8
-// encoded lone surrogate (invalid UTF-8 in a Go string).
-const illegalXML = "\x00\x01\x08\x0b\x0c\x0e\x1b\x1f￾￿\xed\xa0\x80"
+const illegalXML = xmltexttest.Illegal
 
-// legalXMLChar is the XML 1.0 Char production.
-func legalXMLChar(r rune) bool {
-	return r == 0x9 || r == 0xA || r == 0xD ||
-		(r >= 0x20 && r <= 0xD7FF) ||
-		(r >= 0xE000 && r <= 0xFFFD) ||
-		(r >= 0x10000 && r <= 0x10FFFF)
-}
-
-// assertStrictParts checks every part of the package the way a strict
-// consumer does: valid UTF-8, no illegal rune, and a full strict decode.
-func assertStrictParts(t *testing.T, pkg []byte) map[string]string {
-	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
-	if err != nil {
-		t.Fatalf("not a zip: %v", err)
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("%s: %v", f.Name, err)
-		}
-		raw, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("%s: %v", f.Name, err)
-		}
-		s := string(raw)
-		parts[f.Name] = s
-		if !utf8.ValidString(s) {
-			t.Errorf("%s: invalid UTF-8", f.Name)
-		}
-		for i, r := range s {
-			if !legalXMLChar(r) {
-				t.Errorf("%s: illegal rune %U at byte %d", f.Name, r, i)
-				break
-			}
-		}
-		dec := xml.NewDecoder(strings.NewReader(s))
-		dec.Strict = true
-		for {
-			_, err := dec.Token()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Errorf("%s: strict XML decode: %v", f.Name, err)
-				break
-			}
-		}
-	}
-	return parts
-}
+var assertStrictParts = xmltexttest.AssertStrictParts
 
 func illegalTableDoc(heading string, headers []string, rows [][]string) *model.Document {
 	blocks := []model.Block{}
