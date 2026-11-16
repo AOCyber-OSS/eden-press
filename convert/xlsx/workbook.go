@@ -502,8 +502,14 @@ func ParseWorkbook(b []byte) (*Workbook, error) {
 	}
 	wb := NewWorkbook(snap.Title)
 	wb.namedRanges = append([]NamedRange{}, snap.NamedRanges...)
-	for _, sh := range snap.Sheets {
-		sheet, err := wb.AddSheet(sh.Name)
+	names, renamed := cleanLegacySheetNames(snap.Sheets)
+	for i := range wb.namedRanges {
+		if n, ok := renamed[wb.namedRanges[i].Sheet]; ok {
+			wb.namedRanges[i].Sheet = n
+		}
+	}
+	for i, sh := range snap.Sheets {
+		sheet, err := wb.AddSheet(names[i])
 		if err != nil {
 			return nil, err
 		}
@@ -537,6 +543,44 @@ func ParseWorkbook(b []byte) (*Workbook, error) {
 		}
 	}
 	return wb, nil
+}
+
+// cleanLegacySheetNames returns the names ParseWorkbook loads the sheets
+// under. A snapshot stored before eden-press#39 can carry a sheet name with
+// an XML-illegal character, which AddSheet now refuses; rejecting it on load
+// would make the stored workbook unopenable. Such a name is cleaned the way
+// sheetName cleans a heading: illegal runes dropped, an empty result falls
+// back to SheetN, and a collision with any other sheet gets a " (k)" suffix.
+// Names that were already legal are kept exactly. renamed maps each changed
+// original name to its new one, so named ranges can follow it.
+func cleanLegacySheetNames(sheets []sheetSnapshot) (names []string, renamed map[string]string) {
+	names = make([]string, len(sheets))
+	renamed = map[string]string{}
+	taken := make(map[string]bool, len(sheets))
+	for i, sh := range sheets {
+		if xmltext.Clean(sh.Name) == sh.Name {
+			names[i] = sh.Name
+			taken[strings.ToLower(sh.Name)] = true
+		}
+	}
+	for i, sh := range sheets {
+		if xmltext.Clean(sh.Name) == sh.Name {
+			continue
+		}
+		base := strings.TrimSpace(xmltext.Clean(sh.Name))
+		if base == "" {
+			base = fmt.Sprintf("Sheet%d", i+1)
+		}
+		candidate := base
+		for k := 2; taken[strings.ToLower(candidate)]; k++ {
+			suffix := fmt.Sprintf(" (%d)", k)
+			candidate = truncateRunes(base, maxSheetName-len([]rune(suffix))) + suffix
+		}
+		taken[strings.ToLower(candidate)] = true
+		names[i] = candidate
+		renamed[sh.Name] = candidate
+	}
+	return names, renamed
 }
 
 func applyV1Rows(sheet *Sheet, rows []rowSnapshot) error {
