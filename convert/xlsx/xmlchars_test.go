@@ -109,3 +109,46 @@ func TestXMLIllegal_X3_SheetNameFromHeading(t *testing.T) {
 		t.Errorf("sheet names = %q, want %q", got, want)
 	}
 }
+
+func TestXMLIllegal_X4_SheetNameOnlyIllegalFallsBack(t *testing.T) {
+	doc := illegalTableDoc(illegalXML, []string{"h"}, [][]string{{"1"}})
+	pkg, err := ToXLSX(doc, Options{Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := assertStrictParts(t, pkg)
+	if got := sheetNames(t, parts["xl/workbook.xml"]); len(got) != 1 || got[0] != "Sheet1" {
+		t.Errorf("sheet names = %q, want [Sheet1]", got)
+	}
+}
+
+func TestXMLIllegal_X5_CoreTitle(t *testing.T) {
+	doc := illegalTableDoc("", []string{"h"}, [][]string{{"1"}})
+	pkg, err := ToXLSX(doc, Options{Title: "Q3" + illegalXML + " & review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := assertStrictParts(t, pkg)
+	if !strings.Contains(parts["docProps/core.xml"], "<dc:title>Q3 &amp; review</dc:title>") {
+		t.Errorf("core.xml title:\n%s", parts["docProps/core.xml"])
+	}
+}
+
+// X6: the Workbook API stores names verbatim, so dropping illegal
+// characters at write time could empty a name or collide two. It rejects
+// them up front instead, like the other characters Excel refuses.
+func TestXMLIllegal_X6_WorkbookRejectsIllegalSheetName(t *testing.T) {
+	w := NewWorkbook("t")
+	if _, err := w.AddSheet("Plan" + "\x0b"); err == nil {
+		t.Error("AddSheet accepted a name with U+000B")
+	}
+	if _, err := w.AddSheet("\xed\xa0\x80"); err == nil {
+		t.Error("AddSheet accepted a name of invalid UTF-8")
+	}
+	if _, err := w.AddSheet("Plan"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.RenameSheet("Plan", "Plan\x00"); err == nil {
+		t.Error("RenameSheet accepted a name with U+0000")
+	}
+}
