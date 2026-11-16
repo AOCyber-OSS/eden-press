@@ -28,19 +28,16 @@ import (
 	"strings"
 
 	"go.aocyber.ai/eden-press/chase/model"
+	"go.aocyber.ai/eden-press/internal/xmltext"
 )
 
-// escapeXML escapes the five XML metacharacters. Cell text is untrusted (an
-// AODex document is LLM-written from a user's conversation); a single
-// unescaped "&" makes Excel report the workbook as corrupt.
+// escapeXML makes text safe for a worksheet or workbook part. Cell text is
+// untrusted (an AODex document is LLM-written from a user's conversation); a
+// single unescaped "&", or one XML-illegal control character, makes Excel
+// report the workbook as corrupt. Every user string goes through here, so the
+// filtering lives in xmltext, not at the call sites.
 func escapeXML(s string) string {
-	return strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		`"`, "&quot;",
-		"'", "&apos;",
-	).Replace(s)
+	return xmltext.Escape(s)
 }
 
 // columnRef converts a 0-based column index to its spreadsheet letters
