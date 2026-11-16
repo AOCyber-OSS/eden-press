@@ -28,6 +28,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"go.aocyber.ai/eden-press/internal/xmltext"
 )
 
 // WorkbookSchema is the versioned JSON shape a host embeds and eden-ui edits.
@@ -415,6 +417,12 @@ func validateSheetName(name string) error {
 	}
 	if strings.ContainsAny(name, `:\/?*[]`) {
 		return fmt.Errorf("xlsx: sheet name %q contains a character Excel rejects", name)
+	}
+	// A name is written as an XML attribute. Dropping illegal characters at
+	// write time could empty it or collide it with another sheet, so it is
+	// refused here instead.
+	if xmltext.Clean(name) != name {
+		return fmt.Errorf("xlsx: sheet name %q contains a character XML 1.0 forbids", name)
 	}
 	return nil
 }
