@@ -72,3 +72,40 @@ func TestXMLIllegal_X1_InlineStringCell(t *testing.T) {
 		t.Errorf("legal text around the illegal characters was lost:\n%s", parts["xl/worksheets/sheet1.xml"])
 	}
 }
+
+// sheetNames pulls the name="..." attributes out of xl/workbook.xml.
+func sheetNames(t *testing.T, workbookXML string) []string {
+	t.Helper()
+	var names []string
+	rest := workbookXML
+	for {
+		i := strings.Index(rest, `<sheet name="`)
+		if i < 0 {
+			return names
+		}
+		rest = rest[i+len(`<sheet name="`):]
+		j := strings.Index(rest, `"`)
+		names = append(names, rest[:j])
+		rest = rest[j:]
+	}
+}
+
+func TestXMLIllegal_X3_SheetNameFromHeading(t *testing.T) {
+	table := model.Block{Kind: model.BlockTable, Headers: []string{"h"}, Rows: [][]string{{"1"}}}
+	doc := &model.Document{Sections: []model.Section{
+		{Blocks: []model.Block{{Kind: model.BlockHeading, Level: 2, Text: "Q3" + illegalXML + " Plan"}, table}},
+		// Differs from the first only by the illegal characters: once they
+		// are dropped the two names collide, and Excel rejects duplicates.
+		{Blocks: []model.Block{{Kind: model.BlockHeading, Level: 2, Text: "Q3 Plan"}, table}},
+	}}
+	pkg, err := ToXLSX(doc, Options{Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := assertStrictParts(t, pkg)
+	got := sheetNames(t, parts["xl/workbook.xml"])
+	want := []string{"Q3 Plan", "Q3 Plan (2)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("sheet names = %q, want %q", got, want)
+	}
+}
