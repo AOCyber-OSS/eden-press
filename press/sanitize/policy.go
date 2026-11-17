@@ -57,15 +57,26 @@ import (
 // required case restoration, to correctly preserve the inline-SVG
 // container chain (<svg><foreignObject><section>).
 func Policy() *bluemonday.Policy {
-	return basePolicy(nil, nil)
+	return basePolicy(baseOptions{inlineSVGChain: true})
 }
 
-// basePolicy is Policy with optional value patterns on the two URL
-// attributes. bluemonday keeps every AllowAttrs rule for an attribute and
-// accepts a value any one of them accepts, so a derived policy cannot narrow
-// a[href] or img[src] after the fact: it has to build its own base with the
-// pattern in place. Policy passes nil for both and is unchanged.
-func basePolicy(linkHref, imageSrc *regexp.Regexp) *bluemonday.Policy {
+// baseOptions are the ways a derived policy differs from Policy at its base.
+// bluemonday keeps every AllowAttrs rule for an attribute and accepts a value
+// any one of them accepts, and has no way to disallow an element once
+// allowed, so a derived policy cannot narrow Policy after the fact: it has to
+// build its own base. The zero value of each field is the narrower choice;
+// Policy sets inlineSVGChain and is unchanged.
+type baseOptions struct {
+	// linkHref and imageSrc, when set, are patterns a[href] and img[src]
+	// values must match.
+	linkHref, imageSrc *regexp.Regexp
+	// inlineSVGChain allows Marpit's <svg data-marpit-svg><foreignObject>
+	// container. A document fragment never needs it, and foreignObject is how
+	// an SVG carries arbitrary HTML (eden-press#24).
+	inlineSVGChain bool
+}
+
+func basePolicy(o baseOptions) *bluemonday.Policy {
 	p := bluemonday.NewPolicy()
 
 	// Structural / layout / inline-formatting elements (Marp v4-era deck
@@ -90,12 +101,16 @@ func basePolicy(linkHref, imageSrc *regexp.Regexp) *bluemonday.Policy {
 	//   <foreignObject width height [x] [data-marpit-advanced-background]>
 	//     <section>...</section>
 	// grounded against chase/markdown/inlinesvg.go + advancedbg.go.
-	p.AllowElements("svg", "foreignObject")
-	p.AllowAttrs("data-marpit-svg", "viewBox").OnElements("svg")
-	p.AllowAttrs(
-		"width", "height", "x",
-		"data-marpit-advanced-background",
-	).OnElements("foreignObject")
+	p.AllowElements("svg")
+	p.AllowAttrs("viewBox").OnElements("svg")
+	if o.inlineSVGChain {
+		p.AllowElements("foreignObject")
+		p.AllowAttrs("data-marpit-svg").OnElements("svg")
+		p.AllowAttrs(
+			"width", "height", "x",
+			"data-marpit-advanced-background",
+		).OnElements("foreignObject")
+	}
 
 	// Advanced-background layer structure (chase/markdown/advancedbg.go):
 	// background/content/pseudo layers.
@@ -122,8 +137,8 @@ func basePolicy(linkHref, imageSrc *regexp.Regexp) *bluemonday.Policy {
 	p.AllowAttrs("data-auto-scaling").OnElements("h1", "h2", "h3", "h4", "h5", "h6")
 
 	// Links: href only, scheme-gated below.
-	if linkHref != nil {
-		p.AllowAttrs("href").Matching(linkHref).OnElements("a")
+	if o.linkHref != nil {
+		p.AllowAttrs("href").Matching(o.linkHref).OnElements("a")
 	} else {
 		p.AllowAttrs("href").OnElements("a")
 	}
@@ -132,8 +147,8 @@ func basePolicy(linkHref, imageSrc *regexp.Regexp) *bluemonday.Policy {
 	// (03-06/03-08's go-latex/latex drawtex/drawimg path). draggable is
 	// part of goldmark-emoji's literal Twemoji <img> template.
 	p.AllowAttrs("alt", "draggable").OnElements("img")
-	if imageSrc != nil {
-		p.AllowAttrs("src").Matching(imageSrc).OnElements("img")
+	if o.imageSrc != nil {
+		p.AllowAttrs("src").Matching(o.imageSrc).OnElements("img")
 	} else {
 		p.AllowAttrs("src").OnElements("img")
 	}

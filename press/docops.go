@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"go.aocyber.ai/eden-press/chase/model"
+	"go.aocyber.ai/eden-press/press/sanitize"
 )
 
 // The byte APIs below return compact JSON (json.Marshal). They used to indent
@@ -492,7 +493,10 @@ func AssembleDocsHTML(doc *model.Document) string {
 	b.WriteString("<style>\n")
 	b.WriteString(model.DocsCSS)
 	b.WriteString("\n</style>\n</head>\n<body>\n")
-	b.WriteString(model.ToHTML(doc))
+	// The body is a document's content, which may be untrusted: a figure's
+	// SVG is authored markup and model.ToHTML writes it verbatim. It is
+	// sanitized here so the export is safe to serve (eden-press#24).
+	b.WriteString(sanitize.SanitizeDocs(model.ToHTML(doc)))
 	b.WriteString("</body>\n</html>\n")
 	return b.String()
 }
