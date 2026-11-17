@@ -57,6 +57,15 @@ import (
 // required case restoration, to correctly preserve the inline-SVG
 // container chain (<svg><foreignObject><section>).
 func Policy() *bluemonday.Policy {
+	return basePolicy(nil, nil)
+}
+
+// basePolicy is Policy with optional value patterns on the two URL
+// attributes. bluemonday keeps every AllowAttrs rule for an attribute and
+// accepts a value any one of them accepts, so a derived policy cannot narrow
+// a[href] or img[src] after the fact: it has to build its own base with the
+// pattern in place. Policy passes nil for both and is unchanged.
+func basePolicy(linkHref, imageSrc *regexp.Regexp) *bluemonday.Policy {
 	p := bluemonday.NewPolicy()
 
 	// Structural / layout / inline-formatting elements (Marp v4-era deck
@@ -113,12 +122,21 @@ func Policy() *bluemonday.Policy {
 	p.AllowAttrs("data-auto-scaling").OnElements("h1", "h2", "h3", "h4", "h5", "h6")
 
 	// Links: href only, scheme-gated below.
-	p.AllowAttrs("href").OnElements("a")
+	if linkHref != nil {
+		p.AllowAttrs("href").Matching(linkHref).OnElements("a")
+	} else {
+		p.AllowAttrs("href").OnElements("a")
+	}
 
 	// Images: twemoji <img> (03-04) + MathML PNG data-URI fallback
 	// (03-06/03-08's go-latex/latex drawtex/drawimg path). draggable is
 	// part of goldmark-emoji's literal Twemoji <img> template.
-	p.AllowAttrs("src", "alt", "draggable").OnElements("img")
+	p.AllowAttrs("alt", "draggable").OnElements("img")
+	if imageSrc != nil {
+		p.AllowAttrs("src").Matching(imageSrc).OnElements("img")
+	} else {
+		p.AllowAttrs("src").OnElements("img")
+	}
 
 	// MathML (03-06): the real element/attribute set emitted by the
 	// internal/latex2mathml fork's Convert(), grounded against its

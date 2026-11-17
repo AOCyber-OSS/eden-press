@@ -38,6 +38,9 @@ import (
 //   - input[type=checkbox][checked][disabled]     (todo; see SanitizeModel)
 //   - a conservative SVG drawing subset           (figure.svg)
 //
+// and one narrowing: a[href] takes only http, https, mailto or a #fragment,
+// and img[src] only http(s) or a data:image (eden-press#23).
+//
 // Policy() stays untouched on purpose. It is the Marp-parity policy
 // press.Render applies to Markdown-derived HTML, and widening it would change
 // what every existing Render caller's output can contain. Only
@@ -51,7 +54,16 @@ import (
 // same-document url(#id) references only (never url(https://...)), and there is
 // no style attribute, so no CSS can reach the page.
 func ModelPolicy() *bluemonday.Policy {
-	p := Policy()
+	p := basePolicy(reLinkHref, reImageSrc)
+
+	// Links (eden-press#23). Policy() allows data: on every URL attribute
+	// for the math PNG fallback, which let a data: href survive on links.
+	// Here a[href] is held to the link allowlist -- http, https, mailto or a
+	// same-document #fragment -- and img[src] to http(s) or a data:image
+	// (both patterns are set in basePolicy; see why there). Relative URLs are switched on only so a "#fragment" parses; the two
+	// patterns below still refuse any other relative value, as Policy() does.
+	p.AllowURLSchemes("mailto")
+	p.AllowRelativeURLs(true)
 
 	p.AllowElements("details", "summary", "aside", "label")
 	p.AllowNoAttrs().OnElements("details", "summary", "aside", "label")
@@ -96,6 +108,8 @@ var svgShapeElements = []string{
 
 var (
 	reCheckbox     = regexp.MustCompile(`^checkbox$`)
+	reLinkHref     = regexp.MustCompile(`^(?i:https?:|mailto:|#)`)
+	reImageSrc     = regexp.MustCompile(`^(?i:https?:|data:image/)`)
 	reSVGNamespace = regexp.MustCompile(`^http://www\.w3\.org/2000/svg$`)
 	reLength       = regexp.MustCompile(`^-?[0-9]*\.?[0-9]+(px|em|rem|pt|%)?$`)
 	reNumber       = regexp.MustCompile(`^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?$`)
