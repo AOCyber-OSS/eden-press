@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
@@ -52,6 +54,10 @@ type Session struct {
 	rootCancel context.CancelFunc
 
 	userDataDir string
+
+	// allowRequest is convert.Options.AllowRequest: nil refuses every
+	// request a page makes (see guard).
+	allowRequest func(url string) bool
 }
 
 // DefaultStartTimeout bounds browser allocation when Options.StartTimeout is
@@ -90,6 +96,18 @@ func browserOutput(w io.Writer) io.Writer {
 	return w
 }
 
+// NoSandboxEnv names the environment variable that, set to "1", launches
+// Chrome without its sandbox, as convert.Options.NoSandbox does.
+const NoSandboxEnv = "EDEN_PRESS_CHROME_NO_SANDBOX"
+
+// testAllocOptions are extra launch options the package's own tests add. It is
+// nil outside tests. The request-interception tests need it: Chrome's Local
+// Network Access checks already refuse loopback fetches from an about:blank
+// page on current Chrome, which would make "the probe server saw no request"
+// true with or without the interception under test. Those tests switch that
+// check off here so a zero means the interception refused the request.
+var testAllocOptions []chromedp.ExecAllocatorOption
+
 // New builds ONE chromedp ExecAllocator/browser with the CI-hardening and
 // determinism launch flags baked in as DEFAULTS (not opt-ins), resolving the
 // executable via Discover.
@@ -127,11 +145,6 @@ func New(opts convert.Options) (*Session, error) {
 
 	allocOpts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	allocOpts = append(allocOpts,
-		// NoSandbox: guarded-for-container posture -- CI/container
-		// execution commonly runs as root with no user-namespace sandbox
-		// available, so the sandbox must be disabled for Chrome to launch
-		// at all (05-05 hardens the surrounding non-root/CI posture).
-		chromedp.NoSandbox,
 		// Unique per-run profile dir -- avoids cross-run contention if
 		// multiple Sessions exist concurrently (Pitfall 11).
 		chromedp.UserDataDir(userDataDir),
@@ -193,6 +206,20 @@ func New(opts convert.Options) (*Session, error) {
 		// TestNewStartTimeoutGovernsTheDevToolsHandshake guards this.
 		chromedp.WSURLReadTimeout(startTimeout),
 	)
+	// The sandbox stays ON unless the caller says the container provides the
+	// isolation instead (eden-press#42). The renderer parses documents that
+	// may be untrusted, and the sandbox is what contains a renderer exploit.
+	// It is turned off only where it cannot work: CI/container execution
+	// commonly runs as root, or with no user-namespace sandbox available, and
+	// Chrome then refuses to launch with it. That is a deployment fact, so it
+	// is set per deployment -- convert.Options.NoSandbox, or NoSandboxEnv=1 in
+	// the container's environment -- and the container must then supply the
+	// isolation itself (non-root user, no privileges, no route to anything the
+	// export should not reach).
+	if opts.NoSandbox || os.Getenv(NoSandboxEnv) == "1" {
+		allocOpts = append(allocOpts, chromedp.NoSandbox)
+	}
+	allocOpts = append(allocOpts, testAllocOptions...)
 	if execPath != "" {
 		// Only pin an explicit executable when Discover resolved one, e.g.
 		// tier 1 (BrowserPath) or tier 2 (CHROME_PATH). An empty execPath
@@ -266,6 +293,8 @@ func New(opts convert.Options) (*Session, error) {
 		rootCtx:     rootCtx,
 		rootCancel:  rootCancel,
 		userDataDir: userDataDir,
+
+		allowRequest: opts.AllowRequest,
 	}, nil
 }
 
@@ -295,6 +324,11 @@ const newTabTimeout = 30 * time.Second
 // creation, whose first Run then reports the browser's error as before. A tab
 // that is never Run keeps its blank window until Close ends the browser.
 func (s *Session) NewTab() (context.Context, context.CancelFunc) {
+	ctx, cancel := s.openTab()
+	return s.guard(ctx, cancel)
+}
+
+func (s *Session) openTab() (context.Context, context.CancelFunc) {
 	browser := chromedp.FromContext(s.rootCtx).Browser
 	if browser == nil {
 		return chromedp.NewContext(s.rootCtx)
@@ -309,6 +343,69 @@ func (s *Session) NewTab() (context.Context, context.CancelFunc) {
 		return chromedp.NewContext(s.rootCtx)
 	}
 	return chromedp.NewContext(s.rootCtx, chromedp.WithTargetID(id))
+}
+
+// guard puts the tab behind request interception before any document is
+// loaded into it (eden-press#42). The documents an export renders may be
+// untrusted, and every URL they embed -- an <img>, a stylesheet, a CSS url(),
+// a theme's @import -- would otherwise be fetched by the export host, which
+// can reach internal services and cloud metadata that the document's author
+// cannot.
+//
+// Fetch.enable with a "*" pattern pauses every network request the tab makes.
+// A paused request continues only when convert.Options.AllowRequest returns
+// true for its URL; with no AllowRequest it is failed as BlockedByClient. The
+// export path itself needs no network: LoadHTML navigates to about:blank and
+// injects the document with SetDocumentContent, and fonts are data: URIs,
+// neither of which is a network request.
+//
+// guard fails closed. NewTab has no error return, so when interception cannot
+// be enabled the tab's context is cancelled with the reason as its cause, and
+// the caller's first chromedp.Run fails rather than loading a document into
+// an unguarded tab.
+func (s *Session) guard(ctx context.Context, cancel context.CancelFunc) (context.Context, context.CancelFunc) {
+	allow := s.allowRequest
+	chromedp.ListenTarget(ctx, func(ev any) {
+		e, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		// A listener must not block the event loop: answer on a goroutine.
+		go func() {
+			c := chromedp.FromContext(ctx)
+			if c == nil || c.Target == nil {
+				return
+			}
+			exec := cdp.WithExecutor(ctx, c.Target)
+			if allow != nil && allow(e.Request.URL) {
+				_ = fetch.ContinueRequest(e.RequestID).Do(exec)
+				return
+			}
+			_ = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient).Do(exec)
+		}()
+	})
+
+	// This Run is the tab's FIRST, which attaches to it -- and chromedp ties
+	// the tab's lifetime to the context of that first Run. It must therefore
+	// run on ctx itself, never on a derived context with a deadline (whose
+	// expiry would close the tab under the caller). The bound is a select,
+	// as in New.
+	enabled := make(chan error, 1)
+	go func() {
+		enabled <- chromedp.Run(ctx, fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*"}}))
+	}()
+	var err error
+	select {
+	case err = <-enabled:
+	case <-time.After(newTabTimeout):
+		err = fmt.Errorf("no answer within %s", newTabTimeout)
+	}
+	if err != nil {
+		guarded, cancelCause := context.WithCancelCause(ctx)
+		cancelCause(fmt.Errorf("convert/chrome: enabling request interception: %w", err))
+		return guarded, func() { cancelCause(context.Canceled); cancel() }
+	}
+	return ctx, cancel
 }
 
 // Close tears the browser down: cancels the root tab, then the allocator

@@ -193,9 +193,18 @@ jobs:
         # stamp is irrelevant to these test builds. For the same reason the
         # compile check writes its binary to /tmp, not into the read-only
         # checkout (export-binary-smoke builds its own copy in a temp dir).
+        #
+        # EDEN_PRESS_CHROME_NO_SANDBOX=1 (eden-press#42): Chrome's sandbox is
+        # on by default now, and it cannot start inside this container (the
+        # default seccomp profile refuses the user namespace it needs, and
+        # headless-shell ships no setuid helper). This throwaway container is
+        # what provides the isolation here -- unprivileged user, nothing
+        # mounted but the checkout -- so it declares the opt-out, exactly as a
+        # deployed export container must.
         run: |
           docker run --rm \
             --user 10001:10001 \
+            -e EDEN_PRESS_CHROME_NO_SANDBOX=1 \
             --shm-size=1g \
             -e CHROME_PATH=/headless-shell/headless-shell \
             -e HOME=/tmp \
