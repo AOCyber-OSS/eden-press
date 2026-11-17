@@ -26,11 +26,48 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 )
+
+// Import limits. Open reads untrusted uploads (press.ImportWorkbookXLSXJSON is
+// public API), and a zip part's compression ratio is the attacker's choice: a
+// few hundred kilobytes can inflate to gigabytes. Every part is read through a
+// bound, and a package that would pass one is refused with ErrLimitExceeded.
+const (
+	// MaxPartBytes caps the inflated size of any single part.
+	MaxPartBytes = 128 << 20
+	// MaxTotalBytes caps the inflated bytes of all parts Open reads together.
+	MaxTotalBytes = 256 << 20
+	// MaxParts caps the number of entries in the package. A workbook this
+	// package writes has a dozen; a real one with media rarely has hundreds.
+	MaxParts = 10000
+)
+
+// limits is the set of bounds one Open enforces. Open uses defaultLimits; the
+// tests drive smaller ones through openWithLimits so a total-size or
+// part-count case does not have to inflate hundreds of megabytes.
+type limits struct {
+	partBytes  int64
+	totalBytes int64
+	parts      int
+}
+
+var defaultLimits = limits{partBytes: MaxPartBytes, totalBytes: MaxTotalBytes, parts: MaxParts}
+
+// partReader reads parts of one package under one set of limits.
+type partReader struct {
+	files map[string]*zip.File
+	lim   limits
+	// used counts the inflated bytes handed out so far, against totalBytes.
+	used int64
+}
+
+// ErrLimitExceeded is returned (wrapped) when a package exceeds an import limit.
+var ErrLimitExceeded = errors.New("xlsx: package exceeds import limit")
 
 // Open reads an .xlsx package back into a Workbook so a caller can keep
 // editing it. Cells this package writes — inline strings, numbers, and
@@ -38,6 +75,10 @@ import (
 // package has xl/sharedStrings.xml. A cached formula result (<v> next to
 // <f>) is ignored: the formula is the cell.
 func Open(b []byte) (*Workbook, error) {
+	return openWithLimits(b, defaultLimits)
+}
+
+func openWithLimits(b []byte, lim limits) (*Workbook, error) {
 	if len(b) == 0 {
 		return nil, fmt.Errorf("xlsx: Open: empty package")
 	}
@@ -45,12 +86,17 @@ func Open(b []byte) (*Workbook, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xlsx: Open: %w", err)
 	}
+	if len(zr.File) > lim.parts {
+		return nil, fmt.Errorf("xlsx: Open: package has %d parts, over the %d-part limit: %w",
+			len(zr.File), lim.parts, ErrLimitExceeded)
+	}
 	files := make(map[string]*zip.File, len(zr.File))
 	for _, f := range zr.File {
 		files[f.Name] = f
 	}
+	pr := &partReader{files: files, lim: lim}
 
-	wbXML, err := readZipFile(files, "xl/workbook.xml")
+	wbXML, err := pr.read("xl/workbook.xml")
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +108,7 @@ func Open(b []byte) (*Workbook, error) {
 		return nil, fmt.Errorf("xlsx: Open: workbook has no sheets")
 	}
 
-	relsXML, err := readZipFile(files, "xl/_rels/workbook.xml.rels")
+	relsXML, err := pr.read("xl/_rels/workbook.xml.rels")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +118,9 @@ func Open(b []byte) (*Workbook, error) {
 	}
 
 	var shared []string
-	if raw, err := readZipFile(files, "xl/sharedStrings.xml"); err == nil {
+	if raw, ok, err := pr.readOptional("xl/sharedStrings.xml"); err != nil {
+		return nil, err
+	} else if ok {
 		shared, err = parseSharedStrings(raw)
 		if err != nil {
 			return nil, err
@@ -80,7 +128,9 @@ func Open(b []byte) (*Workbook, error) {
 	}
 
 	title := "Workbook"
-	if raw, err := readZipFile(files, "docProps/core.xml"); err == nil {
+	if raw, ok, err := pr.readOptional("docProps/core.xml"); err != nil {
+		return nil, err
+	} else if ok {
 		if t := parseCoreTitle(raw); t != "" {
 			title = t
 		}
@@ -93,7 +143,7 @@ func Open(b []byte) (*Workbook, error) {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q relationship %s has no target", sh.name, sh.rel)
 		}
 		path := worksheetPath(target)
-		raw, err := readZipFile(files, path)
+		raw, err := pr.read(path)
 		if err != nil {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q: %w", sh.name, err)
 		}
@@ -113,21 +163,55 @@ type workbookSheetRef struct {
 	rel  string
 }
 
-func readZipFile(files map[string]*zip.File, name string) ([]byte, error) {
-	f, ok := files[name]
+func (pr *partReader) read(name string) ([]byte, error) {
+	max := pr.lim.partBytes
+	if left := pr.lim.totalBytes - pr.used; left < max {
+		max = left
+	}
+	f, ok := pr.files[name]
 	if !ok {
 		return nil, fmt.Errorf("xlsx: Open: missing part %q", name)
+	}
+	// The declared size is checked first so an honest bomb costs nothing,
+	// but it is the attacker's to write: the bound below is on the bytes
+	// actually inflated.
+	if f.UncompressedSize64 > uint64(max) {
+		return nil, pr.overLimit(name)
 	}
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	b, err := io.ReadAll(io.LimitReader(rc, max+1))
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(b)) > max {
+		return nil, pr.overLimit(name)
+	}
+	pr.used += int64(len(b))
 	return b, nil
+}
+
+// readOptional is read for a part the package may omit: ok is false only when
+// the part is absent. Any other failure -- a limit above all -- is an error,
+// never a part quietly treated as missing.
+func (pr *partReader) readOptional(name string) (b []byte, ok bool, err error) {
+	if _, present := pr.files[name]; !present {
+		return nil, false, nil
+	}
+	b, err = pr.read(name)
+	if err != nil {
+		return nil, false, err
+	}
+	return b, true, nil
+}
+
+// overLimit names the part and the limits in force when name would exceed one.
+func (pr *partReader) overLimit(name string) error {
+	return fmt.Errorf("xlsx: Open: part %q exceeds the import limits (%d bytes per part, %d bytes in total): %w",
+		name, pr.lim.partBytes, pr.lim.totalBytes, ErrLimitExceeded)
 }
 
 func parseWorkbookSheets(raw []byte) ([]workbookSheetRef, error) {
