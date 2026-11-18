@@ -28,6 +28,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -184,6 +185,32 @@ func TestNoSandboxIsAnExplicitOptOut(t *testing.T) {
 
 			if got := argvHasToken(recordedArgv(t, argvPath), "--no-sandbox"); got != tc.want {
 				t.Errorf("--no-sandbox present = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Fetch interception covers the tab it is enabled on, and not a WebSocket or a
+// popup's new target. A document whose script opens either must still reach
+// nothing: export tabs run no page script (eden-press#42 review).
+func TestExportLoadScriptCannotReachThroughPopupOrWebSocket(t *testing.T) {
+	cases := map[string]func(base string) string{
+		"window.open": func(base string) string {
+			return `<script>window.open("` + base + `/popup")</script>`
+		},
+		"WebSocket": func(base string) string {
+			return `<script>new WebSocket("` + strings.Replace(base, "http://", "ws://", 1) + `/ws")</script>`
+		},
+	}
+	for name, script := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := newProbe(t)
+			sess := guardedSession(t, convert.Options{})
+
+			loadAndSettle(t, sess, `<!doctype html><html><body><h1>untrusted</h1>`+script(p.srv.URL)+`</body></html>`)
+
+			if n := p.hits.Load(); n != 0 {
+				t.Fatalf("a page script reached the probe %d time(s) via %s; want 0", n, name)
 			}
 		})
 	}
