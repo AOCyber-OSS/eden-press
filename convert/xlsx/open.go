@@ -69,6 +69,13 @@ const (
 	MaxRatio = 200
 	// RatioFloorBytes is the inflated size below which MaxRatio is not applied.
 	RatioFloorBytes = 1 << 20
+	// PackageRatioFloorBytes is the same floor for the package as a whole: the
+	// bytes Open reads from all parts together are held to MaxRatio x the
+	// package's own size once they pass it. Without it the per-part floor is a
+	// budget per read, and one tiny part read by many sheets (or many tiny
+	// parts) inflates to TotalBytes from a few kilobytes. Realistic packages
+	// stay under 30x overall, far below the ratio.
+	PackageRatioFloorBytes = 16 << 20
 )
 
 // Limits are the bounds one import enforces. A zero field takes the default
@@ -137,6 +144,10 @@ type LimitError struct {
 	Value int64
 	// Part names the zip part being read, when there was one.
 	Part string
+
+	// wholePackage marks a compression-ratio refusal for the package's parts
+	// taken together, not one part on its own.
+	wholePackage bool
 }
 
 func (e *LimitError) Error() string {
@@ -146,6 +157,9 @@ func (e *LimitError) Error() string {
 	}
 	switch e.Limit {
 	case LimitCompressionRatio:
+		if e.wholePackage {
+			return fmt.Sprintf("xlsx: workbook refused: its parts together inflate more than %dx the package's size%s, the compression ratio limit", e.Value, where)
+		}
 		return fmt.Sprintf("xlsx: workbook refused: a part inflates more than %dx its compressed size%s, the compression ratio limit", e.Value, where)
 	case LimitPartBytes, LimitTotalBytes:
 		return fmt.Sprintf("xlsx: workbook refused: over the %s limit of %d bytes%s", e.Limit, e.Value, where)
@@ -291,6 +305,20 @@ func (pr *partReader) read(name string) ([]byte, error) {
 		}
 		if byRatio < max {
 			max, over = byRatio, &LimitError{Limit: LimitCompressionRatio, Value: pr.lim.Ratio, Part: name}
+		}
+	}
+	// The package as a whole is held to the ratio too (see
+	// PackageRatioFloorBytes), so the per-part floor cannot be spent again on
+	// every read.
+	if pkgByRatio := pr.pkgBytes * pr.lim.Ratio; pkgByRatio/pr.lim.Ratio == pr.pkgBytes {
+		if pkgByRatio < PackageRatioFloorBytes {
+			pkgByRatio = PackageRatioFloorBytes
+		}
+		if left := pkgByRatio - pr.used; left < max {
+			if left < 0 {
+				left = 0
+			}
+			max, over = left, &LimitError{Limit: LimitCompressionRatio, Value: pr.lim.Ratio, Part: name, wholePackage: true}
 		}
 	}
 
