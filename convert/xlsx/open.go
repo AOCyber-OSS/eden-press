@@ -26,18 +26,180 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 )
 
+// Import limits. Open reads untrusted uploads (press.ImportWorkbookXLSXJSON is
+// public API), and a zip part's compression ratio is the attacker's choice: a
+// few hundred kilobytes can inflate to gigabytes.
+//
+// The main defence is the compression ratio (MaxRatio): a bomb is a part that
+// inflates far beyond its compressed size, and it is refused while it is being
+// read, long before any byte cap. The byte, part and cell caps sit well above
+// any realistic workbook and bound what a package that passes the ratio can
+// cost. A caller with tighter needs (a small upload limit, a small server)
+// passes stricter Limits to OpenWithLimits.
+const (
+	// MaxPartBytes caps the inflated size of any single part. A full-height
+	// Excel column of short values is ~40 MB of sheet XML; this is 12x that.
+	MaxPartBytes = 512 << 20
+	// MaxTotalBytes caps the inflated bytes of all parts Open reads together.
+	MaxTotalBytes = 1 << 30
+	// MaxParts caps the number of entries in the package. A workbook this
+	// package writes has a dozen; a real one with media rarely has hundreds.
+	MaxParts = 10000
+	// MaxCells caps the cells Open builds across all sheets, and the entries
+	// of the shared-strings table. Ten million is Google Sheets' own
+	// per-spreadsheet ceiling; Excel's grid (1,048,576 x 16,384) is not a
+	// practical bound, since Excel itself runs out of memory long before it.
+	// Parsed, a cell costs about 70 bytes live and 700 bytes allocated in
+	// passing (TestImportMemoryPerCell), so a package at this cap holds
+	// roughly 0.7 GB live.
+	MaxCells = 10_000_000
+	// MaxRatio caps a part's inflated bytes at this multiple of its
+	// compressed size. Measured on generated realistic workbooks, sheet parts
+	// compress about 5-20x (TestRealisticWorkbookImportsAtDefaults); a bomb
+	// is hundreds to a thousand times. Parts that inflate to no more than
+	// RatioFloorBytes are exempt, since a small, very regular part (an empty
+	// sheet, a styles table) can compress past any ratio and costs nothing.
+	MaxRatio = 200
+	// RatioFloorBytes is the inflated size below which MaxRatio is not applied.
+	RatioFloorBytes = 1 << 20
+	// PackageRatioFloorBytes is the same floor for the package as a whole: the
+	// bytes Open reads from all parts together are held to MaxRatio x the
+	// package's own size once they pass it. Without it the per-part floor is a
+	// budget per read, and one tiny part read by many sheets (or many tiny
+	// parts) inflates to TotalBytes from a few kilobytes. Realistic packages
+	// stay under 30x overall, far below the ratio.
+	PackageRatioFloorBytes = 16 << 20
+)
+
+// Limits are the bounds one import enforces. A zero field takes the default
+// (the Max* constant of the same name), so Limits{Cells: 100_000} tightens one
+// bound and keeps the rest.
+type Limits struct {
+	// PartBytes caps the inflated bytes of one part (default MaxPartBytes).
+	PartBytes int64
+	// TotalBytes caps the inflated bytes of all parts read (MaxTotalBytes).
+	TotalBytes int64
+	// Parts caps the entries in the package (MaxParts).
+	Parts int
+	// Cells caps the cells built and the shared strings parsed (MaxCells).
+	Cells int
+	// Ratio caps inflated bytes at Ratio x compressed bytes for any part that
+	// inflates past RatioFloorBytes (MaxRatio).
+	Ratio int64
+}
+
+// DefaultLimits returns the limits Open applies.
+func DefaultLimits() Limits {
+	return Limits{PartBytes: MaxPartBytes, TotalBytes: MaxTotalBytes, Parts: MaxParts, Cells: MaxCells, Ratio: MaxRatio}
+}
+
+// withDefaults fills every zero field from DefaultLimits.
+func (l Limits) withDefaults() Limits {
+	d := DefaultLimits()
+	if l.PartBytes <= 0 {
+		l.PartBytes = d.PartBytes
+	}
+	if l.TotalBytes <= 0 {
+		l.TotalBytes = d.TotalBytes
+	}
+	if l.Parts <= 0 {
+		l.Parts = d.Parts
+	}
+	if l.Cells <= 0 {
+		l.Cells = d.Cells
+	}
+	if l.Ratio <= 0 {
+		l.Ratio = d.Ratio
+	}
+	return l
+}
+
+// The names LimitError.Limit takes, one per bound.
+const (
+	LimitPartBytes        = "part bytes"
+	LimitTotalBytes       = "total bytes"
+	LimitParts            = "parts"
+	LimitCells            = "cells"
+	LimitCompressionRatio = "compression ratio"
+)
+
+// ErrLimitExceeded matches (errors.Is) every refusal for an import limit.
+var ErrLimitExceeded = errors.New("xlsx: package exceeds import limit")
+
+// LimitError is the refusal for an import limit. It names the limit and its
+// value so a caller can tell its user why the file was refused; errors.Is
+// matches it to ErrLimitExceeded.
+type LimitError struct {
+	// Limit is which bound was hit: LimitPartBytes, LimitTotalBytes,
+	// LimitParts, LimitCells or LimitCompressionRatio.
+	Limit string
+	// Value is that limit's value in force (bytes, a count, or the ratio).
+	Value int64
+	// Part names the zip part being read, when there was one.
+	Part string
+
+	// wholePackage marks a compression-ratio refusal for the package's parts
+	// taken together, not one part on its own.
+	wholePackage bool
+}
+
+func (e *LimitError) Error() string {
+	where := ""
+	if e.Part != "" {
+		where = fmt.Sprintf(" (part %q)", e.Part)
+	}
+	switch e.Limit {
+	case LimitCompressionRatio:
+		if e.wholePackage {
+			return fmt.Sprintf("xlsx: workbook refused: its parts together inflate more than %dx the package's size%s, the compression ratio limit", e.Value, where)
+		}
+		return fmt.Sprintf("xlsx: workbook refused: a part inflates more than %dx its compressed size%s, the compression ratio limit", e.Value, where)
+	case LimitPartBytes, LimitTotalBytes:
+		return fmt.Sprintf("xlsx: workbook refused: over the %s limit of %d bytes%s", e.Limit, e.Value, where)
+	default:
+		return fmt.Sprintf("xlsx: workbook refused: over the %s limit of %d%s", e.Limit, e.Value, where)
+	}
+}
+
+// Is makes errors.Is(err, ErrLimitExceeded) true for every LimitError.
+func (e *LimitError) Is(target error) bool { return target == ErrLimitExceeded }
+
+// partReader reads parts of one package under one set of limits.
+type partReader struct {
+	files map[string]*zip.File
+	lim   Limits
+	// pkgBytes is the package's own size, which no part's compressed size can
+	// honestly exceed.
+	pkgBytes int64
+	// used counts the inflated bytes handed out so far, against TotalBytes.
+	used int64
+	// cellsLeft is the cell budget not yet spent, across every sheet.
+	cellsLeft int
+}
+
 // Open reads an .xlsx package back into a Workbook so a caller can keep
-// editing it. Cells this package writes — inline strings, numbers, and
-// formulas — come back through Get. Shared strings are resolved when the
-// package has xl/sharedStrings.xml. A cached formula result (<v> next to
-// <f>) is ignored: the formula is the cell.
+// editing it, under DefaultLimits. Cells this package writes — inline strings,
+// numbers, and formulas — come back through Get. Shared strings are resolved
+// when the package has xl/sharedStrings.xml. A cached formula result (<v> next
+// to <f>) is ignored: the formula is the cell.
 func Open(b []byte) (*Workbook, error) {
+	return OpenWithLimits(b, Limits{})
+}
+
+// OpenWithLimits is Open under lim; a zero field of lim takes its default. A
+// package over a limit is refused with a *LimitError.
+func OpenWithLimits(b []byte, lim Limits) (*Workbook, error) {
+	return openWithLimits(b, lim.withDefaults())
+}
+
+func openWithLimits(b []byte, lim Limits) (*Workbook, error) {
 	if len(b) == 0 {
 		return nil, fmt.Errorf("xlsx: Open: empty package")
 	}
@@ -45,12 +207,16 @@ func Open(b []byte) (*Workbook, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xlsx: Open: %w", err)
 	}
+	if len(zr.File) > lim.Parts {
+		return nil, &LimitError{Limit: LimitParts, Value: int64(lim.Parts)}
+	}
 	files := make(map[string]*zip.File, len(zr.File))
 	for _, f := range zr.File {
 		files[f.Name] = f
 	}
+	pr := &partReader{files: files, lim: lim, pkgBytes: int64(len(b)), cellsLeft: lim.Cells}
 
-	wbXML, err := readZipFile(files, "xl/workbook.xml")
+	wbXML, err := pr.read("xl/workbook.xml")
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +228,7 @@ func Open(b []byte) (*Workbook, error) {
 		return nil, fmt.Errorf("xlsx: Open: workbook has no sheets")
 	}
 
-	relsXML, err := readZipFile(files, "xl/_rels/workbook.xml.rels")
+	relsXML, err := pr.read("xl/_rels/workbook.xml.rels")
 	if err != nil {
 		return nil, err
 	}
@@ -72,15 +238,22 @@ func Open(b []byte) (*Workbook, error) {
 	}
 
 	var shared []string
-	if raw, err := readZipFile(files, "xl/sharedStrings.xml"); err == nil {
-		shared, err = parseSharedStrings(raw)
+	if raw, ok, err := pr.readOptional("xl/sharedStrings.xml"); err != nil {
+		return nil, err
+	} else if ok {
+		shared, err = parseSharedStrings(raw, lim.Cells)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// docProps/core.xml only supplies the title: a core part this reader
+	// cannot decode falls back to the default title, as it always has. A
+	// limit on it is still a refusal.
 	title := "Workbook"
-	if raw, err := readZipFile(files, "docProps/core.xml"); err == nil {
+	if raw, ok, err := pr.readOptional("docProps/core.xml"); err != nil && errors.Is(err, ErrLimitExceeded) {
+		return nil, err
+	} else if err == nil && ok {
 		if t := parseCoreTitle(raw); t != "" {
 			title = t
 		}
@@ -93,7 +266,7 @@ func Open(b []byte) (*Workbook, error) {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q relationship %s has no target", sh.name, sh.rel)
 		}
 		path := worksheetPath(target)
-		raw, err := readZipFile(files, path)
+		raw, err := pr.read(path)
 		if err != nil {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q: %w", sh.name, err)
 		}
@@ -101,7 +274,7 @@ func Open(b []byte) (*Workbook, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := fillSheet(sheet, raw, shared); err != nil {
+		if err := fillSheet(sheet, raw, shared, &pr.cellsLeft, lim.Cells); err != nil {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q: %w", sh.name, err)
 		}
 	}
@@ -113,21 +286,79 @@ type workbookSheetRef struct {
 	rel  string
 }
 
-func readZipFile(files map[string]*zip.File, name string) ([]byte, error) {
-	f, ok := files[name]
+func (pr *partReader) read(name string) ([]byte, error) {
+	f, ok := pr.files[name]
 	if !ok {
 		return nil, fmt.Errorf("xlsx: Open: missing part %q", name)
+	}
+
+	// The tightest bound on this part's inflated bytes, and the error for
+	// passing it.
+	max, over := pr.lim.PartBytes, &LimitError{Limit: LimitPartBytes, Value: pr.lim.PartBytes, Part: name}
+	if left := pr.lim.TotalBytes - pr.used; left < max {
+		max, over = left, &LimitError{Limit: LimitTotalBytes, Value: pr.lim.TotalBytes, Part: name}
+	}
+	compressed := int64(f.CompressedSize64)
+	if compressed > pr.pkgBytes || compressed < 0 {
+		compressed = pr.pkgBytes
+	}
+	if byRatio := compressed * pr.lim.Ratio; byRatio < max && byRatio/pr.lim.Ratio == compressed {
+		if byRatio < RatioFloorBytes {
+			byRatio = RatioFloorBytes
+		}
+		if byRatio < max {
+			max, over = byRatio, &LimitError{Limit: LimitCompressionRatio, Value: pr.lim.Ratio, Part: name}
+		}
+	}
+	// The package as a whole is held to the ratio too (see
+	// PackageRatioFloorBytes), so the per-part floor cannot be spent again on
+	// every read.
+	if pkgByRatio := pr.pkgBytes * pr.lim.Ratio; pkgByRatio/pr.lim.Ratio == pr.pkgBytes {
+		if pkgByRatio < PackageRatioFloorBytes {
+			pkgByRatio = PackageRatioFloorBytes
+		}
+		if left := pkgByRatio - pr.used; left < max {
+			if left < 0 {
+				left = 0
+			}
+			max, over = left, &LimitError{Limit: LimitCompressionRatio, Value: pr.lim.Ratio, Part: name, wholePackage: true}
+		}
+	}
+
+	// The declared size is checked first so an honest bomb costs nothing,
+	// but it is the attacker's to write: the bound below is on the bytes
+	// actually inflated.
+	if f.UncompressedSize64 > uint64(max) {
+		return nil, over
 	}
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	b, err := io.ReadAll(io.LimitReader(rc, max+1))
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(b)) > max {
+		return nil, over
+	}
+	pr.used += int64(len(b))
 	return b, nil
+}
+
+// readOptional is read for a part the package may omit: ok is false only when
+// the part is absent. Any other failure -- a limit above all -- is an error,
+// never a part quietly treated as missing.
+func (pr *partReader) readOptional(name string) (b []byte, ok bool, err error) {
+	if _, present := pr.files[name]; !present {
+		return nil, false, nil
+	}
+	b, err = pr.read(name)
+	if err != nil {
+		return nil, false, err
+	}
+	return b, true, nil
 }
 
 func parseWorkbookSheets(raw []byte) ([]workbookSheetRef, error) {
@@ -220,7 +451,13 @@ func parseCoreTitle(raw []byte) string {
 	}
 }
 
-func parseSharedStrings(raw []byte) ([]string, error) {
+// errTooManyCells is the cell-budget refusal, for parseSharedStrings and
+// fillSheet.
+func errTooManyCells(max int) error {
+	return &LimitError{Limit: LimitCells, Value: int64(max)}
+}
+
+func parseSharedStrings(raw []byte, max int) ([]string, error) {
 	dec := xml.NewDecoder(bytes.NewReader(raw))
 	var out []string
 	inSI := false
@@ -241,6 +478,9 @@ func parseSharedStrings(raw []byte) ([]string, error) {
 			}
 		case xml.EndElement:
 			if tok.Name.Local == "si" && inSI {
+				if len(out) >= max {
+					return nil, errTooManyCells(max)
+				}
 				out = append(out, b.String())
 				inSI = false
 			}
@@ -252,7 +492,7 @@ func parseSharedStrings(raw []byte) ([]string, error) {
 	}
 }
 
-func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
+func fillSheet(sheet *Sheet, raw []byte, shared []string, cellsLeft *int, maxCells int) error {
 	dec := xml.NewDecoder(bytes.NewReader(raw))
 	var (
 		inCell   bool
@@ -275,6 +515,10 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
 			hasStyle = false
 			style = 0
 		}()
+		if *cellsLeft <= 0 {
+			return errTooManyCells(maxCells)
+		}
+		*cellsLeft--
 		col, row, ok := parseCellRef(ref)
 		if !ok {
 			return fmt.Errorf("cell reference %q", ref)
@@ -318,7 +562,7 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
 		case xml.StartElement:
 			switch tok.Name.Local {
 			case "col":
-				if err := applyColumnStyle(sheet, tok); err != nil {
+				if err := applyColumnStyle(sheet, tok, cellsLeft, maxCells); err != nil {
 					return err
 				}
 			case "c":
@@ -385,7 +629,7 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
 
 // applyColumnStyle reads a <col> and stores its alignment. min and max are
 // 1-based. Header weight is not taken from a column: bold belongs to rows.
-func applyColumnStyle(sheet *Sheet, tok xml.StartElement) error {
+func applyColumnStyle(sheet *Sheet, tok xml.StartElement, cellsLeft *int, maxCells int) error {
 	min, max := 0, 0
 	style := 0
 	hasStyle := false
@@ -422,6 +666,17 @@ func applyColumnStyle(sheet *Sheet, tok xml.StartElement) error {
 	if max > maxSheetCols {
 		max = maxSheetCols
 	}
+	// Each aligned column is a write, so the span is charged to the cell
+	// budget: otherwise a sheet of full-width <col> elements costs 16,384
+	// writes apiece under every other limit.
+	span := max - min + 1
+	if span <= 0 {
+		return nil
+	}
+	if span > *cellsLeft {
+		return errTooManyCells(maxCells)
+	}
+	*cellsLeft -= span
 	for col := min - 1; col < max; col++ {
 		if err := sheet.SetAlign(col, align); err != nil {
 			return err

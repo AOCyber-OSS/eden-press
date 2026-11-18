@@ -38,6 +38,9 @@ import (
 //   - input[type=checkbox][checked][disabled]     (todo; see SanitizeModel)
 //   - a conservative SVG drawing subset           (figure.svg)
 //
+// and one narrowing: a[href] takes only http, https, mailto or a #fragment,
+// and img[src] only http(s) or a data:image (eden-press#23).
+//
 // Policy() stays untouched on purpose. It is the Marp-parity policy
 // press.Render applies to Markdown-derived HTML, and widening it would change
 // what every existing Render caller's output can contain. Only
@@ -51,7 +54,39 @@ import (
 // same-document url(#id) references only (never url(https://...)), and there is
 // no style attribute, so no CSS can reach the page.
 func ModelPolicy() *bluemonday.Policy {
-	p := Policy()
+	// The Marpit inline-SVG chain stays: ModelPolicy keeps whatever Policy
+	// keeps of page markup (TestModelPolicyIsASupersetOfBase); only link and
+	// image URLs are narrower (eden-press#23).
+	return fragmentPolicy(baseOptions{linkHref: reLinkHref, imageSrc: reImageSrc, inlineSVGChain: true})
+}
+
+// DocsPolicy is the policy press.ExportHTMLJSON applies to the whole
+// model.ToHTML body (eden-press#24). It is ModelPolicy with the flowing view's
+// <article> wrapper and img[title], WITHOUT the Marpit inline-SVG container
+// (so no foreignObject: a figure's SVG cannot carry HTML), and with schemeless relative references
+// allowed on a[href] and img[src]: a document's own file and image paths
+// ("files/report.pdf") are relative, and a relative reference names no
+// scheme. Every scheme ModelPolicy refuses is still refused.
+func DocsPolicy() *bluemonday.Policy {
+	p := fragmentPolicy(baseOptions{linkHref: reDocsHref, imageSrc: reDocsImageSrc})
+	p.AllowElements("article")
+	p.AllowAttrs("title").OnElements("img")
+	return p
+}
+
+// fragmentPolicy is what ModelPolicy and DocsPolicy share: the base, plus the
+// v7 block elements and the SVG drawing subset.
+func fragmentPolicy(o baseOptions) *bluemonday.Policy {
+	p := basePolicy(o)
+
+	// Links (eden-press#23). Policy() allows data: on every URL attribute
+	// for the math PNG fallback, which let a data: href survive on links.
+	// Here a[href] is held to the link allowlist -- http, https, mailto or a
+	// same-document #fragment -- and img[src] to http(s) or a data:image
+	// (both patterns are set in basePolicy; see why there). Relative URLs are switched on only so a "#fragment" parses; the two
+	// patterns below still refuse any other relative value, as Policy() does.
+	p.AllowURLSchemes("mailto")
+	p.AllowRelativeURLs(true)
 
 	p.AllowElements("details", "summary", "aside", "label")
 	p.AllowNoAttrs().OnElements("details", "summary", "aside", "label")
@@ -95,7 +130,13 @@ var svgShapeElements = []string{
 }
 
 var (
-	reCheckbox     = regexp.MustCompile(`^checkbox$`)
+	reCheckbox = regexp.MustCompile(`^checkbox$`)
+	reLinkHref = regexp.MustCompile(`^(?i:https?:|mailto:|#)`)
+	reImageSrc = regexp.MustCompile(`^(?i:https?:|data:image/)`)
+	// The docs patterns add a schemeless reference: no ':' before the first
+	// '/', '?' or '#' (the rule model.SafeHref applies).
+	reDocsHref     = regexp.MustCompile(`^(?i:https?:|mailto:|#)|^[^:/?#]*(?:[/?#]|$)`)
+	reDocsImageSrc = regexp.MustCompile(`^(?i:https?:|data:image/)|^[^:/?#]*(?:[/?#]|$)`)
 	reSVGNamespace = regexp.MustCompile(`^http://www\.w3\.org/2000/svg$`)
 	reLength       = regexp.MustCompile(`^-?[0-9]*\.?[0-9]+(px|em|rem|pt|%)?$`)
 	reNumber       = regexp.MustCompile(`^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?$`)
@@ -127,11 +168,22 @@ var (
 	}
 )
 
+// SanitizeDocs is SanitizeModel's pipeline with DocsPolicy, for a whole
+// model.ToHTML body.
+func SanitizeDocs(html string) string {
+	return restoreModelCase(DocsPolicy().Sanitize(html))
+}
+
 // SanitizeModel is Sanitize for model-originated fragments: ModelPolicy plus
 // the same SVG case restoration, then removal of any <input> that is not a
 // checkbox. It is idempotent.
 func SanitizeModel(html string) string {
-	out := ModelPolicy().Sanitize(html)
+	return restoreModelCase(ModelPolicy().Sanitize(html))
+}
+
+// restoreModelCase restores the SVG camelCase the sanitizer's tokenizer
+// lowercases and drops any <input> that is not a checkbox.
+func restoreModelCase(out string) string {
 	out = reForeignObjectTag.ReplaceAllString(out, "<${1}foreignObject")
 	out = reViewBoxAttr.ReplaceAllString(out, "viewBox=")
 	out = reGradientTag.ReplaceAllStringFunc(out, func(tag string) string {

@@ -148,13 +148,46 @@ Any consumer building a regression/golden-file check against this export
 path should budget for the same pixel-diff-under-threshold bar, not bytewise
 comparison.
 
+## Untrusted documents: no network (eden-press#42)
+
+Every tab a `Session` opens is put behind CDP Fetch-domain interception
+before a document is loaded into it. Every network request the page makes is
+paused and refused (`BlockedByClient`) unless `convert.Options.AllowRequest`
+returns true for its URL; with no `AllowRequest`, all are refused. An export
+of an attacker-supplied document therefore cannot make the export host fetch
+internal services or cloud metadata (`169.254.169.254`) on its behalf.
+
+The export path needs no network of its own: the document is injected with
+`SetDocumentContent` into `about:blank`, and fonts are `data:` URIs. What
+does change: a deck's remote `<img src="https://...">`, the gaia theme's
+`@import` of its web font, and every emoji in a Markdown deck (rendered as a
+twemoji `<img>` from `cdn.jsdelivr.net` by default) no longer load unless the
+caller allows them. For emoji, allow the twemoji CDN path
+(`https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/`); `press.Render`
+does not yet expose a self-hosted twemoji base. Allow only
+origins you trust, and compare parsed URLs, not string prefixes.
+`AllowRequest` may be called concurrently, so it must be safe for concurrent
+use.
+
+Export tabs also run no page script (`Emulation.setScriptExecutionDisabled`).
+Interception does not cover a WebSocket or a popup a script opens as a new
+target, and the export needs no page JS (math is MathML or a PNG, themes are
+CSS); the exporter's own DevTools calls still work.
+
+If interception cannot be enabled, `NewTab` fails closed: the tab's context
+is cancelled and the caller's first `chromedp.Run` fails.
+
 ## Container hardening (Pitfall 11)
 
 Every `convert/chrome.Session` (`convert/chrome/session.go`) launches with
 these flags baked in as DEFAULTS, not opt-ins:
 
-- `chromedp.NoSandbox` — required for unprivileged/root container execution
-  where a user-namespace sandbox is unavailable.
+- **The sandbox stays on.** `--no-sandbox` is an explicit per-deployment
+  opt-out (`convert.Options.NoSandbox`, or `EDEN_PRESS_CHROME_NO_SANDBOX=1` in
+  the environment), for a container where Chrome cannot launch sandboxed
+  (root, or no user-namespace support) and the container supplies the
+  isolation instead: non-root user, no privileges, no route to anything the
+  export should not reach (eden-press#42).
 - `--disable-dev-shm-usage` — container `/dev/shm` is often too small for
   Chrome's default shared-memory usage; disabling it avoids `BUS_ADRERR`
   crashes. The CI `export` job additionally sizes the container's shared

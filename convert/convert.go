@@ -109,4 +109,36 @@ type Options struct {
 	// io.Discard rather than passing nil through, so the pipe is never closed
 	// out from under a browser that still has something to say.
 	BrowserLog io.Writer
+
+	// AllowRequest decides which network requests a page rendered for export
+	// may make. Every request a tab makes is intercepted, and it goes ahead
+	// only when AllowRequest returns true for its URL. nil -- the default --
+	// refuses them all (eden-press#42).
+	//
+	// The documents an export renders may be untrusted, and Chrome fetches
+	// whatever they reference from the export host's network position:
+	// internal services, cloud metadata (169.254.169.254), anything the host
+	// can reach and the document's author cannot. The export path needs no
+	// network of its own (the document is injected, fonts are data: URIs), so
+	// a deck that references a remote image or a theme that @imports a web
+	// font (gaia) renders without it unless the caller allows it here. So
+	// does every emoji in a Markdown deck: press.Render emits twemoji <img>
+	// tags pointing at the jsDelivr CDN by default (press.DefaultTwemojiOptions; Render has no option to change it),
+	// and with no AllowRequest they render as broken images. Allow only
+	// origins you trust, and compare parsed URLs, not prefixes.
+	//
+	// AllowRequest is called from a goroutine per paused request, so it may
+	// run concurrently and must be safe for concurrent use.
+	AllowRequest func(url string) bool
+
+	// NoSandbox launches Chrome without its sandbox. Leave it false wherever
+	// the sandbox can run: it contains a renderer exploit, and the renderer
+	// parses documents that may be untrusted.
+	//
+	// Set it only in a container that provides the isolation instead -- the
+	// case where Chrome cannot launch sandboxed at all, typically root or no
+	// user-namespace support. The environment variable
+	// EDEN_PRESS_CHROME_NO_SANDBOX=1 has the same effect, so a deployment can
+	// declare it without a code change.
+	NoSandbox bool
 }

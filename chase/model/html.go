@@ -257,8 +257,13 @@ func writeHTMLBlock(b *strings.Builder, doc *Document, bl Block, m htmlMode) {
 		if name == "" {
 			name = bl.Src
 		}
-		fmt.Fprintf(b, `<div class="file"><a href="%s">%s</a></div>`+"\n",
-			html.EscapeString(bl.Src), html.EscapeString(name))
+		// A Src SafeHref refuses keeps the file's name but loses its link.
+		if href, ok := SafeHref(bl.Src); ok {
+			fmt.Fprintf(b, `<div class="file"><a href="%s">%s</a></div>`+"\n",
+				html.EscapeString(href), html.EscapeString(name))
+		} else {
+			fmt.Fprintf(b, `<div class="file"><a>%s</a></div>`+"\n", html.EscapeString(name))
+		}
 	case BlockSheet:
 		name := ""
 		if bl.SheetEmbed != nil {
@@ -412,8 +417,9 @@ func renderRunsHTML(runs []TextRun) string {
 				t = "<s>" + t + "</s>"
 			}
 		}
-		if r.Link != "" {
-			t = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(r.Link), t)
+		// A link SafeHref refuses is dropped and its text kept (eden-press#23).
+		if href, ok := SafeHref(r.Link); ok {
+			t = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(href), t)
 		}
 		b.WriteString(t)
 	}

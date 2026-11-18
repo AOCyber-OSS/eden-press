@@ -449,8 +449,10 @@ func runsMarkdown(runs []model.TextRun) string {
 				t = "<s>" + t + "</s>"
 			}
 		}
-		if r.Link != "" {
-			href := strings.NewReplacer("\r", "", "\n", "").Replace(r.Link)
+		// The same link allowlist model.ToHTML applies (eden-press#23): this
+		// HTML goes through the page policy, Policy(), which keeps data:
+		// hrefs. A refused link keeps its text.
+		if href, ok := model.SafeHref(r.Link); ok {
 			t = `<a href="` + html.EscapeString(href) + `">` + t + "</a>"
 		}
 		sb.WriteString(t)

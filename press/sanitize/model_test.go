@@ -145,7 +145,9 @@ func TestModelPolicyStripsActiveContent(t *testing.T) {
 
 // TestModelPolicyIsASupersetOfBase proves the extension only ADDS: whatever
 // the base Policy keeps, ModelPolicy keeps byte for byte. The inline-SVG
-// container chain press.Render depends on must survive unchanged.
+// container chain press.Render depends on must survive unchanged. (Link and
+// image URLs are the one deliberate narrowing, eden-press#23; this markup has
+// none.)
 func TestModelPolicyIsASupersetOfBase(t *testing.T) {
 	in := `<div class="marpit"><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720">` +
 		`<section id="1" data-marpit-pagination="1"><h1 id="t">T</h1><p><strong>b</strong> <code>c</code></p>` +
