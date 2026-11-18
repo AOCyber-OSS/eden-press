@@ -75,9 +75,18 @@ func ExportWorkbookXLSXJSON(wbJSON []byte) ([]byte, error) {
 	return wb.Bytes()
 }
 
-// ImportWorkbookXLSXJSON opens .xlsx bytes into a workbook snapshot JSON.
+// ImportWorkbookXLSXJSON opens .xlsx bytes into a workbook snapshot JSON,
+// under xlsx.DefaultLimits. A package over a limit is refused with an error
+// that errors.As matches to *xlsx.LimitError, naming the limit and its value.
 func ImportWorkbookXLSXJSON(xlsxBytes []byte) ([]byte, error) {
-	wb, err := xlsx.Open(xlsxBytes)
+	return ImportWorkbookXLSXJSONWithLimits(xlsxBytes, xlsx.Limits{})
+}
+
+// ImportWorkbookXLSXJSONWithLimits is ImportWorkbookXLSXJSON under lim, for a
+// caller whose own upload policy is stricter than the defaults; a zero field
+// of lim keeps its default.
+func ImportWorkbookXLSXJSONWithLimits(xlsxBytes []byte, lim xlsx.Limits) ([]byte, error) {
+	wb, err := xlsx.OpenWithLimits(xlsxBytes, lim)
 	if err != nil {
 		return nil, fmt.Errorf("press.ImportWorkbookXLSXJSON: %w", err)
 	}
