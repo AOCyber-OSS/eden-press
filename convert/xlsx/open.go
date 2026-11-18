@@ -114,6 +114,15 @@ func (l Limits) withDefaults() Limits {
 	return l
 }
 
+// The names LimitError.Limit takes, one per bound.
+const (
+	LimitPartBytes        = "part bytes"
+	LimitTotalBytes       = "total bytes"
+	LimitParts            = "parts"
+	LimitCells            = "cells"
+	LimitCompressionRatio = "compression ratio"
+)
+
 // ErrLimitExceeded matches (errors.Is) every refusal for an import limit.
 var ErrLimitExceeded = errors.New("xlsx: package exceeds import limit")
 
@@ -121,8 +130,8 @@ var ErrLimitExceeded = errors.New("xlsx: package exceeds import limit")
 // value so a caller can tell its user why the file was refused; errors.Is
 // matches it to ErrLimitExceeded.
 type LimitError struct {
-	// Limit is which bound was hit: "part bytes", "total bytes", "parts",
-	// "cells" or "compression ratio".
+	// Limit is which bound was hit: LimitPartBytes, LimitTotalBytes,
+	// LimitParts, LimitCells or LimitCompressionRatio.
 	Limit string
 	// Value is that limit's value in force (bytes, a count, or the ratio).
 	Value int64
@@ -136,9 +145,9 @@ func (e *LimitError) Error() string {
 		where = fmt.Sprintf(" (part %q)", e.Part)
 	}
 	switch e.Limit {
-	case "compression ratio":
+	case LimitCompressionRatio:
 		return fmt.Sprintf("xlsx: workbook refused: a part inflates more than %dx its compressed size%s, the compression ratio limit", e.Value, where)
-	case "part bytes", "total bytes":
+	case LimitPartBytes, LimitTotalBytes:
 		return fmt.Sprintf("xlsx: workbook refused: over the %s limit of %d bytes%s", e.Limit, e.Value, where)
 	default:
 		return fmt.Sprintf("xlsx: workbook refused: over the %s limit of %d%s", e.Limit, e.Value, where)
@@ -185,7 +194,7 @@ func openWithLimits(b []byte, lim Limits) (*Workbook, error) {
 		return nil, fmt.Errorf("xlsx: Open: %w", err)
 	}
 	if len(zr.File) > lim.Parts {
-		return nil, &LimitError{Limit: "parts", Value: int64(lim.Parts)}
+		return nil, &LimitError{Limit: LimitParts, Value: int64(lim.Parts)}
 	}
 	files := make(map[string]*zip.File, len(zr.File))
 	for _, f := range zr.File {
@@ -268,9 +277,9 @@ func (pr *partReader) read(name string) ([]byte, error) {
 
 	// The tightest bound on this part's inflated bytes, and the error for
 	// passing it.
-	max, over := pr.lim.PartBytes, &LimitError{Limit: "part bytes", Value: pr.lim.PartBytes, Part: name}
+	max, over := pr.lim.PartBytes, &LimitError{Limit: LimitPartBytes, Value: pr.lim.PartBytes, Part: name}
 	if left := pr.lim.TotalBytes - pr.used; left < max {
-		max, over = left, &LimitError{Limit: "total bytes", Value: pr.lim.TotalBytes, Part: name}
+		max, over = left, &LimitError{Limit: LimitTotalBytes, Value: pr.lim.TotalBytes, Part: name}
 	}
 	compressed := int64(f.CompressedSize64)
 	if compressed > pr.pkgBytes || compressed < 0 {
@@ -281,7 +290,7 @@ func (pr *partReader) read(name string) ([]byte, error) {
 			byRatio = RatioFloorBytes
 		}
 		if byRatio < max {
-			max, over = byRatio, &LimitError{Limit: "compression ratio", Value: pr.lim.Ratio, Part: name}
+			max, over = byRatio, &LimitError{Limit: LimitCompressionRatio, Value: pr.lim.Ratio, Part: name}
 		}
 	}
 
@@ -414,7 +423,7 @@ func parseCoreTitle(raw []byte) string {
 // errTooManyCells is the cell-budget refusal, for parseSharedStrings and
 // fillSheet.
 func errTooManyCells(max int) error {
-	return &LimitError{Limit: "cells", Value: int64(max)}
+	return &LimitError{Limit: LimitCells, Value: int64(max)}
 }
 
 func parseSharedStrings(raw []byte, max int) ([]string, error) {
