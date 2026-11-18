@@ -28,6 +28,9 @@ import (
 	"compress/flate"
 	"errors"
 	"io"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -226,5 +229,88 @@ func TestOpenRejectsOversizedOptionalPart(t *testing.T) {
 				t.Fatalf("openWithLimits(oversized %s) err = %v, want ErrLimitExceeded", name, err)
 			}
 		})
+	}
+}
+
+// sheetOfCells is a worksheet with n one-character cells, the densest shape a
+// sheet part can take: the case where a part well under the byte limit still
+// costs the most memory once parsed.
+func sheetOfCells(n int) string {
+	var b strings.Builder
+	b.WriteString(`<worksheet><sheetData><row r="1">`)
+	for i := 0; i < n; i++ {
+		b.WriteString(`<c r="`)
+		b.WriteString(columnRef(i % maxSheetCols))
+		b.WriteString(strconv.Itoa(i/maxSheetCols + 1))
+		b.WriteString(`"><v>1</v></c>`)
+	}
+	b.WriteString(`</row></sheetData></worksheet>`)
+	return b.String()
+}
+
+// Bytes are not the cost that matters once a part is parsed: every cell is a
+// map entry. A review measured a 26 MB sheet at 645 MB allocated and 140 MB
+// live, so Open also caps the cells it will build.
+func TestOpenRejectsTooManyCells(t *testing.T) {
+	pkg := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(11)}))
+
+	lim := testLimits()
+	lim.cells = 10
+	if _, err := openWithLimits(pkg, lim); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("openWithLimits(11 cells, cap 10) err = %v, want ErrLimitExceeded", err)
+	}
+	lim.cells = 11
+	if _, err := openWithLimits(pkg, lim); err != nil {
+		t.Fatalf("openWithLimits(11 cells, cap 11) = %v, want the sheet accepted at the cap", err)
+	}
+}
+
+// A shared-strings table is parsed before any sheet; its entry count is held
+// to the same cap, since every entry is a string the import keeps.
+func TestOpenRejectsTooManySharedStrings(t *testing.T) {
+	parts := append(minimalParts(zipPart{body: `<worksheet/>`}),
+		zipPart{name: "xl/sharedStrings.xml", body: `<sst>` + strings.Repeat(`<si><t>x</t></si>`, 11) + `</sst>`})
+	pkg := buildPackage(t, parts)
+
+	lim := testLimits()
+	lim.cells = 10
+	if _, err := openWithLimits(pkg, lim); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("openWithLimits(11 shared strings, cap 10) err = %v, want ErrLimitExceeded", err)
+	}
+}
+
+// The default limits bound what one import can cost, measured: the densest
+// package the defaults accept (MaxCells one-character cells) stays under a
+// fixed allocation and live-heap budget, and one cell more is refused. The
+// review that prompted this measured a 26 MB sheet at 645 MB allocated and
+// 140 MB live under the first caps.
+func TestDefaultLimitsBoundImportMemory(t *testing.T) {
+	const (
+		allocBudget = 400 << 20
+		liveBudget  = 64 << 20
+	)
+	pkg := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(MaxCells)}))
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	wb, err := Open(pkg)
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("Open(MaxCells cells) = %v, want it accepted", err)
+	}
+	alloc := after.TotalAlloc - before.TotalAlloc
+	live := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	runtime.KeepAlive(wb)
+	t.Logf("%d cells, %d-byte package: %d MB allocated, %d MB live", MaxCells, len(pkg), alloc>>20, live>>20)
+	if alloc > allocBudget || live > liveBudget {
+		t.Errorf("import at the cell cap allocated %d MB (budget %d) with %d MB live (budget %d)",
+			alloc>>20, allocBudget>>20, live>>20, liveBudget>>20)
+	}
+
+	over := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(MaxCells + 1)}))
+	if _, err := Open(over); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("Open(MaxCells+1 cells) err = %v, want ErrLimitExceeded", err)
 	}
 }
