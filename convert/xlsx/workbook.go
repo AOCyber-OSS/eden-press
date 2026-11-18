@@ -286,9 +286,9 @@ func (s *Sheet) SetAlign(col int, align string) error {
 		return fmt.Errorf("xlsx: column %d is outside 0..%d", col, maxSheetCols-1)
 	}
 	if col >= len(s.aligns) {
-		next := make([]string, col+1)
-		copy(next, s.aligns)
-		s.aligns = next
+		// append grows the backing array geometrically, so aligning columns
+		// in order is amortised O(1) per column, not a copy per column.
+		s.aligns = append(s.aligns, make([]string, col+1-len(s.aligns))...)
 	}
 	s.aligns[col] = align
 	return nil
