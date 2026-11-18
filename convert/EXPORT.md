@@ -159,9 +159,15 @@ internal services or cloud metadata (`169.254.169.254`) on its behalf.
 
 The export path needs no network of its own: the document is injected with
 `SetDocumentContent` into `about:blank`, and fonts are `data:` URIs. What
-does change: a deck's remote `<img src="https://...">`, and the gaia theme's
-`@import` of its web font, no longer load unless the caller allows them.
-Allow only origins you trust, and compare parsed URLs, not string prefixes.
+does change: a deck's remote `<img src="https://...">`, the gaia theme's
+`@import` of its web font, and every emoji in a Markdown deck (rendered as a
+twemoji `<img>` from `cdn.jsdelivr.net` by default) no longer load unless the
+caller allows them. For emoji, allow the twemoji CDN path
+(`https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/`); `press.Render`
+does not yet expose a self-hosted twemoji base. Allow only
+origins you trust, and compare parsed URLs, not string prefixes.
+`AllowRequest` may be called concurrently, so it must be safe for concurrent
+use.
 
 Export tabs also run no page script (`Emulation.setScriptExecutionDisabled`).
 Interception does not cover a WebSocket or a popup a script opens as a new

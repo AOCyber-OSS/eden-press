@@ -121,8 +121,14 @@ type Options struct {
 	// can reach and the document's author cannot. The export path needs no
 	// network of its own (the document is injected, fonts are data: URIs), so
 	// a deck that references a remote image or a theme that @imports a web
-	// font (gaia) renders without it unless the caller allows it here. Allow
-	// only origins you trust, and compare parsed URLs, not prefixes.
+	// font (gaia) renders without it unless the caller allows it here. So
+	// does every emoji in a Markdown deck: press.Render emits twemoji <img>
+	// tags pointing at the jsDelivr CDN by default (press.DefaultTwemojiOptions; Render has no option to change it),
+	// and with no AllowRequest they render as broken images. Allow only
+	// origins you trust, and compare parsed URLs, not prefixes.
+	//
+	// AllowRequest is called from a goroutine per paused request, so it may
+	// run concurrently and must be safe for concurrent use.
 	AllowRequest func(url string) bool
 
 	// NoSandbox launches Chrome without its sandbox. Leave it false wherever
