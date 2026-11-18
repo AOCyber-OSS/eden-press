@@ -247,10 +247,13 @@ func openWithLimits(b []byte, lim Limits) (*Workbook, error) {
 		}
 	}
 
+	// docProps/core.xml only supplies the title: a core part this reader
+	// cannot decode falls back to the default title, as it always has. A
+	// limit on it is still a refusal.
 	title := "Workbook"
-	if raw, ok, err := pr.readOptional("docProps/core.xml"); err != nil {
+	if raw, ok, err := pr.readOptional("docProps/core.xml"); err != nil && errors.Is(err, ErrLimitExceeded) {
 		return nil, err
-	} else if ok {
+	} else if err == nil && ok {
 		if t := parseCoreTitle(raw); t != "" {
 			title = t
 		}
@@ -559,7 +562,7 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string, cellsLeft *int, maxCel
 		case xml.StartElement:
 			switch tok.Name.Local {
 			case "col":
-				if err := applyColumnStyle(sheet, tok); err != nil {
+				if err := applyColumnStyle(sheet, tok, cellsLeft, maxCells); err != nil {
 					return err
 				}
 			case "c":
@@ -626,7 +629,7 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string, cellsLeft *int, maxCel
 
 // applyColumnStyle reads a <col> and stores its alignment. min and max are
 // 1-based. Header weight is not taken from a column: bold belongs to rows.
-func applyColumnStyle(sheet *Sheet, tok xml.StartElement) error {
+func applyColumnStyle(sheet *Sheet, tok xml.StartElement, cellsLeft *int, maxCells int) error {
 	min, max := 0, 0
 	style := 0
 	hasStyle := false
@@ -663,6 +666,17 @@ func applyColumnStyle(sheet *Sheet, tok xml.StartElement) error {
 	if max > maxSheetCols {
 		max = maxSheetCols
 	}
+	// Each aligned column is a write, so the span is charged to the cell
+	// budget: otherwise a sheet of full-width <col> elements costs 16,384
+	// writes apiece under every other limit.
+	span := max - min + 1
+	if span <= 0 {
+		return nil
+	}
+	if span > *cellsLeft {
+		return errTooManyCells(maxCells)
+	}
+	*cellsLeft -= span
 	for col := min - 1; col < max; col++ {
 		if err := sheet.SetAlign(col, align); err != nil {
 			return err
