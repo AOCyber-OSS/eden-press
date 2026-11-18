@@ -52,7 +52,7 @@ func TestImportWorkbookXLSXJSONRefusesZipBomb(t *testing.T) {
 		t.Fatal(err)
 	}
 	chunk := bytes.Repeat([]byte{' '}, 1<<20)
-	for n := int64(0); n <= xlsx.MaxPartBytes; n += int64(len(chunk)) {
+	for n := 0; n < 8; n++ {
 		if _, err := w.Write(chunk); err != nil {
 			t.Fatal(err)
 		}
@@ -64,5 +64,31 @@ func TestImportWorkbookXLSXJSONRefusesZipBomb(t *testing.T) {
 	_, err = ImportWorkbookXLSXJSON(buf.Bytes())
 	if !errors.Is(err, xlsx.ErrLimitExceeded) {
 		t.Fatalf("ImportWorkbookXLSXJSON(%d-byte bomb) err = %v, want errors.Is xlsx.ErrLimitExceeded", buf.Len(), err)
+	}
+}
+
+// A caller with its own upload policy passes stricter limits through press.
+func TestImportWorkbookXLSXJSONWithLimits(t *testing.T) {
+	wb := xlsx.NewWorkbook("t")
+	sheet, err := wb.AddSheet("S")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for c := 0; c < 6; c++ {
+		if err := sheet.Set(0, c, "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pkg, err := wb.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWorkbookXLSXJSONWithLimits(pkg, xlsx.Limits{}); err != nil {
+		t.Fatalf("default limits refused a 6-cell workbook: %v", err)
+	}
+	_, err = ImportWorkbookXLSXJSONWithLimits(pkg, xlsx.Limits{Cells: 5})
+	var le *xlsx.LimitError
+	if !errors.As(err, &le) || le.Limit != "cells" || le.Value != 5 {
+		t.Fatalf("ImportWorkbookXLSXJSONWithLimits(Cells: 5) err = %v, want a cells LimitError of 5", err)
 	}
 }

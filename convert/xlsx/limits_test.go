@@ -27,7 +27,9 @@ import (
 	"bytes"
 	"compress/flate"
 	"errors"
+	"fmt"
 	"io"
+	"math/rand"
 	"runtime"
 	"strconv"
 	"strings"
@@ -135,31 +137,31 @@ func minimalParts(sheetPart zipPart) []zipPart {
 	}
 }
 
-// A part that inflates past MaxPartBytes is refused with ErrLimitExceeded.
-// The part is whitespace, which is valid XML filler, so the only possible
-// reason for the refusal is the size.
+// A part that inflates past the part-byte limit is refused with a LimitError
+// naming that limit. The part is whitespace, valid XML filler, so the size is
+// the only possible reason; the ratio guard is lifted so the byte cap is what
+// trips.
 func TestOpenRejectsOversizedPart(t *testing.T) {
-	pkg := buildPackage(t, minimalParts(zipPart{fill: ' ', n: MaxPartBytes + 1}))
-	t.Logf("crafted package: %d bytes compressed, %d bytes inflated part", len(pkg), MaxPartBytes+1)
+	pkg := buildPackage(t, minimalParts(zipPart{fill: ' ', n: 1<<20 + 1}))
 
-	_, err := Open(pkg)
-	if !errors.Is(err, ErrLimitExceeded) {
-		t.Fatalf("Open(oversized part) err = %v, want ErrLimitExceeded", err)
+	_, err := OpenWithLimits(pkg, Limits{PartBytes: 1 << 20, Ratio: 1 << 30})
+	var le *LimitError
+	if !errors.As(err, &le) || le.Limit != "part bytes" || le.Value != 1<<20 {
+		t.Fatalf("OpenWithLimits(oversized part) err = %v, want a part-bytes LimitError of %d", err, 1<<20)
 	}
-}
-
-func newDeflater(w io.Writer) (io.WriteCloser, error) {
-	return flate.NewWriter(w, flate.DefaultCompression)
+	if !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("LimitError %v does not match ErrLimitExceeded", err)
+	}
 }
 
 // A header that under-states the part's size does not get it past the cap:
 // the bound is on the bytes inflated, not on what the header claims.
 func TestOpenRejectsPartThatInflatesPastItsHeader(t *testing.T) {
-	pkg := buildPackage(t, minimalParts(zipPart{fill: ' ', n: MaxPartBytes + 1, declare: 1024}))
+	pkg := buildPackage(t, minimalParts(zipPart{fill: ' ', n: 2 << 20, declare: 1024}))
 
 	_, err := Open(pkg)
 	if err == nil {
-		t.Fatal("Open accepted a part whose header declares 1 KiB but inflates past MaxPartBytes")
+		t.Fatal("Open accepted a part whose header declares 1 KiB but inflates to 2 MiB")
 	}
 	t.Logf("refused with: %v", err)
 }
@@ -179,8 +181,8 @@ func TestOpenRejectsPackageOverTotalLimit(t *testing.T) {
 	pkg := buildPackage(t, parts)
 
 	lim := testLimits()
-	lim.partBytes = 1 << 20
-	lim.totalBytes = 3 << 19
+	lim.PartBytes = 1 << 20
+	lim.TotalBytes = 3 << 19
 	_, err := openWithLimits(pkg, lim)
 	if !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("openWithLimits(2 x 1 MiB, total cap 1.5 MiB) err = %v, want ErrLimitExceeded", err)
@@ -188,7 +190,7 @@ func TestOpenRejectsPackageOverTotalLimit(t *testing.T) {
 }
 
 // testLimits is defaultLimits, for a test to lower one bound of.
-func testLimits() limits { return defaultLimits }
+func testLimits() Limits { return DefaultLimits() }
 
 // A package with more zip entries than the part-count limit is refused before
 // any part is read: the central directory alone can be a memory cost.
@@ -200,15 +202,15 @@ func TestOpenRejectsTooManyParts(t *testing.T) {
 	pkg := buildPackage(t, parts)
 
 	lim := testLimits()
-	lim.parts = 10
+	lim.Parts = 10
 	_, err := openWithLimits(pkg, lim)
 	if !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("openWithLimits(11 parts, cap 10) err = %v, want ErrLimitExceeded", err)
 	}
 
-	lim.parts = len(parts)
+	lim.Parts = len(parts)
 	if _, err := openWithLimits(pkg, lim); err != nil {
-		t.Fatalf("openWithLimits(%d parts, cap %d) = %v, want the package accepted at the cap", len(parts), lim.parts, err)
+		t.Fatalf("openWithLimits(%d parts, cap %d) = %v, want the package accepted at the cap", len(parts), lim.Parts, err)
 	}
 }
 
@@ -223,7 +225,7 @@ func TestOpenRejectsOversizedOptionalPart(t *testing.T) {
 			pkg := buildPackage(t, parts)
 
 			lim := testLimits()
-			lim.partBytes = 1 << 10
+			lim.PartBytes = 1 << 10
 			_, err := openWithLimits(pkg, lim)
 			if !errors.Is(err, ErrLimitExceeded) {
 				t.Fatalf("openWithLimits(oversized %s) err = %v, want ErrLimitExceeded", name, err)
@@ -255,11 +257,11 @@ func TestOpenRejectsTooManyCells(t *testing.T) {
 	pkg := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(11)}))
 
 	lim := testLimits()
-	lim.cells = 10
+	lim.Cells = 10
 	if _, err := openWithLimits(pkg, lim); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("openWithLimits(11 cells, cap 10) err = %v, want ErrLimitExceeded", err)
 	}
-	lim.cells = 11
+	lim.Cells = 11
 	if _, err := openWithLimits(pkg, lim); err != nil {
 		t.Fatalf("openWithLimits(11 cells, cap 11) = %v, want the sheet accepted at the cap", err)
 	}
@@ -273,23 +275,25 @@ func TestOpenRejectsTooManySharedStrings(t *testing.T) {
 	pkg := buildPackage(t, parts)
 
 	lim := testLimits()
-	lim.cells = 10
+	lim.Cells = 10
 	if _, err := openWithLimits(pkg, lim); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("openWithLimits(11 shared strings, cap 10) err = %v, want ErrLimitExceeded", err)
 	}
 }
 
-// The default limits bound what one import can cost, measured: the densest
-// package the defaults accept (MaxCells one-character cells) stays under a
-// fixed allocation and live-heap budget, and one cell more is refused. The
-// review that prompted this measured a 26 MB sheet at 645 MB allocated and
-// 140 MB live under the first caps.
-func TestDefaultLimitsBoundImportMemory(t *testing.T) {
+// What one parsed cell costs, measured, so the memory a cap implies is a
+// number and not a guess: MaxCells documents ~70 bytes live and ~700
+// allocated per cell. The densest sheet shape (one-character cells) is
+// measured at 500,000 cells and held to a per-cell budget with headroom; the
+// implied cost at the default cap is logged. The review that prompted the cell
+// cap measured a 26 MB sheet at 645 MB allocated and 140 MB live.
+func TestImportMemoryPerCell(t *testing.T) {
 	const (
-		allocBudget = 400 << 20
-		liveBudget  = 64 << 20
+		n               = 500_000
+		allocPerCellCap = 900
+		livePerCellCap  = 128
 	)
-	pkg := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(MaxCells)}))
+	pkg := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(n)}))
 
 	runtime.GC()
 	var before, after runtime.MemStats
@@ -298,19 +302,184 @@ func TestDefaultLimitsBoundImportMemory(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	if err != nil {
-		t.Fatalf("Open(MaxCells cells) = %v, want it accepted", err)
+		t.Fatalf("Open(%d cells) = %v, want it accepted", n, err)
 	}
-	alloc := after.TotalAlloc - before.TotalAlloc
+	alloc := int64(after.TotalAlloc - before.TotalAlloc)
 	live := int64(after.HeapAlloc) - int64(before.HeapAlloc)
 	runtime.KeepAlive(wb)
-	t.Logf("%d cells, %d-byte package: %d MB allocated, %d MB live", MaxCells, len(pkg), alloc>>20, live>>20)
-	if alloc > allocBudget || live > liveBudget {
-		t.Errorf("import at the cell cap allocated %d MB (budget %d) with %d MB live (budget %d)",
-			alloc>>20, allocBudget>>20, live>>20, liveBudget>>20)
+	t.Logf("%d cells: %d B allocated and %d B live per cell; at MaxCells (%d) that is ~%d MB allocated, ~%d MB live",
+		n, alloc/n, live/n, MaxCells, alloc/n*MaxCells>>20, live/n*MaxCells>>20)
+	if alloc/n > allocPerCellCap || live/n > livePerCellCap {
+		t.Errorf("per-cell cost %d B allocated / %d B live exceeds the %d / %d budget MaxCells is documented against",
+			alloc/n, live/n, allocPerCellCap, livePerCellCap)
+	}
+}
+
+// The compression ratio is the zip-bomb signature, and it is what a bomb
+// cannot hide: a part far under every byte cap that inflates more than
+// MaxRatio times its compressed size is refused, on the bytes actually
+// inflated. Real worksheet XML compresses around 5-20x.
+func TestOpenRefusesBombByCompressionRatio(t *testing.T) {
+	pkg := buildPackage(t, minimalParts(zipPart{fill: ' ', n: 8 << 20}))
+
+	_, err := Open(pkg)
+	if !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("Open(8 MiB of filler in a %d-byte package) err = %v, want ErrLimitExceeded", len(pkg), err)
+	}
+	if !strings.Contains(err.Error(), "compression ratio") {
+		t.Fatalf("refusal %q does not name the compression-ratio limit", err)
+	}
+}
+
+func newDeflater(w io.Writer) (io.WriteCloser, error) {
+	return flate.NewWriter(w, flate.DefaultCompression)
+}
+
+// realisticSheetPackage builds an Excel-shaped workbook: a sales ledger of
+// rows x 8 columns with shared strings, style indexes, numbers, dates and a
+// formula per row, from a seeded generator so it is varied but repeatable.
+// It is the shape the ratio guard must never refuse.
+func realisticSheetPackage(t *testing.T, rows int) []byte {
+	t.Helper()
+	rng := rand.New(rand.NewSource(42))
+	first := []string{"Ava", "Liam", "Noah", "Emma", "Olivia", "Mateo", "Sofia", "Yuki", "Arjun", "Chloe", "Kwame", "Ines", "Lars", "Priya", "Diego", "Mei"}
+	last := []string{"Smith", "Garcia", "Okafor", "Tanaka", "Nguyen", "Kowalski", "Haddad", "Silva", "Novak", "Patel", "Murphy", "Jensen", "Rossi", "Kim"}
+	regions := []string{"North", "South", "East", "West", "Central", "EMEA", "APAC", "LATAM"}
+	status := []string{"Open", "Paid", "Overdue", "Refunded", "Disputed"}
+
+	var shared []string
+	index := map[string]int{}
+	si := func(v string) int {
+		if i, ok := index[v]; ok {
+			return i
+		}
+		index[v] = len(shared)
+		shared = append(shared, v)
+		return index[v]
+	}
+	var sh strings.Builder
+	sh.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+	for r := 1; r <= rows; r++ {
+		row := strconv.Itoa(r)
+		name := first[rng.Intn(len(first))] + " " + last[rng.Intn(len(last))]
+		note := "INV-" + strconv.Itoa(100000+rng.Intn(900000))
+		fmt.Fprintf(&sh, `<row r="%s" spans="1:8">`, row)
+		fmt.Fprintf(&sh, `<c r="A%s"><v>%d</v></c>`, row, r)
+		fmt.Fprintf(&sh, `<c r="B%s" s="1"><v>%d</v></c>`, row, 44927+rng.Intn(1100))
+		fmt.Fprintf(&sh, `<c r="C%s" t="s"><v>%d</v></c>`, row, si(name))
+		fmt.Fprintf(&sh, `<c r="D%s" t="s"><v>%d</v></c>`, row, si(regions[rng.Intn(len(regions))]))
+		fmt.Fprintf(&sh, `<c r="E%s" s="2"><v>%.2f</v></c>`, row, rng.Float64()*9999)
+		fmt.Fprintf(&sh, `<c r="F%s"><v>%d</v></c>`, row, 1+rng.Intn(250))
+		fmt.Fprintf(&sh, `<c r="G%s" s="2"><f>E%s*F%s</f><v>0</v></c>`, row, row, row)
+		fmt.Fprintf(&sh, `<c r="H%s" t="s"><v>%d</v></c></row>`, row, si(status[rng.Intn(len(status))]+" "+note))
+	}
+	sh.WriteString(`</sheetData></worksheet>`)
+	var sst strings.Builder
+	fmt.Fprintf(&sst, `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="%d" uniqueCount="%d">`, len(shared), len(shared))
+	for _, v := range shared {
+		sst.WriteString(`<si><t>` + v + `</t></si>`)
+	}
+	sst.WriteString(`</sst>`)
+
+	parts := minimalParts(zipPart{body: sh.String()})
+	return buildPackage(t, append(parts, zipPart{name: "xl/sharedStrings.xml", body: sst.String()}))
+}
+
+// partRatios reports each part's inflated/compressed ratio.
+func partRatios(t *testing.T, pkg []byte) map[string]float64 {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]float64{}
+	for _, f := range zr.File {
+		if f.CompressedSize64 > 0 && f.UncompressedSize64 >= RatioFloorBytes {
+			out[f.Name] = float64(f.UncompressedSize64) / float64(f.CompressedSize64)
+		}
+	}
+	return out
+}
+
+// Large realistic workbooks -- an Excel-shaped ledger with shared strings,
+// and this package's own writer output -- import at the defaults, and their
+// parts compress far inside MaxRatio. The measured ratios are logged.
+func TestRealisticWorkbookImportsAtDefaults(t *testing.T) {
+	ledger := realisticSheetPackage(t, 60_000)
+
+	wb := NewWorkbook("written")
+	sheet, err := wb.AddSheet("Data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := rand.New(rand.NewSource(7))
+	for r := 0; r < 40_000; r++ {
+		for c, v := range []string{
+			strconv.Itoa(r + 1),
+			"Customer " + strconv.Itoa(rng.Intn(5000)),
+			strconv.FormatFloat(rng.Float64()*1e5, 'f', 2, 64),
+			"=C" + strconv.Itoa(r+1) + "*1.2",
+			[]string{"Open", "Closed", "Pending"}[rng.Intn(3)],
+		} {
+			if err := sheet.Set(r, c, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	written, err := wb.Bytes()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	over := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(MaxCells + 1)}))
-	if _, err := Open(over); !errors.Is(err, ErrLimitExceeded) {
-		t.Fatalf("Open(MaxCells+1 cells) err = %v, want ErrLimitExceeded", err)
+	for name, pkg := range map[string][]byte{"excel-shaped ledger, 60k x 8": ledger, "eden-press writer, 40k x 5": written} {
+		ratios := partRatios(t, pkg)
+		t.Logf("%s: %d-byte package, part ratios %v", name, len(pkg), ratios)
+		for part, r := range ratios {
+			if r > MaxRatio/4 {
+				t.Errorf("%s: %s compresses %.1fx, within 4x of MaxRatio (%d)", name, part, r, MaxRatio)
+			}
+		}
+		if _, err := Open(pkg); err != nil {
+			t.Errorf("%s: Open at the defaults = %v, want it accepted", name, err)
+		}
+	}
+}
+
+// Every limit is the caller's to set, a zero field keeps its default, and
+// the refusal names the limit and its value so a user can be told why.
+func TestOpenWithLimitsHonoursCustomLimits(t *testing.T) {
+	cells := buildPackage(t, minimalParts(zipPart{body: sheetOfCells(6)}))
+	cases := []struct {
+		name  string
+		pkg   []byte
+		lim   Limits
+		limit string
+		value int64
+		msg   string
+	}{
+		{"cells", cells, Limits{Cells: 5}, "cells", 5, "over the cells limit of 5"},
+		{"parts", cells, Limits{Parts: 2}, "parts", 2, "over the parts limit of 2"},
+		{"part bytes", cells, Limits{PartBytes: 64}, "part bytes", 64, "over the part bytes limit of 64 bytes"},
+		{"total bytes", cells, Limits{TotalBytes: 200}, "total bytes", 200, "over the total bytes limit of 200 bytes"},
+		{"ratio", realisticSheetPackage(t, 60_000), Limits{Ratio: 3}, "compression ratio", 3, "more than 3x its compressed size"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Open(tc.pkg); err != nil {
+				t.Fatalf("Open at the defaults = %v; the custom limit must be what refuses", err)
+			}
+			_, err := OpenWithLimits(tc.pkg, tc.lim)
+			var le *LimitError
+			if !errors.As(err, &le) || le.Limit != tc.limit || le.Value != tc.value {
+				t.Fatalf("OpenWithLimits(%+v) err = %v, want a %q LimitError of %d", tc.lim, err, tc.limit, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.msg) {
+				t.Errorf("refusal %q does not say %q", err, tc.msg)
+			}
+		})
+	}
+
+	if got := (Limits{Cells: 5}).withDefaults(); got.Ratio != MaxRatio || got.PartBytes != MaxPartBytes || got.Cells != 5 {
+		t.Errorf("Limits{Cells: 5} with defaults = %+v; want Cells 5 and every other field at its default", got)
 	}
 }
