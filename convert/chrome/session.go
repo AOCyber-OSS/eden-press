@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/target"
@@ -359,6 +360,9 @@ func (s *Session) openTab() (context.Context, context.CancelFunc) {
 // injects the document with SetDocumentContent, and fonts are data: URIs,
 // neither of which is a network request.
 //
+// guard also disables page script in the tab (see the Run below): that closes
+// the two routes interception does not cover, WebSockets and popups.
+//
 // guard fails closed. NewTab has no error return, so when interception cannot
 // be enabled the tab's context is cancelled with the reason as its cause, and
 // the caller's first chromedp.Run fails rather than loading a document into
@@ -392,7 +396,18 @@ func (s *Session) guard(ctx context.Context, cancel context.CancelFunc) (context
 	// as in New.
 	enabled := make(chan error, 1)
 	go func() {
-		enabled <- chromedp.Run(ctx, fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*"}}))
+		enabled <- chromedp.Run(ctx,
+			fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*"}}),
+			// No page script runs in an export tab. Fetch interception covers
+			// this tab's requests, but not a WebSocket, and not a popup a
+			// script opens (chromedp's default flags disable the popup
+			// blocker, and the popup is a new, unguarded target). The export
+			// renders sanitized, script-free markup -- math is MathML or a
+			// PNG, themes are CSS -- so nothing legitimate needs it. Our own
+			// DevTools calls (LoadHTML's fonts.ready wait, screenshots) are
+			// not page script and still run.
+			emulation.SetScriptExecutionDisabled(true),
+		)
 	}()
 	var err error
 	select {

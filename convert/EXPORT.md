@@ -163,6 +163,11 @@ does change: a deck's remote `<img src="https://...">`, and the gaia theme's
 `@import` of its web font, no longer load unless the caller allows them.
 Allow only origins you trust, and compare parsed URLs, not string prefixes.
 
+Export tabs also run no page script (`Emulation.setScriptExecutionDisabled`).
+Interception does not cover a WebSocket or a popup a script opens as a new
+target, and the export needs no page JS (math is MathML or a PNG, themes are
+CSS); the exporter's own DevTools calls still work.
+
 If interception cannot be enabled, `NewTab` fails closed: the tab's context
 is cancelled and the caller's first `chromedp.Run` fails.
 
