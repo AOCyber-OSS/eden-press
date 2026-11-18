@@ -39,12 +39,19 @@ import (
 // bound, and a package that would pass one is refused with ErrLimitExceeded.
 const (
 	// MaxPartBytes caps the inflated size of any single part.
-	MaxPartBytes = 128 << 20
+	MaxPartBytes = 32 << 20
 	// MaxTotalBytes caps the inflated bytes of all parts Open reads together.
-	MaxTotalBytes = 256 << 20
+	MaxTotalBytes = 64 << 20
 	// MaxParts caps the number of entries in the package. A workbook this
 	// package writes has a dozen; a real one with media rarely has hundreds.
 	MaxParts = 10000
+	// MaxCells caps the cells Open builds across all sheets, and the entries
+	// of the shared-strings table. Parsed, a cell costs far more than its
+	// XML: every one is a map entry, so a sheet well under MaxPartBytes can
+	// still cost hundreds of megabytes. At this cap the densest accepted
+	// package measures about 335 MB allocated and 36 MB live
+	// (TestDefaultLimitsBoundImportMemory).
+	MaxCells = 500_000
 )
 
 // limits is the set of bounds one Open enforces. Open uses defaultLimits; the
@@ -54,9 +61,10 @@ type limits struct {
 	partBytes  int64
 	totalBytes int64
 	parts      int
+	cells      int
 }
 
-var defaultLimits = limits{partBytes: MaxPartBytes, totalBytes: MaxTotalBytes, parts: MaxParts}
+var defaultLimits = limits{partBytes: MaxPartBytes, totalBytes: MaxTotalBytes, parts: MaxParts, cells: MaxCells}
 
 // partReader reads parts of one package under one set of limits.
 type partReader struct {
@@ -64,6 +72,8 @@ type partReader struct {
 	lim   limits
 	// used counts the inflated bytes handed out so far, against totalBytes.
 	used int64
+	// cellsLeft is the cell budget not yet spent, across every sheet.
+	cellsLeft int
 }
 
 // ErrLimitExceeded is returned (wrapped) when a package exceeds an import limit.
@@ -94,7 +104,7 @@ func openWithLimits(b []byte, lim limits) (*Workbook, error) {
 	for _, f := range zr.File {
 		files[f.Name] = f
 	}
-	pr := &partReader{files: files, lim: lim}
+	pr := &partReader{files: files, lim: lim, cellsLeft: lim.cells}
 
 	wbXML, err := pr.read("xl/workbook.xml")
 	if err != nil {
@@ -121,7 +131,7 @@ func openWithLimits(b []byte, lim limits) (*Workbook, error) {
 	if raw, ok, err := pr.readOptional("xl/sharedStrings.xml"); err != nil {
 		return nil, err
 	} else if ok {
-		shared, err = parseSharedStrings(raw)
+		shared, err = parseSharedStrings(raw, lim.cells)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +161,7 @@ func openWithLimits(b []byte, lim limits) (*Workbook, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := fillSheet(sheet, raw, shared); err != nil {
+		if err := fillSheet(sheet, raw, shared, &pr.cellsLeft, lim.cells); err != nil {
 			return nil, fmt.Errorf("xlsx: Open: sheet %q: %w", sh.name, err)
 		}
 	}
@@ -304,7 +314,13 @@ func parseCoreTitle(raw []byte) string {
 	}
 }
 
-func parseSharedStrings(raw []byte) ([]string, error) {
+// errTooManyCells is the cell-budget refusal, for parseSharedStrings and
+// fillSheet.
+func errTooManyCells(max int) error {
+	return fmt.Errorf("xlsx: Open: more than %d cells or shared strings: %w", max, ErrLimitExceeded)
+}
+
+func parseSharedStrings(raw []byte, max int) ([]string, error) {
 	dec := xml.NewDecoder(bytes.NewReader(raw))
 	var out []string
 	inSI := false
@@ -325,6 +341,9 @@ func parseSharedStrings(raw []byte) ([]string, error) {
 			}
 		case xml.EndElement:
 			if tok.Name.Local == "si" && inSI {
+				if len(out) >= max {
+					return nil, errTooManyCells(max)
+				}
 				out = append(out, b.String())
 				inSI = false
 			}
@@ -336,7 +355,7 @@ func parseSharedStrings(raw []byte) ([]string, error) {
 	}
 }
 
-func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
+func fillSheet(sheet *Sheet, raw []byte, shared []string, cellsLeft *int, maxCells int) error {
 	dec := xml.NewDecoder(bytes.NewReader(raw))
 	var (
 		inCell   bool
@@ -359,6 +378,10 @@ func fillSheet(sheet *Sheet, raw []byte, shared []string) error {
 			hasStyle = false
 			style = 0
 		}()
+		if *cellsLeft <= 0 {
+			return errTooManyCells(maxCells)
+		}
+		*cellsLeft--
 		col, row, ok := parseCellRef(ref)
 		if !ok {
 			return fmt.Errorf("cell reference %q", ref)
